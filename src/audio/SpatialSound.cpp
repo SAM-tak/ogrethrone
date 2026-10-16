@@ -1,4 +1,5 @@
 #include "SpatialSound.h"
+#include "SteamAudioMath.h"
 #include <soloud_wav.h>
 #include <algorithm>
 #include <array>
@@ -105,7 +106,7 @@ private:
     IPLAudioEffectState tail_ = IPL_AUDIOEFFECTSTATE_TAILREMAINING;
 };
 
-SpatialSound::SpatialSound(AudioSystem& audio, const char* filename, IPLVector3 direction,
+SpatialSound::SpatialSound(AudioSystem& audio, const char* filename, Vec3 direction,
                            IPLDirectEffectParams direct) : data_(std::make_shared<Data>()) {
     const float length = std::sqrt(direction.x * direction.x + direction.y * direction.y + direction.z * direction.z);
     if (!std::isfinite(length) || length <= 0)
@@ -116,7 +117,7 @@ SpatialSound::SpatialSound(AudioSystem& audio, const char* filename, IPLVector3 
     if (data_->wave.mChannels != 1 || data_->wave.mSampleCount == 0)
         throw std::invalid_argument("SpatialSound requires a nonempty mono clip; use SoLoud for stereo BGM/UI");
     data_->context = iplContextRetain(audio.steam());
-    data_->direction = {direction.x / length, direction.y / length, direction.z / length};
+    data_->direction = toIPL(direction * (1 / length));
     data_->direct = direct;
     mChannels = 2;
     mBaseSamplerate = data_->wave.mBaseSamplerate;

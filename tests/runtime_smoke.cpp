@@ -11,7 +11,7 @@ int main() {
     if (!machine) return 1;
     lhat_machine_dispose(machine);
 
-    std::array<b3Pos, 180> first;
+    std::array<throne::Vec3, 180> first;
     {
         throne::PhysicsWorld world;
         for (auto& position : first) {
@@ -22,8 +22,7 @@ int main() {
     throne::PhysicsWorld second;
     for (const auto& expected : first) {
         second.step();
-        const auto actual = second.position();
-        if (actual.x != expected.x || actual.y != expected.y || actual.z != expected.z) {
+        if (second.position() != expected) {
             std::fputs("Repeated simulation diverged\n", stderr);
             return 1;
         }

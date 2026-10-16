@@ -1,4 +1,5 @@
 #include "PhysicsWorld.h"
+#include "Box3DMath.h"
 
 namespace throne {
 PhysicsWorld::PhysicsWorld() {
@@ -22,5 +23,5 @@ PhysicsWorld::PhysicsWorld() {
 
 PhysicsWorld::~PhysicsWorld() { b3DestroyWorld(world_); }
 void PhysicsWorld::step() { b3World_Step(world_, 1.0f / 60.0f, 4); }
-b3Pos PhysicsWorld::position() const { return b3Body_GetPosition(box_); }
+Vec3 PhysicsWorld::position() const { return fromB3Pos(b3Body_GetPosition(box_)); }
 }
