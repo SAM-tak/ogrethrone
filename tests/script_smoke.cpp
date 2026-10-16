@@ -1,3 +1,4 @@
+#include "editor/Project.h"
 #include "script/ScriptRuntime.h"
 #include <cmath>
 #include <cstdio>
@@ -81,7 +82,7 @@ int main() {
     const auto root = fs::temp_directory_path() / "throne_script_smoke";
     fs::remove_all(root);
     write(root, "scripts/spin.lh", spin);
-    write(root, "scripts/main.lh", mainScript);
+    write(root, "main.lh", mainScript);
 
     // A field value overrides the default; a field the script lacks is reported and skipped.
     auto played = world("scripts/spin.lh");
@@ -111,7 +112,7 @@ int main() {
         return fail("Field description did not list degreesPerSecond and target");
 
     // Each case must be refused with a message naming the problem.
-    fs::remove(root / "scripts/main.lh");
+    fs::remove(root / "main.lh");
     const struct {
         const char *script, *expected;
     } failures[] = {
@@ -132,6 +133,16 @@ int main() {
         const auto message = error(root, failure.script);
         if (message.find(failure.expected) == std::string::npos)
             return fail(std::string("Expected an error containing \"") + failure.expected + "\", got:\n" + message);
+    }
+
+    // A new project's generated main.lh passes the checks and runs.
+    const auto project = throne::Project::create(root, "Fresh");
+    try {
+        throne::World empty;
+        throne::ScriptRuntime runtime(empty, project.root, [](const std::string&) {});
+        runtime.update(0.1f);
+    } catch (const throne::ScriptError& e) {
+        return fail(std::string("Generated main.lh was rejected:\n") + e.what());
     }
 
     const auto api = throne::ScriptRuntime::hostApi();

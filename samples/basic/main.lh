@@ -1,0 +1,9 @@
+# The game's entry point: runs before every runner in each frame of Play.
+module^ main
+import^ throne
+
+public^let^start = p^{
+}
+
+public^let^update = p^dt:number^{
+}

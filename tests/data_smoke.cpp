@@ -77,8 +77,9 @@ int main() {
     const auto reopened = throne::Project::open(project.root / throne::Project::markerName);
     const auto level = throne::Level::load(reopened.resolve(reopened.mainLevel));
     if (reopened.name != "My Game" || level.scenes.size() != 1 ||
-        throne::Scene::load(reopened.resolve(level.scenes[0])).nodes.size() != 2)
-        return fail("Created project did not reopen with its main level and scene");
+        throne::Scene::load(reopened.resolve(level.scenes[0])).nodes.size() != 2 ||
+        !fs::exists(reopened.resolve("main.lh")))
+        return fail("Created project did not reopen with main.lh, its main level and scene");
     try {
         throne::Project::create(directory, "My Game");
         return fail("A project was created in a non-empty folder");

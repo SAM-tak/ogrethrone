@@ -14,7 +14,7 @@
 namespace throne {
 namespace {
 constexpr const char* moduleName = "throne";
-constexpr const char* mainPath = "scripts/main.lh";
+constexpr const char* mainPath = "main.lh";
 /// Loop turns one frame may take before it is treated as an endless loop.
 constexpr std::int64_t frameBudget = 10'000'000;
 

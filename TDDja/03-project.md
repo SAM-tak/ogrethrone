@@ -43,8 +43,9 @@ mainLevel = "levels/main.level.lton",   # 省略可
 <プロジェクト>/
     project.throne.lton
     lhat-host.json      # 言語サーバー用。エディターが生成する（3.4）
+    main.lh             # エントリーポイント。作成時に既定のものを生成する（02 の 4.1）
     levels/             # *.level.lton（04）
-    scripts/            # *.lh。main.lh は省略可（02 の 4.1）
+    scripts/            # *.lh
 ```
 
 ### 3.3. パスの基準

@@ -50,6 +50,7 @@ A project is a folder containing `project.throne.lton`:
 ```text
 <project>/
     project.throne.lton   # name and optional mainLevel
+    main.lh               # the game's entry point (generated, optional)
     lhat-host.json        # written by the editor for the L^ language server
     levels/               # *.level.lton
     scenes/               # *.scene.lton
@@ -158,7 +159,8 @@ Each Play checks and compiles every script anew, so edited scripts take effect
 on the next Play. Rejected scripts, run-time errors, and frames over the loop
 budget (treated as endless loops) are written to the Log tab and stop Play.
 
-Paths are relative to the project folder. `scripts/main.lh` is optional; when
+Paths are relative to the project folder. `main.lh` at the top of the project is the
+game's entry point; new projects get an empty one. It is optional; when
 present it must declare `module^` and may publish `start: p^;` and
 `update: p^number^;`; it stays the game's entry point. A runner holds any number
 of behaviours. Each behaviour names a `module^` that publishes a definition called

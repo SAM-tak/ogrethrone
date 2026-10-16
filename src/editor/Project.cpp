@@ -12,6 +12,18 @@ constexpr std::string_view projectFormat = "ogrethrone-project", listFormat = "o
 constexpr LhatInteger projectVersion = 1, listVersion = 1;
 constexpr const char* mainLevelPath = "levels/main.level.lton";
 
+/// The entry point a new project starts with (TDDja/03 3.2).
+constexpr std::string_view mainScript = R"(# The game's entry point: runs before every runner in each frame of Play.
+module^ main
+import^ throne
+
+public^let^start = p^{
+}
+
+public^let^update = p^dt:number^{
+}
+)";
+
 /// Whether two folders are the same, comparing their normalized absolute forms.
 bool same(const fs::path& a, const fs::path& b) {
     std::error_code error;
@@ -27,6 +39,7 @@ Project Project::create(const fs::path& parent, const std::string& name) {
     if (fs::exists(root) && !fs::is_empty(root)) throw std::runtime_error(root.u8string() + " is not empty");
     fs::create_directories(root / "scripts");
     Project project{root, name, mainLevelPath};
+    lton::writeAtomically(project.resolve("main.lh"), mainScript);
     Scene::example().save(project.resolve("scenes/main.scene.lton"));
     Level level;
     level.scenes.push_back("scenes/main.scene.lton");

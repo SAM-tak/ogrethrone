@@ -28,7 +28,7 @@ struct FieldInfo {
 
 /// Runs a world's L^ scripts for one Play session (TDDja/02, 05).
 ///
-/// Construction checks and compiles `scripts/main.lh` (when present) and every
+/// Construction checks and compiles `main.lh` (when present) and every
 /// behaviour script, then creates one `Behaviour` instance per behaviour of each
 /// runner and applies the runner's field values to it. Scripts see the `throne`
 /// module (Vec3, SceneNode, Runner, find, log, time) and `std.math`. Each session
