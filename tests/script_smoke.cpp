@@ -66,14 +66,21 @@ public^let^Behaviour = def^{
 }
 )";
 
-constexpr const char* mainScript = R"(module^ test.main
-import^ throne
+// A coroutine script: moves Cube 2 one unit per frame for three frames, then ends.
+constexpr const char* mainScript = R"(import^ throne
 
-public^let^update = p^dt:number^ {
+let^ nextFrame = p^ {
+    yield^
+}
+
+var^ moved = 0
+repeat^while^ moved < 3 {
     let^ mover = throne.find("Cube 2")
     if^ mover != nil^ {
-        mover.setPosition(mover.position() + throne.vec3(dt, 0, 0))
+        mover.setPosition(mover.position() + throne.vec3(1, 0, 0))
     }
+    await^ nextFrame()
+    moved := moved + 1
 }
 )";
 }
@@ -94,14 +101,16 @@ int main() {
         throne::ScriptRuntime runtime(played, root, [&](const std::string& line) { logged.push_back(line); },
                                       throne::PlayScope::Game);
         for (int i = 0; i < 10; ++i) runtime.update(0.1f);
+        if (!runtime.finished()) return fail("main.lh's coroutine did not finish");
     } catch (const throne::ScriptError& e) {
         return fail(std::string("Valid scripts failed:\n") + e.what());
     }
     const auto& nodes = played.scenes[0].scene.nodes;
     if (std::abs(nodes[0].rotation.y - 45) > 0.01f)
         return fail("Behaviour did not rotate its target node: y=" + std::to_string(nodes[0].rotation.y));
-    if (std::abs(nodes[1].position.x - 3) > 0.01f)
-        return fail("main.lh update did not move Cube 2: x=" + std::to_string(nodes[1].position.x));
+    if (std::abs(nodes[1].position.x - 5) > 0.01f)
+        return fail("main.lh did not move Cube 2 once per frame for three frames: x=" +
+                    std::to_string(nodes[1].position.x));
     if (logged.size() != 2 || logged[0].find("field missing ignored") == std::string::npos ||
         logged[1] != "start Spinner")
         return fail("Expected a skipped-field warning and one start line");

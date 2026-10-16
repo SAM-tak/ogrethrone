@@ -13,15 +13,11 @@ constexpr LhatInteger projectVersion = 1, listVersion = 1;
 constexpr const char* mainLevelPath = "levels/main.level.lton";
 
 /// The entry point a new project starts with (TDDja/03 3.2).
-constexpr std::string_view mainScript = R"(# The game's entry point: runs before every runner in each frame of Play.
-module^ main
+constexpr std::string_view mainScript = R"(# The game's entry point and organizer, run when the whole game is played.
+# An await^ here makes this script a coroutine that the engine resumes every
+# frame until it ends, e.g. once level playback exists:
+#   await^ throne.playLevel("levels/main.level.lton")
 import^ throne
-
-public^let^start = p^{
-}
-
-public^let^update = p^dt:number^{
-}
 )";
 
 /// Whether two folders are the same, comparing their normalized absolute forms.

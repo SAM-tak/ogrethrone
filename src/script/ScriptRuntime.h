@@ -30,8 +30,8 @@ struct FieldInfo {
 enum class PlayScope {
     /// The open level: its runners and its scenes' runners, without main.lh.
     Level,
-    /// The whole game: main.lh as well. main.lh's final form (the game's organizer,
-    /// TDDja/02 4.1) is not settled; it currently runs as start/update hooks.
+    /// The whole game: main.lh as well. main.lh is a script; with await^ at its top
+    /// level it is a coroutine, resumed once per frame before the runners.
     Game,
 };
 
@@ -60,11 +60,14 @@ public:
     ScriptRuntime(const ScriptRuntime&) = delete;
     ScriptRuntime& operator=(const ScriptRuntime&) = delete;
 
-    /// Runs one frame: every `start` on the first call, then every `update`, in the
-    /// order main.lh, scene runners (scene by scene), level runners.
+    /// Runs one frame. The first call runs main.lh (Game scope) and every `start`;
+    /// each call then resumes main.lh's coroutine and runs every `update`, scene
+    /// runners (scene by scene) before level runners.
     /// @throws ScriptError on a run-time failure or a frame over budget; the
     ///         runtime must not be used afterwards.
     void update(float deltaSeconds);
+    /// True once main.lh has run to its end (Game scope only).
+    bool finished() const;
 
     /// Returns the host API scripts can use (the `throne` module and `std.math`) as
     /// the JSON the L^ language server reads from `lhat-host.json`.

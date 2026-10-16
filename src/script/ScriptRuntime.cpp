@@ -79,11 +79,14 @@ struct ScriptRuntime::State {
     const LhatHostValueTag* vec3 = nullptr;
     const LhatHostDataTag *sceneNode = nullptr, *runner = nullptr;
     // Values the host holds are not roots, so everything kept between calls
-    // also lives in this table, which is reachable from L^.
-    LhatValue roots = lhat_nil();
+    // also lives in the machine's host root table.
+    LhatTable* roots = nullptr;
     LhatInteger rootCount = 0;
-    LhatValue main = lhat_nil();
-    bool mainStart = false, mainUpdate = false, started = false;
+    /// main.lh, run on the first frame (Game scope only).
+    const LhatProto* mainProto = nullptr;
+    /// main.lh's coroutine while it is suspended between frames.
+    LhatValue game = lhat_nil();
+    bool started = false, finished = false;
     std::vector<Instance> instances;
     /// Runners in run order; a throne.Runner handle is an index into this.
     std::vector<const Runner*> runners;
@@ -95,8 +98,7 @@ struct ScriptRuntime::State {
     /// Keeps @p value alive for the session and returns it.
     LhatValue keep(LhatValue value) {
         bool refused = false;
-        if (!lhat_machine_table_set(machine.get(), reinterpret_cast<LhatTable*>(lhat_as_object(roots)),
-                                    lhat_integer(rootCount++), value, &refused) ||
+        if (!lhat_machine_table_set(machine.get(), roots, lhat_integer(rootCount++), value, &refused) ||
             refused)
             throw ScriptError("Out of memory");
         return value;
@@ -437,9 +439,8 @@ void compile(State& s) {
 /// Creates the machine, the root table and the installed registrations.
 void startMachine(State& s) {
     s.machine.reset(lhat_machine_new());
-    if (!s.machine || !lhat_machine_make_table(s.machine.get(), &s.roots) ||
-        !lhat_machine_set_global(s.machine.get(), "throneRuntimeRoots", s.roots))
-        throw ScriptError("Out of memory");
+    if (!s.machine) throw ScriptError("Out of memory");
+    s.roots = lhat_machine_host_root(s.machine.get());
     lhat_program_install(s.program.get(), s.machine.get());
     lhat_machine_set_budget(s.machine.get(), frameBudget);
 }
@@ -503,19 +504,10 @@ ScriptRuntime::ScriptRuntime(World& world, const std::filesystem::path& root, Lo
     auto* program = s.program.get();
 
     std::string errors;
+    // main.lh is a script; an await^ at its top level makes it a coroutine (TDDja/02 4.1).
     const LhatUnit* mainUnit = nullptr;
-    if (scope == PlayScope::Game && std::filesystem::exists(s.root / mainPath)) {
+    if (scope == PlayScope::Game && std::filesystem::exists(s.root / mainPath))
         mainUnit = lhat_program_check(program, mainPath);
-        if (mainUnit && lhat_unit_ok(mainUnit)) {
-            if (!lhat_unit_module_name(mainUnit)) errors += std::string(mainPath) + ": must declare module^\n";
-            s.mainStart = publishes(mainUnit, "start");
-            s.mainUpdate = publishes(mainUnit, "update");
-            if (s.mainStart && !lhat_unit_export_conforms(mainUnit, "start", "p^;"))
-                errors += std::string(mainPath) + ": start must be p^;\n";
-            if (s.mainUpdate && !lhat_unit_export_conforms(mainUnit, "update", "p^number^;"))
-                errors += std::string(mainPath) + ": update must be p^number^;\n";
-        }
-    }
 
     // Run order: scene runners scene by scene, then level runners.
     std::vector<Pending> pending;
@@ -540,7 +532,7 @@ ScriptRuntime::ScriptRuntime(World& world, const std::filesystem::path& root, Lo
     compile(s);
     startMachine(s);
 
-    if (mainUnit) s.main = s.keep(s.check(lhat_run(s.machine.get(), lhat_unit_proto(mainUnit)), mainPath));
+    if (mainUnit) s.mainProto = lhat_unit_proto(mainUnit);
     std::map<std::string, LhatValue> definitions;
     for (const auto& [path, unit] : units) definitions[path] = definition(s, unit, path);
     std::vector<LhatValue> runnerHandles;
@@ -585,17 +577,27 @@ ScriptRuntime::ScriptRuntime(World& world, const std::filesystem::path& root, Lo
 
 ScriptRuntime::~ScriptRuntime() = default;
 
+bool ScriptRuntime::finished() const { return state_->finished; }
+
 void ScriptRuntime::update(float deltaSeconds) {
     auto& s = *state_;
     if (!s.started) {
         s.started = true;
-        if (s.mainStart) s.call(s.main, "start", nullptr, 0, mainPath);
+        if (s.mainProto) {
+            // A script without await^ runs to its end here; one with await^ answers its coroutine.
+            const auto result = s.check(lhat_run(s.machine.get(), s.mainProto), mainPath);
+            if (lhat_is_object_kind(result, LHAT_OBJECT_COROUTINE)) s.game = s.keep(result);
+            else s.finished = true;
+        }
         for (const auto& instance : s.instances)
             if (instance.start) s.call(instance.instance, "start", &instance.runner, 1, instance.what);
     }
     s.time += deltaSeconds;
     const LhatValue dt = lhat_real(deltaSeconds);
-    if (s.mainUpdate) s.call(s.main, "update", &dt, 1, mainPath);
+    if (!lhat_is_nil(s.game) && !s.finished) {
+        s.check(lhat_machine_resume(s.machine.get(), s.game, nullptr, 0), mainPath);
+        s.finished = lhat_machine_coroutine_done(s.game);
+    }
     for (const auto& instance : s.instances) {
         const LhatValue arguments[2] = {instance.runner, dt};
         if (instance.update) s.call(instance.instance, "update", arguments, 2, instance.what);

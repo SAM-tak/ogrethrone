@@ -162,7 +162,9 @@ budget (treated as endless loops) are written to the Log tab and stop Play.
 
 Paths are relative to the project folder. `main.lh` at the top of the project is the
 game's entry point and organizer (which levels to play, in what order); new
-projects get a placeholder one. It must declare `module^`; its final shape is still
+projects get a placeholder one. It is a plain script (no `module^`); an `await^`
+at its top level makes it a coroutine that the whole-game Play will resume once
+per frame until it ends. Level playback from it (`throne.playLevel`) is still
 being designed (TDDja/02 4.1). A runner holds any number
 of behaviours. Each behaviour names a `module^` that publishes a definition called
 `Behaviour`, and gets its own instance per runner:

@@ -50,8 +50,6 @@ Play 中はインスペクターなどからの編集を受け付けない。und
 
 プロジェクト直下の `main.lh` をゲーム全体のスクリプト（エントリーポイント）とする。新規プロジェクトの作成時に既定の `main.lh` を生成する。
 ［提案］存在しなければ実行しない（生成前に作ったプロジェクトのため）。
-［補足］`public^` で公開できるのは `module^` を宣言した単位だけである（L^ 05 の 3.2）。したがって `main.lh` も `module^` を宣言しなければならない。
-
 `main.lh` はゲーム全体のオーガナイザーである。最初に読むべきレベルなどを知っていて、throne の API でレベルの再生を指示し、それが終わるまで待つ、という動作をする。
 したがって、毎フレーム呼ばれる `start`・`update` の形は馴染まない。
 
@@ -62,28 +60,29 @@ Play は 2 種類に分ける（Godot と同じ考え方）。
 
 現在の Play ボタンは「今開いているレベルのプレイ」である。ゲームのプレイは近い将来に加える。
 
-［補足］実装は `PlayScope::Level` と `PlayScope::Game` で両者を分けている。`Game` は暫定的に、`main.lh` の `start`・`update` も呼ぶ。
-
-［提案］`main.lh` は、L^ のコルーチンとして走る手続き `main` を 1 つ公開する。
-レベルの再生を指示する API は、そのレベルが終わるまでコルーチンを中断し、終わったら戻る。
+`main.lh` は `module^` を宣言しないスクリプトであり、その最上位は `p^...` である。
+最上位に `await^` を書くと、`main.lh` は `p^... -> c^{ … }`、つまりコルーチンを返す手続きになる（L^ 02 の 15.2・15.5）。
+エンジンはその実行結果がコルーチンなら、終わるまで毎フレーム resume する。
 
 ```lhat
-module^ main
 import^ throne
 
-public^let^main = p^{
-    throne.playLevel("levels/title.level.lton")     # 終わるまで戻らない
-    throne.playLevel("levels/stage1.level.lton")
-}
+await^ throne.playLevel("levels/title.level.lton")
+await^ throne.playLevel("levels/stage1.level.lton")
 ```
 
-レベルが「終わる」条件（Runner からの `throne.endLevel()` など）と、`main` が戻ったときの扱い（ゲーム終了）は MAIN-01 とする。
+［補足］L^ は、`yield^`・`await^` を最上位に持つスクリプトを yieldable な `p^...` とし、`lhat_run` は何も実行せずにそのコルーチンを返す（lhat `98d6c3e`）。
+`module^` の単位の最上位に `yield^`・`await^` を書くことは検査で誤りになる。
+resume と resume の間に同じ machine で Runner などを走らせるため、コルーチンは `lhat_machine_host_root` に置いて保持する。
+
+［補足］実装は `PlayScope::Level` と `PlayScope::Game` で両者を分けている。`Game` では最初のフレームで `main.lh` を走らせ、
+コルーチンなら毎フレーム Runner より先に resume する。`await^` の無い `main.lh` は最初のフレームで最後まで走る。
 
 ### 4.1.1. 未決事項
 
 | 番号 | 内容 | 現状 |
 | --- | --- | --- |
-| **［未決］MAIN-01** | `main.lh` の形（`main` を公開する手続き＋コルーチンか、別の形か）、レベルが終わる条件、`main` が戻ったときの扱い | 4.1 の提案。既定で生成する `main.lh` の中身も、これが決まるまでは暫定の `start`・`update` |
+| **［未決］MAIN-01** | `throne.playLevel` の振る舞い（レベルの読み込み・差し替え、その間のスクリプトの検査）、レベルが終わる条件（Runner からの `throne.endLevel()` など）、`main.lh` が終わったときの扱い（ゲーム終了など） | `playLevel` は未実装。既定で生成する `main.lh` はコメントと `import^ throne` だけ |
 
 ### 4.2. オブジェクトのスクリプト
 
