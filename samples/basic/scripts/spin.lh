@@ -1,14 +1,14 @@
 # Sample behaviour: the level's "SpinningCube" runner points `target` at the
 # SpinningCube scene node, so that node turns while playing (F5).
-module^ samples.spin
-import^ throne
+module^samples.spin
+import^throne
 
 public^let^Behaviour = def^{
     self^{
         target : throne.SceneNode|nil^ = nil^,
         degreesPerSecond = 90,
     },
-    update = p^self^, runner:throne.Runner, dt:number^ {
+    update = p^self^, runner:throne.Runner, dt:number^{
         if^ self^.target != nil^ {
             var^ r = self^.target.rotation()
             r.y := r.y + self^.degreesPerSecond * dt
