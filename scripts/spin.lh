@@ -1,6 +1,6 @@
 # Sample object script: attach it to a cube with Script = scripts/spin.lh, then press Play (F5).
-module^ samples.spin
-import^ throne
+module^samples.spin
+import^throne
 
 public^let^Behaviour = def^{
     self^{
