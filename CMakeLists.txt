@@ -46,21 +46,22 @@ if(BUILD_TESTING)
     add_test(NAME runtime_smoke COMMAND throne_smoke)
 endif()
 
-add_library(throne_scene STATIC src/editor/SceneDocument.cpp)
-target_include_directories(throne_scene PUBLIC src)
+# Levels, projects and the project list: the editor's LTON data, without OGRE.
+add_library(throne_data STATIC src/editor/Lton.cpp src/editor/Level.cpp src/editor/Project.cpp)
+target_include_directories(throne_data PUBLIC src)
 # stdlib/*.h are included by path relative to the L^ source root.
-target_include_directories(throne_scene PRIVATE "${THRONE_LHAT_SOURCE_DIR}")
-target_link_libraries(throne_scene PRIVATE lhatstdlib)
+target_include_directories(throne_data PRIVATE "${THRONE_LHAT_SOURCE_DIR}")
+target_link_libraries(throne_data PUBLIC lhat PRIVATE lhatstdlib)
 
-add_executable(throne_scene_smoke tests/scene_smoke.cpp)
-target_link_libraries(throne_scene_smoke PRIVATE throne_scene)
+add_executable(throne_data_smoke tests/data_smoke.cpp)
+target_link_libraries(throne_data_smoke PRIVATE throne_data)
 if(BUILD_TESTING)
-    add_test(NAME scene_smoke COMMAND throne_scene_smoke)
+    add_test(NAME data_smoke COMMAND throne_data_smoke)
 endif()
 
 add_library(throne_script STATIC src/script/ScriptRuntime.cpp)
 target_include_directories(throne_script PRIVATE "${THRONE_LHAT_SOURCE_DIR}")
-target_link_libraries(throne_script PUBLIC throne_scene PRIVATE lhatstdlib)
+target_link_libraries(throne_script PUBLIC throne_data PRIVATE lhatstdlib)
 
 add_executable(throne_script_smoke tests/script_smoke.cpp)
 target_link_libraries(throne_script_smoke PRIVATE throne_script)
@@ -69,7 +70,7 @@ if(BUILD_TESTING)
 endif()
 
 if(THRONE_BUILD_GRAPHICS)
-    add_executable(ogrethrone src/editor/main.cpp src/editor/SceneEditor.cpp
+    add_executable(ogrethrone src/editor/main.cpp src/editor/Editor.cpp
         src/editor/EditorPlatform.cpp)
     target_link_libraries(ogrethrone PRIVATE throne_runtime throne_audio throne_script OgreNextMain
         RenderSystem_Vulkan OgreNextHlmsPbs OgreNextHlmsUnlit OgreNextImgui ColibriGui)

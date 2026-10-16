@@ -38,16 +38,39 @@ may need restarting, or use the explicit CMake option above.
 The pinned glslang submodule is built from source for each configuration, using
 the same MSVC runtime as OGRE. SDK shader compiler libraries are not linked.
 
-`ogrethrone` starts the scene editor: a Dear ImGui hierarchy, inspector, file
-browser/log and an offscreen-rendered viewport. Scenes are cubes with position,
-rotation (degrees, applied about X, then Y, then Z), scale and colour, saved as
-`*.throne.lton` (L^ Table Object Notation, read by L^ as effect-free data).
-Relative paths resolve against the working directory; the browser lists `scenes/`. Right-drag orbits, middle-drag pans, the wheel zooms, left-click
-selects and `F` frames the selection. Ctrl+Z/Ctrl+Y undo/redo, Ctrl+D duplicates,
-Delete removes, Ctrl+S saves and Ctrl+O opens. New and Open are undoable; closing
-with unsaved changes asks to save or discard them (on Windows this also covers the
+`ogrethrone` without arguments shows the project launcher: create a project, import
+an existing project folder, or click a known one to open it in the editor.
+`ogrethrone <folder>` opens that project directly. The known projects are kept in
+`%APPDATA%/OgreThrone/projects.lton` (`$XDG_CONFIG_HOME/ogrethrone/` elsewhere);
+removing one from the list leaves its folder alone. File > Close Project returns
+to the launcher.
+
+A project is a folder containing `project.throne.lton`:
+
+```text
+<project>/
+    project.throne.lton   # name and optional mainLevel
+    lhat-host.json        # written by the editor for the L^ language server
+    levels/               # *.level.lton
+    scripts/              # *.lh
+```
+
+Every path inside a project, including those stored in levels, is relative to the
+project folder. [`samples/basic`](samples/basic) is a sample project; the VS Code
+launch configurations open it or show the launcher.
+
+The editor has a Dear ImGui hierarchy, inspector, level browser/log and an
+offscreen-rendered viewport. A level holds the game-side data; "scene" is left to
+OGRE's rendering. Levels are cubes with position, rotation (degrees, applied about
+X, then Y, then Z), scale, colour and an optional script, saved as `*.level.lton`
+(L^ Table Object Notation, read by L^ as effect-free data). Right-drag orbits,
+middle-drag pans, the wheel zooms, left-click selects and `F` frames the selection.
+Ctrl+Z/Ctrl+Y undo/redo, Ctrl+D duplicates, Delete removes, Ctrl+S saves and
+Ctrl+O opens. New and Open are undoable; closing the window or the project with
+unsaved changes asks to save or discard them (on Windows this also covers the
 window's close button). Colibri widgets and model import are not wired yet.
-`ogrethrone --smoke` runs the same editor for three frames and exits.
+`ogrethrone --smoke` creates a throwaway project, runs the editor on it for three
+frames and exits, without touching the project list.
 It uses OGRE's native window and message pump. HlmsUnlit shader templates are read
 from the pinned `third_party/ogre-next/Samples/Media`, so the executable currently
 needs the source tree.
@@ -122,7 +145,7 @@ Each Play checks and compiles every script anew, so edited scripts take effect
 on the next Play. Rejected scripts, run-time errors, and frames over the loop
 budget (treated as endless loops) are written to the Log tab and stop Play.
 
-Paths are relative to the working directory. `scripts/main.lh` is optional; when
+Paths are relative to the project folder. `scripts/main.lh` is optional; when
 present it must declare `module^` and may publish `start: p^;` and
 `update: p^number^;`. An object's **Script** field names a `module^` that
 publishes a definition called `Behaviour`; each scripted object gets its own
@@ -161,9 +184,10 @@ The `throne` module provides:
 
 `std.math` is the only standard module scripts can import.
 
-The L^ language server (VS Code extension) reads `lhat-host.json` at the workspace
-root to know the `throne` module. The committed file matches the current bindings;
-after changing them, regenerate it without opening a window:
+The L^ language server (VS Code extension) reads the `lhat-host.json` nearest to a
+script to know the `throne` module. The editor rewrites a project's copy whenever
+the project is created or opened and the bindings have changed. To write one
+without opening a window:
 
 ```powershell
 ./out/build/windows-clang-ninja/bin/Debug/ogrethrone.exe --dump-host-api [file]
@@ -171,7 +195,7 @@ after changing them, regenerate it without opening a window:
 
 The file defaults to `lhat-host.json` in the working directory.
 
-[`scripts/spin.lh`](scripts/spin.lh) is a sample. The design is recorded in
+[`samples/basic/scripts/spin.lh`](samples/basic/scripts/spin.lh) is a sample. The design is recorded in
 [TDDja/02-scripting.md](TDDja/02-scripting.md).
 
 ## Audio

@@ -1,9 +1,12 @@
 #pragma once
 
 #include "editor/EditorPlatform.h"
-#include "editor/SceneDocument.h"
+#include "editor/Level.h"
+#include "editor/Project.h"
 #include <OgreVector3.h>
+#include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -25,23 +28,27 @@ class HlmsUnlitDatablock;
 namespace throne {
 class ScriptRuntime;
 
-/// Dear ImGui scene editor drawn over the OGRE window.
+/// Dear ImGui level editor and project launcher drawn over the OGRE window.
 ///
-/// The scene is rendered into an offscreen texture shown in the viewport panel;
+/// Without an open project the window shows the launcher (TDDja/03 4). With one,
+/// the level is rendered into an offscreen texture shown in the viewport panel;
 /// the window itself is cleared and covered by ImGui. Requires HlmsUnlit to be
 /// registered and an ImGui context to exist for the editor's lifetime.
-class SceneEditor {
+class Editor {
 public:
     /// Installs the ImGui compositor pass, the viewport texture and both workspaces.
     /// @param root Initialized OGRE root with HlmsUnlit registered.
     /// @param window Window that receives the editor UI.
     /// @param scene Scene manager holding the edited objects.
     /// @param camera Camera used for the viewport.
-    SceneEditor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene, Ogre::Camera& camera);
+    /// @param project Project folder to open at once; empty to show the launcher.
+    /// @param projectList File holding the known projects; empty to keep the list in memory only.
+    Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene, Ogre::Camera& camera,
+           const std::filesystem::path& project, std::filesystem::path projectList);
     /// Removes workspaces, scene objects and editor resources.
-    ~SceneEditor();
-    SceneEditor(const SceneEditor&) = delete;
-    SceneEditor& operator=(const SceneEditor&) = delete;
+    ~Editor();
+    Editor(const Editor&) = delete;
+    Editor& operator=(const Editor&) = delete;
 
     /// Builds the UI and updates the scene; call once before each Root::renderOneFrame().
     void frame(float deltaSeconds);
@@ -50,7 +57,27 @@ public:
     bool shouldClose() const { return close_; }
 
 private:
-    /// OGRE objects that display one SceneObject; same order as SceneDocument::objects.
+    /// What to do once unsaved changes are resolved.
+    enum class Leave { Exit, CloseProject };
+    /// A known project as the launcher lists it.
+    struct Known {
+        std::filesystem::path root;
+        std::string name, lastOpened;
+        bool found;
+    };
+
+    /// Opens the project at @p path, adds it to the list and loads its main level.
+    /// Failures are shown in the launcher.
+    void openProject(const std::filesystem::path& path);
+    /// Returns to the launcher, discarding the open level.
+    void closeProject();
+    /// Writes the project's lhat-host.json when it differs from the current bindings (TDDja/03 3.4).
+    void writeHostApi();
+    /// Saves the project list and refreshes known_ from it.
+    void projectsChanged();
+    /// Draws the launcher: new, import, and the known projects.
+    void launcher();
+    /// OGRE objects that display one LevelObject; same order as Level::objects.
     struct RenderObject {
         Ogre::SceneNode* node;
         Ogre::ManualObject* mesh;
@@ -65,7 +92,7 @@ private:
     /// Records the current document for undo before an edit.
     void checkpoint();
     /// Records @p before for undo when an edit that started from it has finished.
-    void commit(SceneDocument before);
+    void commit(Level before);
     /// Restores the previous document state, if any.
     void undo();
     /// Reapplies the most recently undone state, if any.
@@ -76,10 +103,10 @@ private:
     void duplicate();
     /// Deletes the selected object.
     void erase();
-    /// Replaces the document with the file at scenePath_; undoable.
+    /// Replaces the document with the file at levelPath_; undoable.
     /// @return false on failure, with the reason in fileError_.
     bool open();
-    /// Writes the document to scenePath_.
+    /// Writes the document to levelPath_.
     /// @return false on failure, with the reason in fileError_.
     bool save();
     /// Handles keyboard shortcuts while no text field has focus.
@@ -93,8 +120,10 @@ private:
     void play();
     /// Leaves Play mode and restores the document as it was before play().
     void stop();
-    /// Closes immediately, or asks first when the document has unsaved changes.
-    void requestClose();
+    /// Performs @p action now, or asks first when the document has unsaved changes.
+    void requestLeave(Leave action);
+    /// Performs @p action without asking.
+    void leave(Leave action);
     /// Draws the Save / Discard / Cancel prompt requested through confirmClose_.
     void closeDialog();
     /// Draws the object list panel.
@@ -103,7 +132,7 @@ private:
     void inspector();
     /// Draws the rendered scene and handles camera and picking input.
     void viewport();
-    /// Draws the bottom panel listing scene files and log messages.
+    /// Draws the bottom panel listing the project's levels and log messages.
     void browser();
     /// Applies the orbit parameters and projection mode to the camera.
     void updateCamera();
@@ -136,19 +165,28 @@ private:
     Ogre::ManualObject* outline_ = nullptr;
     Ogre::SceneNode* outlineNode_ = nullptr;
     std::vector<RenderObject> renderObjects_;
-    SceneDocument document_ = SceneDocument::example();
-    SceneDocument editStart_;
-    std::vector<SceneDocument> undo_, redo_;
+    std::optional<Project> project_;
+    ProjectList projects_;
+    std::filesystem::path projectListFile_;
+    std::vector<Known> known_;
+    enum class Form { None, New, Import } form_ = Form::None;
+    char newName_[101] = "", newParent_[512] = "", importPath_[512] = "";
+    std::string launcherError_;
+    Leave leaving_ = Leave::Exit;
+    Level document_;
+    Level editStart_;
+    std::vector<Level> undo_, redo_;
     /// Non-null while playing; runs on document_, with the edited state kept in playBackup_.
     std::unique_ptr<ScriptRuntime> runtime_;
-    SceneDocument playBackup_;
-    std::uint32_t selected_ = 1;
+    Level playBackup_;
+    std::uint32_t selected_ = 0;
     Ogre::Vector3 target_{0, 0.5f, 0};
     float yaw_ = 0.65f, pitch_ = 0.45f, distance_ = 9.0f;
     unsigned viewportWidth_ = 0, viewportHeight_ = 0;
     bool showGrid_ = true, orthographic_ = false, close_ = false;
     bool dirty_ = false, showFiles_ = false, saving_ = true, confirmClose_ = false;
-    char scenePath_[512] = "scenes/Untitled.throne.lton";
+    /// Project-relative path of the open level.
+    char levelPath_[512] = "";
     std::string fileError_;
     std::vector<std::string> messages_;
 };

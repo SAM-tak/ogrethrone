@@ -1,6 +1,6 @@
 #pragma once
 
-#include "editor/SceneDocument.h"
+#include "editor/Level.h"
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -31,7 +31,7 @@ public:
     /// @param root Project directory that script paths are relative to.
     /// @param log Destination of throne.log.
     /// @throws ScriptError when any script is missing, rejected or breaks the contract.
-    ScriptRuntime(SceneDocument& scene, const std::filesystem::path& root, Log log);
+    ScriptRuntime(Level& scene, const std::filesystem::path& root, Log log);
     /// Returns the host API scripts can use (the `throne` module and `std.math`) as
     /// the JSON the L^ language server reads from `lhat-host.json`.
     static std::string hostApi();

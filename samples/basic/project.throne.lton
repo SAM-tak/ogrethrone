@@ -1,0 +1,4 @@
+format = "ogrethrone-project",
+mainLevel = "levels/main.level.lton",
+name = "Basic Sample",
+version = 1,

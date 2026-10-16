@@ -1,5 +1,6 @@
-#include "editor/SceneEditor.h"
+#include "editor/Editor.h"
 #include "editor/OgreMath.h"
+#include "editor/Lton.h"
 #include "script/ScriptRuntime.h"
 #include <Compositor/OgreCompositorManager2.h>
 #include <Compositor/OgreCompositorNodeDef.h>
@@ -26,6 +27,9 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
+#include <fstream>
+#include <iterator>
 #include <filesystem>
 #include <limits>
 #include <stdexcept>
@@ -43,7 +47,7 @@ constexpr std::size_t historyLimit = 100, logLimit = 200;
 /// @throws std::runtime_error if it has not been registered.
 Ogre::HlmsUnlit& unlitHlms(Ogre::Root& root) {
     auto* hlms = root.getHlmsManager()->getHlms(Ogre::HLMS_UNLIT);
-    if (!hlms) throw std::runtime_error("SceneEditor requires HlmsUnlit");
+    if (!hlms) throw std::runtime_error("Editor requires HlmsUnlit");
     return *static_cast<Ogre::HlmsUnlit*>(hlms);
 }
 
@@ -57,7 +61,7 @@ Ogre::Quaternion orientation(Vec3 degrees) {
 }
 
 /// Returns the world transform of @p object.
-Ogre::Matrix4 transform(const SceneObject& object) {
+Ogre::Matrix4 transform(const LevelObject& object) {
     Ogre::Matrix4 result;
     result.makeTransform(toOgre(object.position), toOgre(object.scale), orientation(object.rotation));
     return result;
@@ -158,6 +162,34 @@ struct Layout {
     float top, width, height;
 };
 
+/// Level a project opens when it names no main level.
+constexpr const char* defaultLevelPath = "levels/main.level.lton";
+
+/// Where the launcher suggests creating projects: Documents/OgreThrone.
+std::filesystem::path defaultProjectParent() {
+#ifdef _WIN32
+    if (const wchar_t* profile = _wgetenv(L"USERPROFILE"))
+        return std::filesystem::path(profile) / "Documents" / "OgreThrone";
+#else
+    if (const char* home = std::getenv("HOME")) return std::filesystem::path(home) / "OgreThrone";
+#endif
+    return std::filesystem::current_path();
+}
+
+/// Formats UNIX time @p seconds as local "YYYY-MM-DD HH:MM".
+std::string formatTime(std::int64_t seconds) {
+    const auto time = static_cast<std::time_t>(seconds);
+    std::tm local{};
+#ifdef _WIN32
+    localtime_s(&local, &time);
+#else
+    localtime_r(&time, &local);
+#endif
+    char text[32];
+    std::strftime(text, sizeof text, "%Y-%m-%d %H:%M", &local);
+    return text;
+}
+
 /// Computes the panel layout for the current display size.
 Layout layout() {
     const auto& io = ImGui::GetIO();
@@ -166,11 +198,13 @@ Layout layout() {
 }
 }
 
-SceneEditor::SceneEditor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene,
-                         Ogre::Camera& camera)
+Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene, Ogre::Camera& camera,
+               const std::filesystem::path& project, std::filesystem::path projectList)
     : root_(root), window_(window), scene_(scene), camera_(camera), unlit_(unlitHlms(root)),
       platform_(window), gui_(std::make_unique<Ogre::ImguiManager>()),
-      guiPass_(std::make_unique<Ogre::CompositorPassImguiProvider>(gui_.get())) {
+      guiPass_(std::make_unique<Ogre::CompositorPassImguiProvider>(gui_.get())),
+      projects_(projectList.empty() ? ProjectList() : ProjectList::load(projectList)),
+      projectListFile_(std::move(projectList)) {
     auto& io = ImGui::GetIO();
     io.IniFilename = nullptr;
     io.Fonts->AddFontDefault();
@@ -219,13 +253,166 @@ SceneEditor::SceneEditor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneMana
     camera.setAutoAspectRatio(false);
     rebuildScene();
     updateCamera();
-    log("Editor ready");
+
+    std::snprintf(newParent_, sizeof newParent_, "%s", defaultProjectParent().u8string().c_str());
+    projectsChanged();
+    if (!project.empty()) openProject(project);
 }
 
-void SceneEditor::play() {
+void Editor::openProject(const std::filesystem::path& path) {
+    try {
+        auto project = Project::open(path);
+        if (runtime_) stop();
+        project_ = std::move(project);
+        projects_.touch(project_->root);
+        projectsChanged();
+        writeHostApi();
+        const auto level = project_->mainLevel.empty() ? std::string(defaultLevelPath) : project_->mainLevel;
+        std::snprintf(levelPath_, sizeof levelPath_, "%s", level.c_str());
+        document_ = std::filesystem::exists(project_->resolve(level)) ? Level::load(project_->resolve(level)) : Level();
+        undo_.clear();
+        redo_.clear();
+        dirty_ = false;
+        selected_ = document_.objects.empty() ? 0 : document_.objects.front().id;
+        rebuildScene();
+        focusSelection();
+        launcherError_.clear();
+        log("Opened project " + project_->name + " (" + project_->root.u8string() + ")");
+    } catch (const std::exception& error) {
+        project_.reset();
+        launcherError_ = error.what();
+    }
+}
+
+void Editor::closeProject() {
+    if (runtime_) stop();
+    project_.reset();
+    document_ = Level();
+    undo_.clear();
+    redo_.clear();
+    dirty_ = false;
+    selected_ = 0;
+    rebuildScene();
+    projectsChanged();
+}
+
+void Editor::writeHostApi() {
+    const auto json = ScriptRuntime::hostApi();
+    const auto path = project_->resolve("lhat-host.json");
+    std::ifstream current(path, std::ios::binary);
+    if (current && std::string((std::istreambuf_iterator<char>(current)), {}) == json) return;
+    current.close();
+    try {
+        lton::writeAtomically(path, json);
+        log("Updated lhat-host.json");
+    } catch (const std::exception& error) {
+        log(std::string("Could not write lhat-host.json: ") + error.what());
+    }
+}
+
+void Editor::projectsChanged() {
+    if (!projectListFile_.empty()) {
+        try {
+            projects_.save(projectListFile_);
+        } catch (const std::exception& error) {
+            launcherError_ = std::string("Could not save the project list: ") + error.what();
+        }
+    }
+    known_.clear();
+    for (const auto& entry : projects_.entries) {
+        Known known{entry.root, entry.root.filename().u8string(), formatTime(entry.lastOpened), false};
+        try {
+            known.name = Project::open(entry.root).name;
+            known.found = true;
+        } catch (const std::exception&) {
+        }
+        known_.push_back(std::move(known));
+    }
+}
+
+void Editor::launcher() {
+    const auto& io = ImGui::GetIO();
+    ImGui::SetNextWindowPos({0, 0});
+    ImGui::SetNextWindowSize(io.DisplaySize);
+    constexpr auto flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings;
+    if (ImGui::Begin("Launcher", nullptr, flags)) {
+        ImGui::TextUnformatted("Ogre Throne - Projects");
+        ImGui::Separator();
+        if (ImGui::Button("New Project")) form_ = Form::New, launcherError_.clear();
+        ImGui::SameLine();
+        if (ImGui::Button("Import")) form_ = Form::Import, launcherError_.clear();
+        if (form_ == Form::New) {
+            ImGui::InputText("Name", newName_, sizeof newName_);
+            ImGui::InputText("Parent folder", newParent_, sizeof newParent_);
+            if (ImGui::Button("Create")) {
+                try {
+                    openProject(Project::create(std::filesystem::u8path(newParent_), newName_).root);
+                    if (project_) form_ = Form::None;
+                } catch (const std::exception& error) {
+                    launcherError_ = error.what();
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) form_ = Form::None;
+        } else if (form_ == Form::Import) {
+            ImGui::InputTextWithHint("Folder", "folder containing project.throne.lton", importPath_,
+                                     sizeof importPath_);
+            if (ImGui::Button("Import and Open")) {
+                openProject(std::filesystem::u8path(importPath_));
+                if (project_) form_ = Form::None;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) form_ = Form::None;
+        }
+        if (!launcherError_.empty()) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "%s", launcherError_.c_str());
+        ImGui::Separator();
+
+        // Acting while iterating would invalidate known_, so remember the choice.
+        std::optional<std::filesystem::path> open, forget;
+        if (known_.empty()) ImGui::TextDisabled("No projects yet. Create one or import an existing folder.");
+        if (ImGui::BeginTable("Projects", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH)) {
+            ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch, 1);
+            ImGui::TableSetupColumn("Folder", ImGuiTableColumnFlags_WidthStretch, 2);
+            ImGui::TableSetupColumn("Last opened", ImGuiTableColumnFlags_WidthFixed, 130);
+            ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 60);
+            ImGui::TableHeadersRow();
+            for (std::size_t i = 0; i < known_.size(); ++i) {
+                const auto& known = known_[i];
+                ImGui::PushID(static_cast<int>(i));
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::BeginDisabled(!known.found);
+                if (ImGui::Selectable(known.name.c_str(), false,
+                                      ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap))
+                    open = known.root;
+                ImGui::EndDisabled();
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(known.root.u8string().c_str());
+                if (!known.found) {
+                    ImGui::SameLine();
+                    ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "(missing)");
+                }
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(known.lastOpened.c_str());
+                ImGui::TableNextColumn();
+                if (ImGui::SmallButton("Remove")) forget = known.root;
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
+        if (open) openProject(*open);
+        if (forget) {
+            projects_.remove(*forget);
+            projectsChanged();
+        }
+    }
+    ImGui::End();
+}
+
+void Editor::play() {
     playBackup_ = document_;
     try {
-        runtime_ = std::make_unique<ScriptRuntime>(document_, std::filesystem::current_path(),
+        runtime_ = std::make_unique<ScriptRuntime>(document_, project_->root,
                                                    [this](const std::string& line) { log(line); });
         log("Play");
     } catch (const ScriptError& error) {
@@ -234,13 +421,13 @@ void SceneEditor::play() {
     }
 }
 
-void SceneEditor::stop() {
+void Editor::stop() {
     runtime_.reset();
     document_ = std::move(playBackup_);
     log("Stop");
 }
 
-SceneEditor::~SceneEditor() {
+Editor::~Editor() {
     destroyWorkspaces();
     root_.getCompositorManager2()->setCompositorPassProvider(nullptr);
     // ImGui materials reference the viewport texture, so release them first.
@@ -253,11 +440,16 @@ SceneEditor::~SceneEditor() {
     unlit_.destroyDatablock(lineMaterial);
 }
 
-void SceneEditor::frame(float deltaSeconds) {
+void Editor::frame(float deltaSeconds) {
     platform_.newFrame();
     ImGui::GetIO().DeltaTime = std::max(deltaSeconds, 1.0e-4f);
     ImGui::NewFrame();
-    if (platform_.takeCloseRequest()) requestClose();
+    if (platform_.takeCloseRequest()) requestLeave(Leave::Exit);
+    if (!project_) {
+        launcher();
+        gui_->prepareForRender(&scene_);
+        return;
+    }
     if (runtime_) {
         try {
             runtime_->update(deltaSeconds);
@@ -279,7 +471,7 @@ void SceneEditor::frame(float deltaSeconds) {
     gui_->prepareForRender(&scene_);
 }
 
-void SceneEditor::rebuildScene() {
+void Editor::rebuildScene() {
     destroyRenderObjects();
     for (const auto& object : document_.objects) {
         const auto name = "ThroneEditor/Object/" + std::to_string(object.id);
@@ -291,7 +483,7 @@ void SceneEditor::rebuildScene() {
     syncTransforms();
 }
 
-void SceneEditor::destroyRenderObjects() {
+void Editor::destroyRenderObjects() {
     for (const auto& render : renderObjects_) {
         scene_.destroyManualObject(render.mesh);
         scene_.destroySceneNode(render.node);
@@ -300,7 +492,7 @@ void SceneEditor::destroyRenderObjects() {
     renderObjects_.clear();
 }
 
-void SceneEditor::syncTransforms() {
+void Editor::syncTransforms() {
     for (std::size_t i = 0; i < renderObjects_.size(); ++i) {
         const auto& object = document_.objects[i];
         const auto& render = renderObjects_[i];
@@ -319,16 +511,16 @@ void SceneEditor::syncTransforms() {
     }
 }
 
-void SceneEditor::checkpoint() { commit(document_); }
+void Editor::checkpoint() { commit(document_); }
 
-void SceneEditor::commit(SceneDocument before) {
+void Editor::commit(Level before) {
     undo_.push_back(std::move(before));
     if (undo_.size() > historyLimit) undo_.erase(undo_.begin());
     redo_.clear();
     dirty_ = true;
 }
 
-void SceneEditor::undo() {
+void Editor::undo() {
     if (undo_.empty()) return;
     redo_.push_back(std::move(document_));
     document_ = std::move(undo_.back());
@@ -337,7 +529,7 @@ void SceneEditor::undo() {
     rebuildScene();
 }
 
-void SceneEditor::redo() {
+void Editor::redo() {
     if (redo_.empty()) return;
     undo_.push_back(std::move(document_));
     document_ = std::move(redo_.back());
@@ -346,7 +538,7 @@ void SceneEditor::redo() {
     rebuildScene();
 }
 
-void SceneEditor::addCube() {
+void Editor::addCube() {
     try {
         auto before = document_;
         selected_ = document_.addCube().id;
@@ -357,7 +549,7 @@ void SceneEditor::addCube() {
     }
 }
 
-void SceneEditor::duplicate() {
+void Editor::duplicate() {
     const auto* source = document_.find(selected_);
     if (!source) return;
     try {
@@ -376,7 +568,7 @@ void SceneEditor::duplicate() {
     }
 }
 
-void SceneEditor::erase() {
+void Editor::erase() {
     auto& objects = document_.objects;
     const auto it = std::find_if(objects.begin(), objects.end(),
                                  [this](const auto& object) { return object.id == selected_; });
@@ -387,16 +579,16 @@ void SceneEditor::erase() {
     rebuildScene();
 }
 
-bool SceneEditor::open() {
+bool Editor::open() {
     try {
-        auto loaded = SceneDocument::load(std::filesystem::u8path(scenePath_));
+        auto loaded = Level::load(project_->resolve(levelPath_));
         checkpoint();
         document_ = std::move(loaded);
         dirty_ = false;
         selected_ = document_.objects.empty() ? 0 : document_.objects.front().id;
         rebuildScene();
         focusSelection();
-        log(std::string("Opened ") + scenePath_);
+        log(std::string("Opened ") + levelPath_);
         return true;
     } catch (const std::exception& error) {
         fileError_ = error.what();
@@ -405,11 +597,11 @@ bool SceneEditor::open() {
     }
 }
 
-bool SceneEditor::save() {
+bool Editor::save() {
     try {
-        document_.save(std::filesystem::u8path(scenePath_));
+        document_.save(project_->resolve(levelPath_));
         dirty_ = false;
-        log(std::string("Saved ") + scenePath_);
+        log(std::string("Saved ") + levelPath_);
         return true;
     } catch (const std::exception& error) {
         fileError_ = error.what();
@@ -418,7 +610,7 @@ bool SceneEditor::save() {
     }
 }
 
-void SceneEditor::shortcuts() {
+void Editor::shortcuts() {
     if (ImGui::GetIO().WantTextInput) return;
     if (ImGui::IsKeyPressed(ImGuiKey_F5, false)) runtime_ ? stop() : play();
     if (ImGui::IsKeyPressed(ImGuiKey_F, false)) focusSelection();
@@ -434,13 +626,13 @@ void SceneEditor::shortcuts() {
     if (ImGui::IsKeyPressed(ImGuiKey_Delete, false)) erase();
 }
 
-void SceneEditor::menu() {
+void Editor::menu() {
     if (!ImGui::BeginMainMenuBar()) return;
     const bool editing = !runtime_;
     if (ImGui::BeginMenu("File")) {
         if (ImGui::MenuItem("New", nullptr, false, editing)) {
             checkpoint();
-            document_ = SceneDocument();
+            document_ = Level();
             selected_ = 0;
             rebuildScene();
         }
@@ -448,7 +640,8 @@ void SceneEditor::menu() {
         if (ImGui::MenuItem("Save", "Ctrl+S", false, editing)) save();
         if (ImGui::MenuItem("Save As...", nullptr, false, editing)) showFiles_ = true, saving_ = true;
         ImGui::Separator();
-        if (ImGui::MenuItem("Exit")) requestClose();
+        if (ImGui::MenuItem("Close Project")) requestLeave(Leave::CloseProject);
+        if (ImGui::MenuItem("Exit")) requestLeave(Leave::Exit);
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Edit", editing)) {
@@ -469,19 +662,19 @@ void SceneEditor::menu() {
     }
     if (ImGui::MenuItem(runtime_ ? "Stop" : "Play", "F5")) runtime_ ? stop() : play();
     if (runtime_) ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.5f, 1), "Playing");
-    ImGui::TextDisabled("%s%s", scenePath_, dirty_ ? " *" : "");
+    ImGui::TextDisabled("%s%s", levelPath_, dirty_ ? " *" : "");
     ImGui::EndMainMenuBar();
 }
 
-void SceneEditor::fileDialog() {
+void Editor::fileDialog() {
     if (showFiles_) {
-        ImGui::OpenPopup("Scene File");
+        ImGui::OpenPopup("Level File");
         showFiles_ = false;
         fileError_.clear();
     }
-    if (!ImGui::BeginPopupModal("Scene File", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    if (!ImGui::BeginPopupModal("Level File", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
     ImGui::SetNextItemWidth(420);
-    const bool enter = ImGui::InputText("Path", scenePath_, sizeof scenePath_,
+    const bool enter = ImGui::InputText("Path", levelPath_, sizeof levelPath_,
                                         ImGuiInputTextFlags_EnterReturnsTrue);
     if (!fileError_.empty()) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "%s", fileError_.c_str());
     if ((ImGui::Button(saving_ ? "Save" : "Open") || enter) && (saving_ ? save() : open()))
@@ -491,30 +684,37 @@ void SceneEditor::fileDialog() {
     ImGui::EndPopup();
 }
 
-void SceneEditor::requestClose() {
+void Editor::requestLeave(Leave action) {
     if (runtime_) stop();
+    leaving_ = action;
     if (dirty_) confirmClose_ = true;
-    else close_ = true;
+    else leave(action);
 }
 
-void SceneEditor::closeDialog() {
+void Editor::leave(Leave action) {
+    if (action == Leave::Exit) close_ = true;
+    else closeProject();
+}
+
+void Editor::closeDialog() {
     if (confirmClose_) {
         ImGui::OpenPopup("Unsaved Changes");
         confirmClose_ = false;
         fileError_.clear();
     }
     if (!ImGui::BeginPopupModal("Unsaved Changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
-    ImGui::Text("Save changes to %s before closing?", scenePath_);
+    ImGui::Text("Save changes to %s first?", levelPath_);
     if (!fileError_.empty()) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "%s", fileError_.c_str());
-    if (ImGui::Button("Save") && save()) close_ = true;
+    // Close the popup first, because leaving may replace what it was drawn for.
+    if (ImGui::Button("Save") && save()) ImGui::CloseCurrentPopup(), leave(leaving_);
     ImGui::SameLine();
-    if (ImGui::Button("Discard")) close_ = true;
+    if (ImGui::Button("Discard")) ImGui::CloseCurrentPopup(), leave(leaving_);
     ImGui::SameLine();
     if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
 }
 
-void SceneEditor::hierarchy() {
+void Editor::hierarchy() {
     const auto area = layout();
     if (panel("Hierarchy", {0, area.top}, {leftWidth, area.height})) {
         ImGui::BeginDisabled(runtime_ != nullptr);
@@ -530,7 +730,7 @@ void SceneEditor::hierarchy() {
     ImGui::End();
 }
 
-void SceneEditor::inspector() {
+void Editor::inspector() {
     const auto area = layout();
     if (panel("Inspector", {area.width - rightWidth, area.top}, {rightWidth, area.height})) {
         if (auto* object = document_.find(selected_)) {
@@ -569,7 +769,7 @@ void SceneEditor::inspector() {
     ImGui::End();
 }
 
-void SceneEditor::viewport() {
+void Editor::viewport() {
     const auto area = layout();
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     if (panel("Viewport", {leftWidth, area.top}, {area.width - leftWidth - rightWidth, area.height},
@@ -601,21 +801,22 @@ void SceneEditor::viewport() {
     ImGui::PopStyleVar();
 }
 
-void SceneEditor::browser() {
+void Editor::browser() {
     const auto area = layout();
     if (panel("Browser", {0, area.top + area.height}, {area.width, bottomHeight})) {
         if (ImGui::BeginTabBar("BrowserTabs")) {
-            if (ImGui::BeginTabItem("Scenes")) {
-                constexpr std::string_view suffix = ".throne.lton";
+            if (ImGui::BeginTabItem("Levels")) {
+                constexpr std::string_view suffix = ".level.lton";
                 std::error_code error;
-                for (const auto& entry : std::filesystem::directory_iterator("scenes", error)) {
+                for (const auto& entry : std::filesystem::directory_iterator(project_->resolve("levels"), error)) {
                     const auto file = entry.path().filename().u8string();
                     if (file.size() <= suffix.size() ||
                         file.compare(file.size() - suffix.size(), suffix.size(), suffix) != 0)
                         continue;
-                    const auto path = entry.path().generic_u8string();
-                    if (ImGui::Selectable(file.c_str()) && !runtime_ && path.size() < sizeof scenePath_) {
-                        std::memcpy(scenePath_, path.c_str(), path.size() + 1);
+                    const auto path = "levels/" + file;
+                    if (ImGui::Selectable(file.c_str(), path == levelPath_) && !runtime_ &&
+                        path.size() < sizeof levelPath_) {
+                        std::memcpy(levelPath_, path.c_str(), path.size() + 1);
                         open();
                     }
                 }
@@ -632,7 +833,7 @@ void SceneEditor::browser() {
     ImGui::End();
 }
 
-void SceneEditor::updateCamera() {
+void Editor::updateCamera() {
     const Ogre::Vector3 offset(std::cos(pitch_) * std::sin(yaw_), std::sin(pitch_),
                                std::cos(pitch_) * std::cos(yaw_));
     camera_.setPosition(target_ + offset * distance_);
@@ -643,14 +844,14 @@ void SceneEditor::updateCamera() {
         camera_.setOrthoWindowHeight(2 * distance_ * std::tan(camera_.getFOVy().valueRadians() / 2));
 }
 
-void SceneEditor::focusSelection() {
+void Editor::focusSelection() {
     const auto* object = document_.find(selected_);
     if (!object) return;
     target_ = toOgre(object->position);
     distance_ = std::max({3.0f, object->scale.x * 3, object->scale.y * 3, object->scale.z * 3});
 }
 
-void SceneEditor::pick(float x, float y) {
+void Editor::pick(float x, float y) {
     const Ogre::Ray ray = camera_.getCameraToViewportRay(x, y);
     const Ogre::AxisAlignedBox unit(-0.5f, -0.5f, -0.5f, 0.5f, 0.5f, 0.5f);
     auto nearest = std::numeric_limits<Ogre::Real>::max();
@@ -668,7 +869,7 @@ void SceneEditor::pick(float x, float y) {
     }
 }
 
-void SceneEditor::resizeViewport(unsigned width, unsigned height) {
+void Editor::resizeViewport(unsigned width, unsigned height) {
     if (width == viewportWidth_ && height == viewportHeight_) return;
     destroyWorkspaces();
     // Resizing in place keeps the TextureGpu pointer that ImGui caches its material by.
@@ -680,14 +881,14 @@ void SceneEditor::resizeViewport(unsigned width, unsigned height) {
     createWorkspaces();
 }
 
-void SceneEditor::createWorkspaces() {
+void Editor::createWorkspaces() {
     auto* compositor = root_.getCompositorManager2();
     viewportWorkspace_ = compositor->addWorkspace(&scene_, texture_, &camera_, viewportWorkspaceName, true);
     const Ogre::CompositorChannelVec channels{window_.getTexture(), texture_};
     windowWorkspace_ = compositor->addWorkspace(&scene_, channels, &camera_, windowWorkspaceName, true);
 }
 
-void SceneEditor::destroyWorkspaces() {
+void Editor::destroyWorkspaces() {
     auto* compositor = root_.getCompositorManager2();
     for (auto** workspace : {&windowWorkspace_, &viewportWorkspace_}) {
         if (*workspace) compositor->removeWorkspace(*workspace);
@@ -695,7 +896,7 @@ void SceneEditor::destroyWorkspaces() {
     }
 }
 
-void SceneEditor::log(const std::string& message) {
+void Editor::log(const std::string& message) {
     messages_.push_back(message);
     if (messages_.size() > logLimit) messages_.erase(messages_.begin());
     Ogre::LogManager::getSingleton().logMessage("Editor: " + message);

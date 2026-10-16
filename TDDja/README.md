@@ -8,6 +8,8 @@ Ogre Throne の設計に関する文書を置く。
 | --- | --- | --- |
 | [01-technology-stack.md](01-technology-stack.md) | 技術スタックの採用方針・比較経緯・実装状況・未決事項 | 採用方針確定／一部未決 |
 | [02-scripting.md](02-scripting.md) | L^ スクリプトの結線（Play モード、ホスト API、シーンの LTON 化） | 合意済み／第 1 段階実装済み |
+| [03-project.md](03-project.md) | プロジェクトフォルダの構成・パスの基準・プロジェクトランチャー | 合意済み／第 1 段階実装済み |
+| [04-level.md](04-level.md) | レベル（ゲーム側の LTON）と OGRE 形式のグラフィックのリソースの分担 | 一部提案中／改名と `levels/` のみ実装済み |
 
 ## 記法
 

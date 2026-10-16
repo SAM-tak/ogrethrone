@@ -1,5 +1,5 @@
 #include "audio/AudioSystem.h"
-#include "editor/SceneEditor.h"
+#include "editor/Editor.h"
 #include "runtime/PhysicsWorld.h"
 #include "script/ScriptRuntime.h"
 #include <OgreAbiUtils.h>
@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <thread>
 #include <stdexcept>
@@ -55,6 +56,17 @@ int main(int argc, char** argv) {
         return 0;
     }
     const bool smoke = argc > 1 && std::strcmp(argv[1], "--smoke") == 0;
+    // `ogrethrone <folder>` opens that project; --smoke uses a throwaway one and leaves
+    // the user's project list alone; otherwise the launcher is shown.
+    std::filesystem::path project, projectList = throne::ProjectList::defaultFile();
+    if (smoke) {
+        project = std::filesystem::temp_directory_path() / "ogrethrone-smoke";
+        std::filesystem::remove_all(project);
+        throne::Project::create(project.parent_path(), project.filename().u8string());
+        projectList.clear();
+    } else if (argc > 1) {
+        project = std::filesystem::u8path(argv[1]);
+    }
     try {
         throne::AudioSystem audio(smoke);
         const auto abi = Ogre::generateAbiCookie();
@@ -74,7 +86,7 @@ int main(int argc, char** argv) {
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
         {
-            throne::SceneEditor editor(root, *window, *scene, *camera);
+            throne::Editor editor(root, *window, *scene, *camera, project, projectList);
             Colibri::LogListener guiLog;
             Colibri::ColibriListener guiPlatform;
             Colibri::ColibriManager gui(&guiLog, &guiPlatform);
@@ -100,6 +112,7 @@ int main(int argc, char** argv) {
             }
         }
         ImGui::DestroyContext();
+        if (smoke) std::filesystem::remove_all(project);
         root.shutdown();
         return 0;
     } catch (const std::exception& error) {

@@ -1,0 +1,55 @@
+format = "ogrethrone-level",
+objects = {
+    {
+        colour = {
+            0.32,
+            0.62,
+            0.82,
+        },
+        id = 1,
+        name = "Spinning Cube",
+        position = {
+            0.0,
+            0.5,
+            0.0,
+        },
+        rotation = {
+            0.0,
+            0.0,
+            0.0,
+        },
+        scale = {
+            1.0,
+            1.0,
+            1.0,
+        },
+        script = "scripts/spin.lh",
+        type = "cube",
+    },
+    {
+        colour = {
+            0.86,
+            0.53,
+            0.25,
+        },
+        id = 2,
+        name = "Cube 2",
+        position = {
+            2.0,
+            0.75,
+            -1.0,
+        },
+        rotation = {
+            0.0,
+            0.0,
+            0.0,
+        },
+        scale = {
+            1.0,
+            1.5,
+            1.0,
+        },
+        type = "cube",
+    },
+},
+version = 1,

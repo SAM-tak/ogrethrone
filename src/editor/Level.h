@@ -8,9 +8,9 @@
 #include <vector>
 
 namespace throne {
-/// One editable object in a scene. Currently every object is a unit cube.
-struct SceneObject {
-    /// Unique nonzero ID within its document.
+/// One game object of a level (TDDja/04). Currently every object is a unit cube.
+struct LevelObject {
+    /// Unique nonzero ID within its level.
     std::uint32_t id = 0;
     /// Display name; 1 to 255 bytes of UTF-8.
     std::string name;
@@ -27,19 +27,20 @@ struct SceneObject {
     std::string script;
 };
 
-/// The editor's scene data, independent of OGRE and the simulation world.
-struct SceneDocument {
+/// The game-side data of one level (TDDja/04), independent of OGRE and the
+/// simulation world. "Scene" is left to OGRE's rendering terms.
+struct Level {
     /// Objects in hierarchy order.
-    std::vector<SceneObject> objects;
+    std::vector<LevelObject> objects;
     /// ID assigned to the next added object.
     std::uint32_t nextId = 1;
 
     /// Appends a cube with default transform and a generated name.
     /// @throws std::runtime_error when the ID space is exhausted.
-    SceneObject& addCube();
+    LevelObject& addCube();
     /// Returns the object with @p id, or nullptr.
-    SceneObject* find(std::uint32_t id);
-    /// Writes the document as `ogrethrone-scene` version 1 LTON (L^ Table Object Notation).
+    LevelObject* find(std::uint32_t id);
+    /// Writes the level as `ogrethrone-level` version 1 LTON (L^ Table Object Notation).
     ///
     /// The file is written to a temporary sibling and then replaced, so a failed
     /// save leaves any existing file intact.
@@ -49,9 +50,9 @@ struct SceneDocument {
     ///
     /// The text is evaluated by L^ as the body of an f^, so it may contain
     /// expressions but cannot call anything with effects.
-    /// @throws std::runtime_error when the file is missing, malformed or out of range.
-    static SceneDocument load(const std::filesystem::path& path);
-    /// Returns a small two-cube scene used when the editor starts.
-    static SceneDocument example();
+    /// @throws lton::Invalid when the file is missing, malformed or out of range.
+    static Level load(const std::filesystem::path& path);
+    /// Returns a small two-cube level, written as a new project's main level.
+    static Level example();
 };
 }

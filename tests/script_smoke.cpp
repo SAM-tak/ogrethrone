@@ -25,7 +25,7 @@ void write(const fs::path& root, const char* path, const char* text) {
 /// raises while starting or within three frames, or an empty string.
 std::string error(const fs::path& root, const char* script) {
     write(root, "scripts/broken.lh", script);
-    auto scene = throne::SceneDocument::example();
+    auto scene = throne::Level::example();
     scene.objects[0].script = "scripts/broken.lh";
     try {
         throne::ScriptRuntime runtime(scene, root, [](const std::string&) {});
@@ -72,7 +72,7 @@ int main() {
     write(root, "scripts/spin.lh", spin);
     write(root, "scripts/main.lh", mainScript);
 
-    auto scene = throne::SceneDocument::example();
+    auto scene = throne::Level::example();
     scene.objects[0].script = "scripts/spin.lh";
     std::vector<std::string> logged;
     try {

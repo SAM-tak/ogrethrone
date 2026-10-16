@@ -40,7 +40,7 @@ std::string_view text(LhatValue value) {
 }
 
 /// Returns the component storage of one of an object's vector properties (0-3).
-float* property(SceneObject& object, int which) {
+float* property(LevelObject& object, int which) {
     switch (which) {
     case 0: return object.position.data();
     case 1: return object.rotation.data();
@@ -51,7 +51,7 @@ float* property(SceneObject& object, int which) {
 }
 
 struct ScriptRuntime::State {
-    SceneDocument& scene;
+    Level& scene;
     std::filesystem::path root;
     Log log;
     Program program{nullptr, &lhat_program_free};
@@ -68,7 +68,7 @@ struct ScriptRuntime::State {
     std::vector<Behaviour> behaviours;
     double time = 0;
 
-    State(SceneDocument& scene, std::filesystem::path root, Log log)
+    State(Level& scene, std::filesystem::path root, Log log)
         : scene(scene), root(std::move(root)), log(std::move(log)) {}
 
     /// Keeps @p value alive for the session and returns it.
@@ -121,7 +121,7 @@ struct ScriptRuntime::State {
     }
 
     /// Returns the scene object a throne.Object handle names, or panics and answers null.
-    SceneObject* target(LhatMachine* running, LhatValue value) {
+    LevelObject* target(LhatMachine* running, LhatValue value) {
         const auto id = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(lhat_hostdata_pointer(value, object)));
         if (auto* found = scene.find(id)) return found;
         lhat_machine_panic_text(running, "throne.Object refers to a deleted object; check valid() first");
@@ -364,7 +364,7 @@ void createProgram(State& s) {
 }
 
 std::string ScriptRuntime::hostApi() {
-    SceneDocument none;
+    Level none;
     State s(none, {}, {});
     createProgram(s);
     std::string json(lhat_program_dump_host_api(s.program.get(), nullptr, 0) + 1, '\0');
@@ -373,7 +373,7 @@ std::string ScriptRuntime::hostApi() {
     return json;
 }
 
-ScriptRuntime::ScriptRuntime(SceneDocument& scene, const std::filesystem::path& root, Log log)
+ScriptRuntime::ScriptRuntime(Level& scene, const std::filesystem::path& root, Log log)
     : state_(std::make_unique<State>(scene, root, std::move(log))) {
     auto& s = *state_;
     createProgram(s);
