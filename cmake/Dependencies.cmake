@@ -8,9 +8,11 @@ set(BUILD_SHARED_LIBS OFF CACHE BOOL "Use static dependencies")
 add_subdirectory(third_party/box3d EXCLUDE_FROM_ALL)
 # Box3D explicitly selects the static MSVC runtime; use the same runtime throughout.
 
-foreach(feature IN ITEMS TESTS CLI LSP DAP BENCH STDLIB)
+foreach(feature IN ITEMS TESTS CLI LSP DAP BENCH)
     set(LHAT_BUILD_${feature} OFF CACHE BOOL "Only build the embedded L^ runtime")
 endforeach()
+# The standard library provides LTON reading/writing and the modules scripts may use.
+set(LHAT_BUILD_STDLIB ON CACHE BOOL "Build the L^ standard library" FORCE)
 add_subdirectory("${THRONE_LHAT_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/third_party/lhat" EXCLUDE_FROM_ALL)
 
 if(NOT THRONE_BUILD_GRAPHICS)

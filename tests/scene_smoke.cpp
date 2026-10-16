@@ -13,7 +13,7 @@ int fail(const char* message) {
 
 int main() {
     const auto directory = std::filesystem::temp_directory_path() / "throne_scene_smoke";
-    const auto path = directory / "roundtrip.throne.json";
+    const auto path = directory / "roundtrip.throne.lton";
     auto original = throne::SceneDocument::example();
     original.objects.back().rotation = {0, 45, 10};
     original.objects.back().name = "Crate \xE2\x9C\x93";
@@ -30,14 +30,20 @@ int main() {
             return fail("Object changed after save/load");
     }
 
-    std::ofstream(path, std::ios::trunc) << R"({"format":"ogrethrone-scene","version":1,"objects":[)"
-                                         << R"({"id":1,"name":"A","type":"cube","position":[0,0,0],)"
-                                         << R"("rotation":[0,0,0],"scale":[0,1,1],"colour":[1,1,1]}]})";
-    try {
-        throne::SceneDocument::load(path);
+    const auto rejects = [&](const char* text) {
+        std::ofstream(path, std::ios::binary | std::ios::trunc) << text;
+        try {
+            throne::SceneDocument::load(path);
+            return false;
+        } catch (const std::runtime_error&) {
+            return true;
+        }
+    };
+    if (!rejects(R"(format = "ogrethrone-scene", version = 1, objects = {{ id = 1, name = "A", type = "cube",
+                 position = {0, 0, 0}, rotation = {0, 0, 0}, scale = {0, 1, 1}, colour = {1, 1, 1} }})"))
         return fail("Zero scale was accepted");
-    } catch (const std::runtime_error&) {
-    }
+    if (!rejects(R"(format = "ogrethrone-scene", version = 1, objects = {}, x = std.io.write("x"))"))
+        return fail("A scene that calls a procedure was accepted");
     std::filesystem::remove_all(directory);
     std::printf("Scene save/load preserved %zu objects\n", loaded.objects.size());
 }

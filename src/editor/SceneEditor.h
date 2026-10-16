@@ -138,7 +138,7 @@ private:
     unsigned viewportWidth_ = 0, viewportHeight_ = 0;
     bool showGrid_ = true, orthographic_ = false, close_ = false;
     bool dirty_ = false, showFiles_ = false, saving_ = true, confirmClose_ = false;
-    char scenePath_[512] = "scenes/Untitled.throne.json";
+    char scenePath_[512] = "scenes/Untitled.throne.lton";
     std::string fileError_;
     std::vector<std::string> messages_;
 };

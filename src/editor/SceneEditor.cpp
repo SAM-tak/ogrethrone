@@ -564,7 +564,7 @@ void SceneEditor::browser() {
     if (panel("Browser", {0, area.top + area.height}, {area.width, bottomHeight})) {
         if (ImGui::BeginTabBar("BrowserTabs")) {
             if (ImGui::BeginTabItem("Scenes")) {
-                constexpr std::string_view suffix = ".throne.json";
+                constexpr std::string_view suffix = ".throne.lton";
                 std::error_code error;
                 for (const auto& entry : std::filesystem::directory_iterator("scenes", error)) {
                     const auto file = entry.path().filename().u8string();

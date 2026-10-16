@@ -48,7 +48,9 @@ endif()
 
 add_library(throne_scene STATIC src/editor/SceneDocument.cpp)
 target_include_directories(throne_scene PUBLIC src)
-target_include_directories(throne_scene PRIVATE third_party/rapidjson/include)
+# stdlib/*.h are included by path relative to the L^ source root.
+target_include_directories(throne_scene PRIVATE "${THRONE_LHAT_SOURCE_DIR}")
+target_link_libraries(throne_scene PRIVATE lhatstdlib)
 
 add_executable(throne_scene_smoke tests/scene_smoke.cpp)
 target_link_libraries(throne_scene_smoke PRIVATE throne_scene)

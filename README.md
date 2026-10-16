@@ -41,8 +41,8 @@ the same MSVC runtime as OGRE. SDK shader compiler libraries are not linked.
 `ogrethrone` starts the scene editor: a Dear ImGui hierarchy, inspector, file
 browser/log and an offscreen-rendered viewport. Scenes are cubes with position,
 rotation (degrees, applied about X, then Y, then Z), scale and colour, saved as
-`*.throne.json` (relative paths resolve against the working directory; the browser
-lists `scenes/`). Right-drag orbits, middle-drag pans, the wheel zooms, left-click
+`*.throne.lton` (L^ Table Object Notation, read by L^ as effect-free data).
+Relative paths resolve against the working directory; the browser lists `scenes/`. Right-drag orbits, middle-drag pans, the wheel zooms, left-click
 selects and `F` frames the selection. Ctrl+Z/Ctrl+Y undo/redo, Ctrl+D duplicates,
 Delete removes, Ctrl+S saves and Ctrl+O opens. New and Open are undoable; closing
 with unsaved changes asks to save or discard them (on Windows this also covers the

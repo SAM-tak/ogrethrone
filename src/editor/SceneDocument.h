@@ -36,13 +36,16 @@ struct SceneDocument {
     SceneObject& addCube();
     /// Returns the object with @p id, or nullptr.
     SceneObject* find(std::uint32_t id);
-    /// Writes the document as `ogrethrone-scene` version 1 JSON.
+    /// Writes the document as `ogrethrone-scene` version 1 LTON (L^ Table Object Notation).
     ///
     /// The file is written to a temporary sibling and then replaced, so a failed
     /// save leaves any existing file intact.
     /// @throws std::runtime_error on non-finite values or I/O failure.
     void save(const std::filesystem::path& path) const;
     /// Reads and validates a document written by save().
+    ///
+    /// The text is evaluated by L^ as the body of an f^, so it may contain
+    /// expressions but cannot call anything with effects.
     /// @throws std::runtime_error when the file is missing, malformed or out of range.
     static SceneDocument load(const std::filesystem::path& path);
     /// Returns a small two-cube scene used when the editor starts.
