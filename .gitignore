@@ -3,7 +3,6 @@
 /.fetchcontent-cache/
 /CMakeUserPresets.json
 /.vs/
-/.vscode/
 *.log
 imgui.ini
 

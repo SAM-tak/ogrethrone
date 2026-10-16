@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.25)
 project(OgreThrone VERSION 0.1.0 LANGUAGES C CXX)
 
-set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "Compatibility for bundled dependency build scripts")
+# Keep bundled dependency policies above CMake's deprecated compatibility range.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.10)
 set(CMAKE_POLICY_DEFAULT_CMP0126 NEW)
 set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
 set(CMAKE_CXX_STANDARD 17)

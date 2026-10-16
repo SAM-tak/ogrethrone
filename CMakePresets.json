@@ -14,7 +14,8 @@
       "displayName": "Windows x64 / Clang / Vulkan",
       "binaryDir": "${sourceDir}/out/build/windows-clang-ninja",
       "generator": "Ninja Multi-Config",
-      "cacheVariables": {"CMAKE_C_COMPILER": "clang-cl", "CMAKE_CXX_COMPILER": "clang-cl"},
+      "architecture": {"value": "x64", "strategy": "external"},
+      "cacheVariables": {"CMAKE_C_COMPILER": "clang-cl", "CMAKE_CXX_COMPILER": "clang-cl", "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"},
       "environment": {"PATH": "$penv{VSINSTALLDIR}/VC/Tools/Llvm/x64/bin;$penv{PATH}"}
     },
     {

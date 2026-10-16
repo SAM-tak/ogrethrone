@@ -1,0 +1,21 @@
+{
+  "cmake.useCMakePresets": "always",
+  "cmake.useVsDeveloperEnvironment": "always",
+  "cmake.sourceDirectory": "${workspaceFolder}",
+  "cmake.autoDetectSourceDirectory": false,
+  "cmake.exclude": [
+    "${workspaceFolder}/third_party",
+    "${workspaceFolder}/out",
+    "${workspaceFolder}/.fetchcontent-cache"
+  ],
+  "cmake.configureOnOpen": true,
+  "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+  "search.exclude": {
+    "**/out/**": true,
+    "**/.fetchcontent-cache/**": true
+  },
+  "files.watcherExclude": {
+    "**/out/**": true,
+    "**/.fetchcontent-cache/**": true
+  }
+}

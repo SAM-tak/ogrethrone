@@ -78,6 +78,32 @@ compiled the ImGui vertex and fragment shaders successfully; Release also passed
 the audio device playback check. The separate MSVC headless preset passed all
 three CTest checks. CI is configured to check both Windows compilers.
 
+## VS Code
+
+Open the repository root as a folder. The shared `.vscode` configuration recommends
+CMake Tools and C/C++, uses CMake Presets for build flags and IntelliSense, and
+lets CMake Tools initialize the Visual Studio developer environment on Windows.
+Select the `windows` configure preset and `windows-debug` build preset, then
+select `ogrethrone` with **CMake: Set Debug Target** (or the launch-target picker).
+`Ctrl+Shift+B` builds the active preset; **Tasks: Run Test Task** runs CTest.
+The supplied Windows F5 configuration launches the selected CMake target with
+the Visual Studio debugger. Choose a Debug build for debugging.
+
+This engine currently has no C# component. In the Extensions view, select
+**Disable (Workspace)** for C# Dev Kit (`ms-dotnettools.csdevkit`) and C#
+(`ms-dotnettools.csharp`), then reload the window if prompted. This prevents .NET
+project discovery from treating old C# examples bundled with zlib as engine
+projects. The `unwantedRecommendations` list documents this choice; it does not
+disable already installed extensions. Other workspaces retain their C# support.
+
+Do not convert the bundled `DotZLib.csproj` or restore its NuGet packages to build
+this engine. It is outside the CMake target graph. Configure from the root rather
+than opening third-party CMake projects independently.
+
+The parent sets the minimum dependency policy version to 3.10. This avoids CMake's
+deprecated pre-3.10 compatibility mode without suppressing deprecation warnings
+globally or modifying the bundled ICU sources.
+
 ## Audio
 
 SoLoud is pinned as a submodule. The parent builds its mixer, WAV/Ogg Vorbis/MP3
