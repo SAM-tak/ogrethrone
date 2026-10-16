@@ -113,6 +113,55 @@ The parent sets the minimum dependency policy version to 3.10. This avoids CMake
 deprecated pre-3.10 compatibility mode without suppressing deprecation warnings
 globally or modifying the bundled ICU sources.
 
+## Scripting
+
+Scripts are written in L^ and run only in the editor's Play mode (F5 or the Play
+menu item). Play runs on a copy of the scene; Stop discards it, so script changes
+to objects never reach the edited document. Editing is disabled while playing.
+Each Play checks and compiles every script anew, so edited scripts take effect
+on the next Play. Rejected scripts, run-time errors, and frames over the loop
+budget (treated as endless loops) are written to the Log tab and stop Play.
+
+Paths are relative to the working directory. `scripts/main.lh` is optional; when
+present it must declare `module^` and may publish `start: p^;` and
+`update: p^number^;`. An object's **Script** field names a `module^` that
+publishes a definition called `Behaviour`; each scripted object gets its own
+instance, whose `self^{ ... }` fields hold per-object state:
+
+```lhat
+module^ samples.spin
+import^ throne
+
+public^let^Behaviour = def^{
+    self^{ degreesPerSecond = 90 },
+    start = p^self^, obj:throne.Object { throne.log("hello " .. obj.name()) },
+    update = p^self^, obj:throne.Object, dt:number^ {
+        var^ r = obj.rotation()
+        r.y := r.y + self^.degreesPerSecond * dt
+        obj.setRotation(r)
+    },
+}
+```
+
+`start` and `update` are optional; when present their signatures are checked
+before Play starts. Order per frame: `main.lh`, then objects in hierarchy order;
+every `start` runs once before the first `update`.
+
+The `throne` module provides:
+
+- `throne.Vec3`: a value type with `x`/`y`/`z`, `+`, `-`, `*` and `/` by a number,
+  `dot`, `cross`, `length` and `normalized`; made with `throne.vec3(x, y, z)`. The
+  axes match OGRE, Box3D and Steam Audio: right-handed, +Y up, -Z forward. Like
+  any L^ host value it cannot be stored in a table; keep one with `throne.Vec3.Box^`.
+- `throne.Object`: `id()`, `name()`, `valid()`, `position()`/`rotation()`/`scale()`/
+  `colour()` and the matching `setPosition(v)` etc. Rotation is in degrees, applied
+  about X, then Y, then Z; scale and colour are clamped to their valid ranges.
+  Using a handle whose object no longer exists panics; check `valid()` first.
+- `throne.find(name)`, `throne.log(text)` and `throne.time()` (seconds since Play).
+
+`std.math` is the only standard module scripts can import. [`scripts/spin.lh`](scripts/spin.lh)
+is a sample. The design is recorded in [TDDja/02-scripting.md](TDDja/02-scripting.md).
+
 ## Audio
 
 SoLoud is pinned as a submodule. The parent builds its mixer, WAV/Ogg Vorbis/MP3

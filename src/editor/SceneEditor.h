@@ -23,6 +23,8 @@ class HlmsUnlitDatablock;
 }
 
 namespace throne {
+class ScriptRuntime;
+
 /// Dear ImGui scene editor drawn over the OGRE window.
 ///
 /// The scene is rendered into an offscreen texture shown in the viewport panel;
@@ -86,6 +88,11 @@ private:
     void menu();
     /// Draws the modal open/save dialog requested through showFiles_.
     void fileDialog();
+    /// Enters Play mode: runs the scripts on a copy of the document (TDDja/02 3).
+    /// Rejected scripts are reported in the log and Play is not entered.
+    void play();
+    /// Leaves Play mode and restores the document as it was before play().
+    void stop();
     /// Closes immediately, or asks first when the document has unsaved changes.
     void requestClose();
     /// Draws the Save / Discard / Cancel prompt requested through confirmClose_.
@@ -132,6 +139,9 @@ private:
     SceneDocument document_ = SceneDocument::example();
     SceneDocument editStart_;
     std::vector<SceneDocument> undo_, redo_;
+    /// Non-null while playing; runs on document_, with the edited state kept in playBackup_.
+    std::unique_ptr<ScriptRuntime> runtime_;
+    SceneDocument playBackup_;
     std::uint32_t selected_ = 1;
     Ogre::Vector3 target_{0, 0.5f, 0};
     float yaw_ = 0.65f, pitch_ = 0.45f, distance_ = 9.0f;

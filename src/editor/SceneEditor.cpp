@@ -1,5 +1,6 @@
 #include "editor/SceneEditor.h"
 #include "editor/OgreMath.h"
+#include "script/ScriptRuntime.h"
 #include <Compositor/OgreCompositorManager2.h>
 #include <Compositor/OgreCompositorNodeDef.h>
 #include <Compositor/OgreCompositorWorkspace.h>
@@ -221,6 +222,24 @@ SceneEditor::SceneEditor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneMana
     log("Editor ready");
 }
 
+void SceneEditor::play() {
+    playBackup_ = document_;
+    try {
+        runtime_ = std::make_unique<ScriptRuntime>(document_, std::filesystem::current_path(),
+                                                   [this](const std::string& line) { log(line); });
+        log("Play");
+    } catch (const ScriptError& error) {
+        document_ = std::move(playBackup_);
+        log(std::string("Play refused:\n") + error.what());
+    }
+}
+
+void SceneEditor::stop() {
+    runtime_.reset();
+    document_ = std::move(playBackup_);
+    log("Stop");
+}
+
 SceneEditor::~SceneEditor() {
     destroyWorkspaces();
     root_.getCompositorManager2()->setCompositorPassProvider(nullptr);
@@ -239,6 +258,14 @@ void SceneEditor::frame(float deltaSeconds) {
     ImGui::GetIO().DeltaTime = std::max(deltaSeconds, 1.0e-4f);
     ImGui::NewFrame();
     if (platform_.takeCloseRequest()) requestClose();
+    if (runtime_) {
+        try {
+            runtime_->update(deltaSeconds);
+        } catch (const ScriptError& error) {
+            log(error.what());
+            stop();
+        }
+    }
     shortcuts();
     menu();
     hierarchy();
@@ -393,6 +420,10 @@ bool SceneEditor::save() {
 
 void SceneEditor::shortcuts() {
     if (ImGui::GetIO().WantTextInput) return;
+    if (ImGui::IsKeyPressed(ImGuiKey_F5, false)) runtime_ ? stop() : play();
+    if (ImGui::IsKeyPressed(ImGuiKey_F, false)) focusSelection();
+    // Play mode runs on a copy, so editing is disabled until Stop.
+    if (runtime_) return;
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Z)) undo();
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Y) ||
         ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z))
@@ -401,26 +432,26 @@ void SceneEditor::shortcuts() {
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_O)) showFiles_ = true, saving_ = false;
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_D)) duplicate();
     if (ImGui::IsKeyPressed(ImGuiKey_Delete, false)) erase();
-    if (ImGui::IsKeyPressed(ImGuiKey_F, false)) focusSelection();
 }
 
 void SceneEditor::menu() {
     if (!ImGui::BeginMainMenuBar()) return;
+    const bool editing = !runtime_;
     if (ImGui::BeginMenu("File")) {
-        if (ImGui::MenuItem("New")) {
+        if (ImGui::MenuItem("New", nullptr, false, editing)) {
             checkpoint();
             document_ = SceneDocument();
             selected_ = 0;
             rebuildScene();
         }
-        if (ImGui::MenuItem("Open...", "Ctrl+O")) showFiles_ = true, saving_ = false;
-        if (ImGui::MenuItem("Save", "Ctrl+S")) save();
-        if (ImGui::MenuItem("Save As...")) showFiles_ = true, saving_ = true;
+        if (ImGui::MenuItem("Open...", "Ctrl+O", false, editing)) showFiles_ = true, saving_ = false;
+        if (ImGui::MenuItem("Save", "Ctrl+S", false, editing)) save();
+        if (ImGui::MenuItem("Save As...", nullptr, false, editing)) showFiles_ = true, saving_ = true;
         ImGui::Separator();
         if (ImGui::MenuItem("Exit")) requestClose();
         ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu("Edit")) {
+    if (ImGui::BeginMenu("Edit", editing)) {
         if (ImGui::MenuItem("Undo", "Ctrl+Z", false, !undo_.empty())) undo();
         if (ImGui::MenuItem("Redo", "Ctrl+Y", false, !redo_.empty())) redo();
         ImGui::Separator();
@@ -436,6 +467,8 @@ void SceneEditor::menu() {
         if (ImGui::MenuItem("Focus Selection", "F")) focusSelection();
         ImGui::EndMenu();
     }
+    if (ImGui::MenuItem(runtime_ ? "Stop" : "Play", "F5")) runtime_ ? stop() : play();
+    if (runtime_) ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.5f, 1), "Playing");
     ImGui::TextDisabled("%s%s", scenePath_, dirty_ ? " *" : "");
     ImGui::EndMainMenuBar();
 }
@@ -459,6 +492,7 @@ void SceneEditor::fileDialog() {
 }
 
 void SceneEditor::requestClose() {
+    if (runtime_) stop();
     if (dirty_) confirmClose_ = true;
     else close_ = true;
 }
@@ -483,7 +517,9 @@ void SceneEditor::closeDialog() {
 void SceneEditor::hierarchy() {
     const auto area = layout();
     if (panel("Hierarchy", {0, area.top}, {leftWidth, area.height})) {
+        ImGui::BeginDisabled(runtime_ != nullptr);
         if (ImGui::Button("Add Cube")) addCube();
+        ImGui::EndDisabled();
         ImGui::Separator();
         for (const auto& object : document_.objects) {
             ImGui::PushID(static_cast<int>(object.id));
@@ -498,6 +534,7 @@ void SceneEditor::inspector() {
     const auto area = layout();
     if (panel("Inspector", {area.width - rightWidth, area.top}, {rightWidth, area.height})) {
         if (auto* object = document_.find(selected_)) {
+            ImGui::BeginDisabled(runtime_ != nullptr);
             // One undo step per widget interaction, recorded when the widget is released.
             const auto track = [this] {
                 if (ImGui::IsItemActivated()) editStart_ = document_;
@@ -516,10 +553,15 @@ void SceneEditor::inspector() {
             track();
             ImGui::ColorEdit3("Colour", object->colour.data());
             track();
+            char script[256];
+            std::snprintf(script, sizeof script, "%s", object->script.c_str());
+            if (ImGui::InputTextWithHint("Script", "scripts/....lh", script, sizeof script)) object->script = script;
+            track();
             ImGui::Separator();
             if (ImGui::Button("Duplicate")) duplicate();
             ImGui::SameLine();
             if (ImGui::Button("Delete")) erase();
+            ImGui::EndDisabled();
         } else {
             ImGui::TextDisabled("Nothing selected");
         }
@@ -572,7 +614,7 @@ void SceneEditor::browser() {
                         file.compare(file.size() - suffix.size(), suffix.size(), suffix) != 0)
                         continue;
                     const auto path = entry.path().generic_u8string();
-                    if (ImGui::Selectable(file.c_str()) && path.size() < sizeof scenePath_) {
+                    if (ImGui::Selectable(file.c_str()) && !runtime_ && path.size() < sizeof scenePath_) {
                         std::memcpy(scenePath_, path.c_str(), path.size() + 1);
                         open();
                     }

@@ -199,6 +199,7 @@ void SceneDocument::save(const std::filesystem::path& path) const {
         build.set(entry, "rotation", build.vector(object.rotation.data()));
         build.set(entry, "scale", build.vector(object.scale.data()));
         build.set(entry, "colour", build.vector(object.colour.data()));
+        if (!object.script.empty()) build.set(entry, "script", build.string(object.script));
         build.set(list, lhat_integer(static_cast<LhatInteger>(i)), entry);
     }
     build.set(root, "objects", list);
@@ -252,6 +253,10 @@ SceneDocument SceneDocument::load(const std::filesystem::path& path) {
         vector(field(entry, "rotation"), object.rotation.data());
         vector(field(entry, "scale"), object.scale.data());
         vector(field(entry, "colour"), object.colour.data());
+        if (const auto script = field(entry, "script"); !lhat_is_nil(script)) {
+            object.script = string(script);
+            if (object.script.size() > 255 || object.script.find(' ') != std::string::npos) invalid();
+        }
         for (unsigned axis = 0; axis < 3; ++axis)
             if (object.scale.data()[axis] < 0.001f || object.colour[axis] < 0 || object.colour[axis] > 1)
                 invalid();

@@ -22,6 +22,9 @@ struct SceneObject {
     Vec3 scale{1, 1, 1};
     /// Linear RGB colour with components in [0, 1].
     std::array<float, 3> colour{0.32f, 0.62f, 0.82f};
+    /// Project-relative path of the L^ module^ that drives this object in Play
+    /// mode (TDDja/02 4.2); empty for none.
+    std::string script;
 };
 
 /// The editor's scene data, independent of OGRE and the simulation world.

@@ -17,6 +17,7 @@ int main() {
     auto original = throne::SceneDocument::example();
     original.objects.back().rotation = {0, 45, 10};
     original.objects.back().name = "Crate \xE2\x9C\x93";
+    original.objects.back().script = "scripts/spin.lh";
     original.save(path);
 
     const auto loaded = throne::SceneDocument::load(path);
@@ -26,7 +27,7 @@ int main() {
         const auto& a = original.objects[i];
         const auto& b = loaded.objects[i];
         if (a.id != b.id || a.name != b.name || a.position != b.position || a.rotation != b.rotation ||
-            a.scale != b.scale || a.colour != b.colour)
+            a.scale != b.scale || a.colour != b.colour || a.script != b.script)
             return fail("Object changed after save/load");
     }
 

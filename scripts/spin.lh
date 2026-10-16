@@ -1,0 +1,14 @@
+# Sample object script: attach it to a cube with Script = scripts/spin.lh, then press Play (F5).
+module^ samples.spin
+import^ throne
+
+public^let^Behaviour = def^{
+    self^{
+        degreesPerSecond = 90,
+    },
+    update = p^self^, obj:throne.Object, dt:number^ {
+        var^ r = obj.rotation()
+        r.y := r.y + self^.degreesPerSecond * dt
+        obj.setRotation(r)
+    },
+}

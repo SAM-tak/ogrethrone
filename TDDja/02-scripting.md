@@ -46,9 +46,13 @@ Play 中はインスペクターなどからの編集を受け付けない。und
 ### 4.1. `main.lh`
 
 ［提案］プロジェクトの `scripts/main.lh` をゲーム全体のスクリプトとする。存在しなければ実行しない。
+［補足］`public^` で公開できるのは `module^` を宣言した単位だけである（L^ 05 の 3.2）。したがって `main.lh` も `module^` を宣言しなければならない。
 次の関数を公開してよい。どちらも省略できる。
 
 ```lhat
+module^ game.main
+import^ throne
+
 public^let^start = p^{ ... }
 public^let^update = p^dt:number^{ ... }
 ```
@@ -62,7 +66,8 @@ public^let^update = p^dt:number^{ ... }
 インスタンスごとの欄は `self^{ … }` に書く。メンバーの `start`・`update` はどちらも省略できる。
 
 ```lhat
-module^
+module^ game.spin
+import^ throne
 
 public^let^Behaviour = def^{
     self^{
@@ -85,6 +90,9 @@ public^let^Behaviour = def^{
 - `module^` でない
 - `Behaviour` を公開していない、または `def^` の定義でない
 - `start`・`update` が上の署名と合わない
+
+［補足］検査には `lhat_unit_export_conforms` を使う。L^ では `def^` のメソッドはインスタンスの形（`self^{ … }`）の側に現れるため、
+`update` の検査は `t^{ self^{ update : p^self^, throne.Object, number^; } }` への適合として書ける。
 
 ## 5. ホスト API（`throne` モジュール）
 

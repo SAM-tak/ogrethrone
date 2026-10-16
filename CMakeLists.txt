@@ -58,10 +58,20 @@ if(BUILD_TESTING)
     add_test(NAME scene_smoke COMMAND throne_scene_smoke)
 endif()
 
+add_library(throne_script STATIC src/script/ScriptRuntime.cpp)
+target_include_directories(throne_script PRIVATE "${THRONE_LHAT_SOURCE_DIR}")
+target_link_libraries(throne_script PUBLIC throne_scene PRIVATE lhatstdlib)
+
+add_executable(throne_script_smoke tests/script_smoke.cpp)
+target_link_libraries(throne_script_smoke PRIVATE throne_script)
+if(BUILD_TESTING)
+    add_test(NAME script_smoke COMMAND throne_script_smoke)
+endif()
+
 if(THRONE_BUILD_GRAPHICS)
     add_executable(ogrethrone src/editor/main.cpp src/editor/SceneEditor.cpp
         src/editor/EditorPlatform.cpp)
-    target_link_libraries(ogrethrone PRIVATE throne_runtime throne_audio throne_scene OgreNextMain
+    target_link_libraries(ogrethrone PRIVATE throne_runtime throne_audio throne_script OgreNextMain
         RenderSystem_Vulkan OgreNextHlmsPbs OgreNextHlmsUnlit OgreNextImgui ColibriGui)
     target_include_directories(ogrethrone PRIVATE
         third_party/ogre-next/RenderSystems/Vulkan/include
