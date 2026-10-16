@@ -32,8 +32,10 @@ void registerUnlit(Ogre::Root& root) {
     Ogre::ArchiveVec libraryArchives;
     for (const auto& library : libraries)
         libraryArchives.push_back(archives.load(media + library, "FileSystem", true));
-    root.getHlmsManager()->registerHlms(
-        OGRE_NEW Ogre::HlmsUnlit(archives.load(media + folder, "FileSystem", true), &libraryArchives));
+    auto* unlit = OGRE_NEW Ogre::HlmsUnlit(archives.load(media + folder, "FileSystem", true), &libraryArchives);
+    // Debug builds otherwise dump every generated shader into the working directory.
+    unlit->setDebugOutputPath(false, false);
+    root.getHlmsManager()->registerHlms(unlit);
 }
 }
 
