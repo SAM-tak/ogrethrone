@@ -26,10 +26,17 @@ endif()
 set(THRONE_STEAM_AUDIO_ROOT "" CACHE PATH "Existing Steam Audio 4.8.1 SDK directory")
 if(NOT THRONE_STEAM_AUDIO_ROOT)
     include(FetchContent)
+    # The archive and extracted SDK are shared by all presets; the sub-build is
+    # generator-specific, so it stays inside each build tree.
+    set(steam_audio_cache "${PROJECT_SOURCE_DIR}/.fetchcontent-cache")
     FetchContent_Declare(throne_steam_audio_sdk
         URL https://github.com/ValveSoftware/steam-audio/releases/download/v4.8.1/steamaudio_4.8.1.zip
         URL_HASH SHA256=4a0aa5ec1176f38f0b0993a37c2259d9e86f27e22d5e24f83ec4c3cb9a1d5449
-        DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+        DOWNLOAD_DIR "${steam_audio_cache}/downloads"
+        SOURCE_DIR "${steam_audio_cache}/throne_steam_audio_sdk-src"
+        SUBBUILD_DIR "${CMAKE_BINARY_DIR}/_deps/throne_steam_audio_sdk-subbuild"
+        BINARY_DIR "${CMAKE_BINARY_DIR}/_deps/throne_steam_audio_sdk-build")
     FetchContent_MakeAvailable(throne_steam_audio_sdk)
     set(THRONE_STEAM_AUDIO_ROOT "${throne_steam_audio_sdk_SOURCE_DIR}")
 endif()

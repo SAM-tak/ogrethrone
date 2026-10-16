@@ -111,8 +111,9 @@ SoLoud is pinned as a submodule. The parent builds its mixer, WAV/Ogg Vorbis/MP3
 backend. Synthesizers, OpenAL, SDL and optional module players are not built.
 
 CMake downloads the official Steam Audio **4.8.1 C SDK** at first configuration
-(about 181 MB), verifies the pinned SHA-256, and caches it locally under
-`FETCHCONTENT_BASE_DIR`. Both the build tree and `.fetchcontent-cache/` are ignored.
+(about 181 MB), verifies the pinned SHA-256, and caches the archive and extracted
+SDK in `.fetchcontent-cache/`, shared by all presets. Each build tree keeps its own
+generator-specific FetchContent sub-build. Both directories are ignored.
 This uses Valve's prebuilt library, not a local build of the Steam Audio sources.
 For offline configuration or a shared SDK cache, point to the extracted directory
 containing `include/phonon.h` and `lib/`:
