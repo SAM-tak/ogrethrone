@@ -168,6 +168,8 @@ private:
     std::optional<Project> project_;
     ProjectList projects_;
     std::filesystem::path projectListFile_;
+    /// ImGui's settings file (the dock layout); kept alive because ImGui holds the pointer.
+    std::string iniFile_;
     std::vector<Known> known_;
     enum class Form { None, New, Import } form_ = Form::None;
     char newName_[101] = "", newParent_[512] = "", importPath_[512] = "";

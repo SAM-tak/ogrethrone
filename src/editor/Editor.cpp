@@ -23,6 +23,7 @@
 #include <OgreTextureGpuManager.h>
 #include <OgreWindow.h>
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -40,7 +41,6 @@ namespace {
 constexpr const char* viewportWorkspaceName = "ThroneEditor/Viewport";
 constexpr const char* windowWorkspaceName = "ThroneEditor/Window";
 constexpr const char* lineMaterial = "ThroneEditor/Lines";
-constexpr float leftWidth = 220, rightWidth = 280, bottomHeight = 190;
 constexpr std::size_t historyLimit = 100, logLimit = 200;
 
 /// Returns the registered HlmsUnlit.
@@ -149,19 +149,6 @@ Ogre::SceneNode* attach(Ogre::SceneManager& scene, Ogre::ManualObject* mesh) {
     return node;
 }
 
-/// Begins a fixed panel; the caller must always call ImGui::End().
-bool panel(const char* name, ImVec2 position, ImVec2 size, ImGuiWindowFlags flags = 0) {
-    ImGui::SetNextWindowPos(position);
-    ImGui::SetNextWindowSize(size);
-    return ImGui::Begin(name, nullptr, flags | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
-                                           ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings);
-}
-
-/// Screen-space rectangle of the panels between the menu bar and the browser.
-struct Layout {
-    float top, width, height;
-};
-
 /// Level a project opens when it names no main level.
 constexpr const char* defaultLevelPath = "levels/main.level.lton";
 
@@ -190,11 +177,25 @@ std::string formatTime(std::int64_t seconds) {
     return text;
 }
 
-/// Computes the panel layout for the current display size.
-Layout layout() {
-    const auto& io = ImGui::GetIO();
-    const float top = ImGui::GetFrameHeight();
-    return {top, io.DisplaySize.x, std::max(io.DisplaySize.y - top - bottomHeight, 1.0f)};
+/// Fills the window below the menu bar with a dock space. The first time (no
+/// saved layout) it docks the panels as hierarchy left, inspector right, browser
+/// below and viewport in the middle.
+void dockSpace() {
+    const auto* viewport = ImGui::GetMainViewport();
+    const ImGuiID id = ImGui::DockSpaceOverViewport(0, viewport);
+    if (const auto* node = ImGui::DockBuilderGetNode(id); node && node->IsSplitNode()) return;
+    ImGui::DockBuilderRemoveNode(id);
+    ImGui::DockBuilderAddNode(id, ImGuiDockNodeFlags_DockSpace);
+    ImGui::DockBuilderSetNodeSize(id, viewport->WorkSize);
+    ImGuiID centre = id;
+    const ImGuiID left = ImGui::DockBuilderSplitNode(centre, ImGuiDir_Left, 0.18f, nullptr, &centre);
+    const ImGuiID right = ImGui::DockBuilderSplitNode(centre, ImGuiDir_Right, 0.26f, nullptr, &centre);
+    const ImGuiID bottom = ImGui::DockBuilderSplitNode(centre, ImGuiDir_Down, 0.27f, nullptr, &centre);
+    ImGui::DockBuilderDockWindow("Hierarchy", left);
+    ImGui::DockBuilderDockWindow("Inspector", right);
+    ImGui::DockBuilderDockWindow("Browser", bottom);
+    ImGui::DockBuilderDockWindow("Viewport", centre);
+    ImGui::DockBuilderFinish(id);
 }
 }
 
@@ -206,7 +207,10 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
       projects_(projectList.empty() ? ProjectList() : ProjectList::load(projectList)),
       projectListFile_(std::move(projectList)) {
     auto& io = ImGui::GetIO();
-    io.IniFilename = nullptr;
+    // The dock layout is kept beside the project list; without one it is not persisted.
+    iniFile_ = projectListFile_.empty() ? std::string() : (projectListFile_.parent_path() / "editor.ini").u8string();
+    io.IniFilename = iniFile_.empty() ? nullptr : iniFile_.c_str();
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     io.Fonts->AddFontDefault();
     // The synchronous upload path asserts upstream (AlwaysKeepSystemRamCopy without
     // a RAM copy), so upload asynchronously and wait for it instead.
@@ -334,7 +338,8 @@ void Editor::launcher() {
     const auto& io = ImGui::GetIO();
     ImGui::SetNextWindowPos({0, 0});
     ImGui::SetNextWindowSize(io.DisplaySize);
-    constexpr auto flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings;
+    constexpr auto flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                           ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking;
     if (ImGui::Begin("Launcher", nullptr, flags)) {
         ImGui::TextUnformatted("Ogre Throne - Projects");
         ImGui::Separator();
@@ -428,6 +433,10 @@ void Editor::stop() {
 }
 
 Editor::~Editor() {
+    // ImGui would save to io.IniFilename when its context is destroyed, after iniFile_ is gone.
+    auto& io = ImGui::GetIO();
+    if (io.IniFilename) ImGui::SaveIniSettingsToDisk(io.IniFilename);
+    io.IniFilename = nullptr;
     destroyWorkspaces();
     root_.getCompositorManager2()->setCompositorPassProvider(nullptr);
     // ImGui materials reference the viewport texture, so release them first.
@@ -460,6 +469,7 @@ void Editor::frame(float deltaSeconds) {
     }
     shortcuts();
     menu();
+    dockSpace();
     hierarchy();
     inspector();
     viewport();
@@ -715,8 +725,7 @@ void Editor::closeDialog() {
 }
 
 void Editor::hierarchy() {
-    const auto area = layout();
-    if (panel("Hierarchy", {0, area.top}, {leftWidth, area.height})) {
+    if (ImGui::Begin("Hierarchy")) {
         ImGui::BeginDisabled(runtime_ != nullptr);
         if (ImGui::Button("Add Cube")) addCube();
         ImGui::EndDisabled();
@@ -731,8 +740,7 @@ void Editor::hierarchy() {
 }
 
 void Editor::inspector() {
-    const auto area = layout();
-    if (panel("Inspector", {area.width - rightWidth, area.top}, {rightWidth, area.height})) {
+    if (ImGui::Begin("Inspector")) {
         if (auto* object = document_.find(selected_)) {
             ImGui::BeginDisabled(runtime_ != nullptr);
             // One undo step per widget interaction, recorded when the widget is released.
@@ -770,9 +778,8 @@ void Editor::inspector() {
 }
 
 void Editor::viewport() {
-    const auto area = layout();
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    if (panel("Viewport", {leftWidth, area.top}, {area.width - leftWidth - rightWidth, area.height},
+    if (ImGui::Begin("Viewport", nullptr,
               ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
         const ImVec2 size = ImGui::GetContentRegionAvail();
         if (size.x >= 1 && size.y >= 1) {
@@ -802,8 +809,7 @@ void Editor::viewport() {
 }
 
 void Editor::browser() {
-    const auto area = layout();
-    if (panel("Browser", {0, area.top + area.height}, {area.width, bottomHeight})) {
+    if (ImGui::Begin("Browser")) {
         if (ImGui::BeginTabBar("BrowserTabs")) {
             if (ImGui::BeginTabItem("Levels")) {
                 constexpr std::string_view suffix = ".level.lton";
