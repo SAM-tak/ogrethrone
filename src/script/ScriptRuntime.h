@@ -26,9 +26,18 @@ struct FieldInfo {
     FieldValue defaultValue;
 };
 
+/// What a Play session runs.
+enum class PlayScope {
+    /// The open level: its runners and its scenes' runners, without main.lh.
+    Level,
+    /// The whole game: main.lh as well. main.lh's final form (the game's organizer,
+    /// TDDja/02 4.1) is not settled; it currently runs as start/update hooks.
+    Game,
+};
+
 /// Runs a world's L^ scripts for one Play session (TDDja/02, 05).
 ///
-/// Construction checks and compiles `main.lh` (when present) and every
+/// Construction checks and compiles `main.lh` (when present and the scope is Game) and every
 /// behaviour script, then creates one `Behaviour` instance per behaviour of each
 /// runner and applies the runner's field values to it. Scripts see the `throne`
 /// module (Vec3, SceneNode, Runner, find, log, time) and `std.math`. Each session
@@ -43,8 +52,9 @@ public:
     ///        Scripts never add or remove nodes, runners or scenes.
     /// @param root Project directory that script paths are relative to.
     /// @param log Destination of throne.log and of field warnings.
+    /// @param scope Whether main.lh runs as well as the runners.
     /// @throws ScriptError when any script is missing, rejected or breaks the contract.
-    ScriptRuntime(World& world, const std::filesystem::path& root, Log log);
+    ScriptRuntime(World& world, const std::filesystem::path& root, Log log, PlayScope scope);
     /// Releases the L^ machine and program.
     ~ScriptRuntime();
     ScriptRuntime(const ScriptRuntime&) = delete;

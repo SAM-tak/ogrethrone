@@ -37,7 +37,7 @@ std::string error(const fs::path& root, const char* script) {
     write(root, "scripts/broken.lh", script);
     auto broken = world("scripts/broken.lh");
     try {
-        throne::ScriptRuntime runtime(broken, root, [](const std::string&) {});
+        throne::ScriptRuntime runtime(broken, root, [](const std::string&) {}, throne::PlayScope::Level);
         for (int i = 0; i < 3; ++i) runtime.update(0.1f);
     } catch (const throne::ScriptError& e) {
         return e.what();
@@ -91,7 +91,8 @@ int main() {
     fields["missing"] = 1.0;
     std::vector<std::string> logged;
     try {
-        throne::ScriptRuntime runtime(played, root, [&](const std::string& line) { logged.push_back(line); });
+        throne::ScriptRuntime runtime(played, root, [&](const std::string& line) { logged.push_back(line); },
+                                      throne::PlayScope::Game);
         for (int i = 0; i < 10; ++i) runtime.update(0.1f);
     } catch (const throne::ScriptError& e) {
         return fail(std::string("Valid scripts failed:\n") + e.what());
@@ -104,6 +105,17 @@ int main() {
     if (logged.size() != 2 || logged[0].find("field missing ignored") == std::string::npos ||
         logged[1] != "start Spinner")
         return fail("Expected a skipped-field warning and one start line");
+
+    // Playing the level alone runs the runners but not main.lh.
+    auto levelOnly = world("scripts/spin.lh");
+    try {
+        throne::ScriptRuntime runtime(levelOnly, root, [](const std::string&) {}, throne::PlayScope::Level);
+        for (int i = 0; i < 10; ++i) runtime.update(0.1f);
+    } catch (const throne::ScriptError& e) {
+        return fail(std::string("Level play failed:\n") + e.what());
+    }
+    if (levelOnly.scenes[0].scene.nodes[1].position.x != 2 || levelOnly.scenes[0].scene.nodes[0].rotation.y < 89)
+        return fail("Level play ran main.lh or skipped the runners");
 
     const auto described = throne::ScriptRuntime::fields(root, "scripts/spin.lh");
     if (described.size() != 2 || described[0].name != "degreesPerSecond" ||
@@ -139,7 +151,7 @@ int main() {
     const auto project = throne::Project::create(root, "Fresh");
     try {
         throne::World empty;
-        throne::ScriptRuntime runtime(empty, project.root, [](const std::string&) {});
+        throne::ScriptRuntime runtime(empty, project.root, [](const std::string&) {}, throne::PlayScope::Game);
         runtime.update(0.1f);
     } catch (const throne::ScriptError& e) {
         return fail(std::string("Generated main.lh was rejected:\n") + e.what());

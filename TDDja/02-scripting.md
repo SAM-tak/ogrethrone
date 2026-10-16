@@ -51,15 +51,39 @@ Play 中はインスペクターなどからの編集を受け付けない。und
 プロジェクト直下の `main.lh` をゲーム全体のスクリプト（エントリーポイント）とする。新規プロジェクトの作成時に既定の `main.lh` を生成する。
 ［提案］存在しなければ実行しない（生成前に作ったプロジェクトのため）。
 ［補足］`public^` で公開できるのは `module^` を宣言した単位だけである（L^ 05 の 3.2）。したがって `main.lh` も `module^` を宣言しなければならない。
-次の関数を公開してよい。どちらも省略できる。
+
+`main.lh` はゲーム全体のオーガナイザーである。最初に読むべきレベルなどを知っていて、throne の API でレベルの再生を指示し、それが終わるまで待つ、という動作をする。
+したがって、毎フレーム呼ばれる `start`・`update` の形は馴染まない。
+
+Play は 2 種類に分ける（Godot と同じ考え方）。
+
+- **ゲームのプレイ**: `main.lh` を実行する。レベルは `main.lh` の指示で再生する。
+- **今開いているレベルのプレイ**: 開いているレベルの Runner と、そのシーンの Runner を実行する。`main.lh` は実行しない。
+
+現在の Play ボタンは「今開いているレベルのプレイ」である。ゲームのプレイは近い将来に加える。
+
+［補足］実装は `PlayScope::Level` と `PlayScope::Game` で両者を分けている。`Game` は暫定的に、`main.lh` の `start`・`update` も呼ぶ。
+
+［提案］`main.lh` は、L^ のコルーチンとして走る手続き `main` を 1 つ公開する。
+レベルの再生を指示する API は、そのレベルが終わるまでコルーチンを中断し、終わったら戻る。
 
 ```lhat
-module^ game.main
+module^ main
 import^ throne
 
-public^let^start = p^{ ... }
-public^let^update = p^dt:number^{ ... }
+public^let^main = p^{
+    throne.playLevel("levels/title.level.lton")     # 終わるまで戻らない
+    throne.playLevel("levels/stage1.level.lton")
+}
 ```
+
+レベルが「終わる」条件（Runner からの `throne.endLevel()` など）と、`main` が戻ったときの扱い（ゲーム終了）は MAIN-01 とする。
+
+### 4.1.1. 未決事項
+
+| 番号 | 内容 | 現状 |
+| --- | --- | --- |
+| **［未決］MAIN-01** | `main.lh` の形（`main` を公開する手続き＋コルーチンか、別の形か）、レベルが終わる条件、`main` が戻ったときの扱い | 4.1 の提案。既定で生成する `main.lh` の中身も、これが決まるまでは暫定の `start`・`update` |
 
 ### 4.2. オブジェクトのスクリプト
 

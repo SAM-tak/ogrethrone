@@ -496,7 +496,7 @@ std::vector<FieldInfo> ScriptRuntime::fields(const std::filesystem::path& root, 
     return result;
 }
 
-ScriptRuntime::ScriptRuntime(World& world, const std::filesystem::path& root, Log log)
+ScriptRuntime::ScriptRuntime(World& world, const std::filesystem::path& root, Log log, PlayScope scope)
     : state_(std::make_unique<State>(world, root, std::move(log))) {
     auto& s = *state_;
     createProgram(s);
@@ -504,7 +504,7 @@ ScriptRuntime::ScriptRuntime(World& world, const std::filesystem::path& root, Lo
 
     std::string errors;
     const LhatUnit* mainUnit = nullptr;
-    if (std::filesystem::exists(s.root / mainPath)) {
+    if (scope == PlayScope::Game && std::filesystem::exists(s.root / mainPath)) {
         mainUnit = lhat_program_check(program, mainPath);
         if (mainUnit && lhat_unit_ok(mainUnit)) {
             if (!lhat_unit_module_name(mainUnit)) errors += std::string(mainPath) + ": must declare module^\n";

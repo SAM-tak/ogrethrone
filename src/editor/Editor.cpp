@@ -429,8 +429,9 @@ void Editor::launcher() {
 void Editor::play() {
     playBackup_ = world_;
     try {
-        runtime_ = std::make_unique<ScriptRuntime>(world_, project_->root,
-                                                   [this](const std::string& line) { log(line); });
+        // Play runs the open level; playing the whole game (with main.lh) comes later.
+        runtime_ = std::make_unique<ScriptRuntime>(
+            world_, project_->root, [this](const std::string& line) { log(line); }, PlayScope::Level);
         log("Play");
     } catch (const ScriptError& error) {
         world_ = std::move(playBackup_);

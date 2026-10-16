@@ -153,16 +153,17 @@ globally or modifying the bundled ICU sources.
 ## Scripting
 
 Scripts are written in L^ and run only in the editor's Play mode (F5 or the Play
-menu item). Play runs on a copy of the level and its scenes; Stop discards it, so
+menu item). Play runs the open level: its runners and its scenes' runners, but not
+`main.lh`. Playing the whole game from `main.lh` will be a separate command. Play runs on a copy of the level and its scenes; Stop discards it, so
 script changes never reach the edited data. Editing is disabled while playing.
 Each Play checks and compiles every script anew, so edited scripts take effect
 on the next Play. Rejected scripts, run-time errors, and frames over the loop
 budget (treated as endless loops) are written to the Log tab and stop Play.
 
 Paths are relative to the project folder. `main.lh` at the top of the project is the
-game's entry point; new projects get an empty one. It is optional; when
-present it must declare `module^` and may publish `start: p^;` and
-`update: p^number^;`; it stays the game's entry point. A runner holds any number
+game's entry point and organizer (which levels to play, in what order); new
+projects get a placeholder one. It must declare `module^`; its final shape is still
+being designed (TDDja/02 4.1). A runner holds any number
 of behaviours. Each behaviour names a `module^` that publishes a definition called
 `Behaviour`, and gets its own instance per runner:
 
@@ -193,8 +194,8 @@ script's defaults (Reset removes one); a value whose field is gone or has anothe
 type is skipped with a warning in the log.
 
 `start` and `update` are optional; when present their signatures are checked
-before Play starts. Order per frame: `main.lh`, then each scene's runners, then the
-level's runners; every `start` runs once before the first `update`.
+before Play starts. Order per frame: each scene's runners, then the level's
+runners; every `start` runs once before the first `update`.
 
 The `throne` module provides:
 
