@@ -71,8 +71,9 @@ if(BUILD_TESTING)
 endif()
 
 if(THRONE_BUILD_GRAPHICS)
+    # ImGuizmo is compiled here against the ImGui core that OgreNextImgui builds.
     add_executable(ogrethrone src/editor/main.cpp src/editor/Editor.cpp src/editor/EditorPanels.cpp
-        src/editor/EditorPlatform.cpp)
+        src/editor/EditorPlatform.cpp third_party/imguizmo/src/ImGuizmo.cpp)
     target_link_libraries(ogrethrone PRIVATE throne_runtime throne_audio throne_script OgreNextMain
         RenderSystem_Vulkan OgreNextHlmsPbs OgreNextHlmsUnlit OgreNextImgui ColibriGui)
     target_include_directories(ogrethrone PRIVATE
@@ -80,7 +81,8 @@ if(THRONE_BUILD_GRAPHICS)
         third_party/ogre-next/Components/Imgui/include
         third_party/ogre-next/Components/Hlms/Common/include
         third_party/ogre-next/Components/Hlms/Unlit/include
-        third_party/imgui)
+        third_party/imgui
+        third_party/imguizmo/src)
     # Hlms shader templates are read from the pinned OGRE checkout until asset packaging exists.
     target_compile_definitions(ogrethrone PRIVATE
         THRONE_OGRE_MEDIA_DIR="${PROJECT_SOURCE_DIR}/third_party/ogre-next/Samples/Media")

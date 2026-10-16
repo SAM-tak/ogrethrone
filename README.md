@@ -75,7 +75,9 @@ effect-free data):
 - A **level** (`*.level.lton`) lists the scenes it loads and its own runners.
 
 Right-drag orbits, middle-drag pans, the wheel zooms, left-click selects a node
-and `F` frames it. Ctrl+Z/Ctrl+Y undo/redo, Ctrl+D duplicates a node, Delete
+and `F` frames it. The selected node shows an ImGuizmo gizmo: W, E and R (or the
+viewport toolbar) switch between move, rotate and scale, and Local switches between
+the node's own axes and the world's; one drag is one undo step. Ctrl+Z/Ctrl+Y undo/redo, Ctrl+D duplicates a node, Delete
 removes the selected node or runner, Ctrl+S saves the level and its scenes and
 Ctrl+O opens a level. New and Open are undoable; closing the window or the project with
 unsaved changes asks to save or discard them (on Windows this also covers the
@@ -306,6 +308,12 @@ X11/XCB development packages. Linux builds have not yet been verified.
   graphics backend; threaded shader/PSO compilation is enabled with mode `2`.
 - OGRE's ImGui integration builds the pinned ImGui sources. Do not build a second
   ImGui copy. `ImTextureID` is configured as `void*` for the OGRE renderer.
+  ImGui is the `v1.91.5-docking` tag, so editor panels can dock.
+- ImGuizmo (`third_party/imguizmo`) is pinned to `22a6c90`, the last commit before
+  it followed ImGui 1.92.8's `AddPolyline`/`AddRect` argument changes, and is
+  compiled into the editor against the same ImGui. Its `SetRect` miscomputes the
+  bottom edge in this commit; only bounds manipulation, which the editor does not
+  use, depends on it.
 - The pinned OGRE build scripts re-add the disabled FreeImage codec via their
   unity-build exclusion list. The parent CMake adapter removes that source from
   the target without editing the codec sources.

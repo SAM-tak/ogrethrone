@@ -24,6 +24,7 @@
 #include <OgreWindow.h>
 #include <imgui.h>
 #include <imgui_internal.h>
+#include <ImGuizmo.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -140,6 +141,20 @@ Ogre::SceneNode* attach(Ogre::SceneManager& scene, Ogre::ManualObject* mesh) {
     auto* node = scene.getRootSceneNode()->createChildSceneNode();
     node->attachObject(mesh);
     return node;
+}
+
+/// Copies an OGRE matrix (row-major, column vectors) into ImGuizmo's column-major array.
+void toColumnMajor(const Ogre::Matrix4& matrix, float* out) {
+    for (int row = 0; row < 4; ++row)
+        for (int column = 0; column < 4; ++column) out[column * 4 + row] = static_cast<float>(matrix[row][column]);
+}
+
+/// The inverse of toColumnMajor.
+Ogre::Matrix4 fromColumnMajor(const float* in) {
+    Ogre::Matrix4 matrix;
+    for (int row = 0; row < 4; ++row)
+        for (int column = 0; column < 4; ++column) matrix[row][column] = in[column * 4 + row];
+    return matrix;
 }
 
 /// Level a project opens when it names no main level.
@@ -450,6 +465,7 @@ void Editor::frame(float deltaSeconds) {
     platform_.newFrame();
     ImGui::GetIO().DeltaTime = std::max(deltaSeconds, 1.0e-4f);
     ImGui::NewFrame();
+    ImGuizmo::BeginFrame();
     if (platform_.takeCloseRequest()) requestLeave(Leave::Exit);
     if (!project_) {
         launcher();
@@ -712,6 +728,9 @@ void Editor::shortcuts() {
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_O)) showFiles_ = true, saving_ = false;
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_D)) duplicate();
     if (ImGui::IsKeyPressed(ImGuiKey_Delete, false)) erase();
+    if (ImGui::IsKeyPressed(ImGuiKey_W, false)) gizmoOperation_ = ImGuizmo::TRANSLATE;
+    if (ImGui::IsKeyPressed(ImGuiKey_E, false)) gizmoOperation_ = ImGuizmo::ROTATE;
+    if (ImGui::IsKeyPressed(ImGuiKey_R, false)) gizmoOperation_ = ImGuizmo::SCALE;
 }
 
 void Editor::menu() {
@@ -812,22 +831,36 @@ void Editor::viewport() {
             resizeViewport(static_cast<unsigned>(size.x), static_cast<unsigned>(size.y));
             const ImVec2 origin = ImGui::GetCursorScreenPos();
             ImGui::Image(texture_, size);
-            ImGui::SetCursorScreenPos(origin);
-            ImGui::InvisibleButton("ViewportInput", size, ImGuiButtonFlags_MouseButtonLeft |
-                                                              ImGuiButtonFlags_MouseButtonRight |
-                                                              ImGuiButtonFlags_MouseButtonMiddle);
-            const auto& io = ImGui::GetIO();
-            if (ImGui::IsItemHovered() && io.MouseWheel != 0)
-                distance_ = std::clamp(distance_ * std::pow(0.88f, io.MouseWheel), 0.5f, 500.0f);
-            if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
-                pick((io.MousePos.x - origin.x) / size.x, (io.MousePos.y - origin.y) / size.y);
-            if (ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
-                yaw_ -= io.MouseDelta.x * 0.01f;
-                pitch_ = std::clamp(pitch_ + io.MouseDelta.y * 0.01f, -1.5f, 1.5f);
+            // ImGuizmo will not start a drag while another item was hovered in the previous
+            // frame, so the camera/picking input steps aside while the gizmo is under the mouse.
+            if (!gizmoOver_ && !ImGuizmo::IsUsing()) {
+                ImGui::SetCursorScreenPos(origin);
+                ImGui::SetNextItemAllowOverlap();
+                ImGui::InvisibleButton("ViewportInput", size, ImGuiButtonFlags_MouseButtonLeft |
+                                                                  ImGuiButtonFlags_MouseButtonRight |
+                                                                  ImGuiButtonFlags_MouseButtonMiddle);
+                const auto& io = ImGui::GetIO();
+                if (ImGui::IsItemHovered() && io.MouseWheel != 0)
+                    distance_ = std::clamp(distance_ * std::pow(0.88f, io.MouseWheel), 0.5f, 500.0f);
+                if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
+                    pick((io.MousePos.x - origin.x) / size.x, (io.MousePos.y - origin.y) / size.y);
+                if (ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
+                    yaw_ -= io.MouseDelta.x * 0.01f;
+                    pitch_ = std::clamp(pitch_ + io.MouseDelta.y * 0.01f, -1.5f, 1.5f);
+                }
+                if (ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Middle))
+                    target_ += (camera_.getUp() * io.MouseDelta.y - camera_.getRight() * io.MouseDelta.x) *
+                               (distance_ * 0.0015f);
             }
-            if (ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Middle))
-                target_ += (camera_.getUp() * io.MouseDelta.y - camera_.getRight() * io.MouseDelta.x) *
-                           (distance_ * 0.0015f);
+            gizmo(origin, size);
+            ImGui::SetCursorScreenPos(ImVec2(origin.x + 6, origin.y + 6));
+            ImGui::RadioButton("Move (W)", &gizmoOperation_, ImGuizmo::TRANSLATE);
+            ImGui::SameLine();
+            ImGui::RadioButton("Rotate (E)", &gizmoOperation_, ImGuizmo::ROTATE);
+            ImGui::SameLine();
+            ImGui::RadioButton("Scale (R)", &gizmoOperation_, ImGuizmo::SCALE);
+            ImGui::SameLine();
+            ImGui::Checkbox("Local", &gizmoLocal_);
         }
     }
     ImGui::End();
@@ -863,6 +896,49 @@ void Editor::browser() {
         }
     }
     ImGui::End();
+}
+
+void Editor::gizmo(ImVec2 origin, ImVec2 size) {
+    auto* node = selectedNode();
+    const RenderObject* render = nullptr;
+    for (const auto& each : renderObjects_)
+        if (node && selected_.scene == static_cast<int>(each.scene) && each.id == node->id) render = &each;
+    if (!render || runtime_) {
+        gizmoOver_ = false;
+        return;
+    }
+    float view[16], projection[16], model[16];
+    toColumnMajor(camera_.getViewMatrix(), view);
+    toColumnMajor(camera_.getProjectionMatrix(), projection);
+    toColumnMajor(render->node->_getFullTransformUpdated(), model);
+    ImGuizmo::SetDrawlist();
+    ImGuizmo::SetRect(origin.x, origin.y, size.x, size.y);
+    ImGuizmo::SetOrthographic(orthographic_);
+    const bool changed =
+        ImGuizmo::Manipulate(view, projection, static_cast<ImGuizmo::OPERATION>(gizmoOperation_),
+                             gizmoLocal_ ? ImGuizmo::LOCAL : ImGuizmo::WORLD, model);
+    // One undo step per drag.
+    const bool using_ = ImGuizmo::IsUsing();
+    if (using_ && !gizmoUsing_) editStart_ = world_;
+    if (!using_ && gizmoUsing_) commit(std::move(editStart_));
+    gizmoUsing_ = using_;
+    gizmoOver_ = ImGuizmo::IsOver();
+    if (!changed) return;
+
+    // The gizmo works in world space; the node stores its transform relative to its parent.
+    auto* parent = render->node->getParentSceneNode();
+    const auto local = parent->_getFullTransformUpdated().inverseAffine() * fromColumnMajor(model);
+    Ogre::Vector3 position, scale;
+    Ogre::Quaternion rotation;
+    local.decomposition(position, scale, rotation);
+    Ogre::Matrix3 axes;
+    rotation.ToRotationMatrix(axes);
+    Ogre::Radian z, y, x;
+    axes.ToEulerAnglesZYX(z, y, x);
+    node->position = fromOgre(position);
+    node->rotation = {x.valueDegrees(), y.valueDegrees(), z.valueDegrees()};
+    node->scale = fromOgre(scale);
+    for (float* component : {&node->scale.x, &node->scale.y, &node->scale.z}) *component = std::max(*component, 0.001f);
 }
 
 void Editor::updateCamera() {

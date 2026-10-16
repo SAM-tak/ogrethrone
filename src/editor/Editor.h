@@ -5,6 +5,7 @@
 #include "editor/Project.h"
 #include "script/ScriptRuntime.h"
 #include <OgreVector3.h>
+#include <imgui.h>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -178,6 +179,9 @@ private:
     void updateCamera();
     /// Centres the orbit camera on the selected node.
     void focusSelection();
+    /// Draws the ImGuizmo transform gizmo for the selected node over the viewport
+    /// rectangle and writes what it changes back to the node.
+    void gizmo(ImVec2 origin, ImVec2 size);
     /// Selects the frontmost node under normalized viewport coordinates, or clears selection.
     void pick(float x, float y);
     /// Resizes the viewport texture and recreates the workspaces that reference it.
@@ -227,6 +231,9 @@ private:
     Ogre::Vector3 target_{0, 0.5f, 0};
     float yaw_ = 0.65f, pitch_ = 0.45f, distance_ = 9.0f;
     unsigned viewportWidth_ = 0, viewportHeight_ = 0;
+    /// ImGuizmo::OPERATION of the gizmo (translate initially).
+    int gizmoOperation_ = 7;
+    bool gizmoLocal_ = true, gizmoOver_ = false, gizmoUsing_ = false;
     bool showGrid_ = true, orthographic_ = false, close_ = false;
     bool dirty_ = false, showFiles_ = false, saving_ = true, confirmClose_ = false;
     /// Project-relative path of the open level.
