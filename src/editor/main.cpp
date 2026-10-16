@@ -1,6 +1,7 @@
 #include "audio/AudioSystem.h"
 #include "editor/SceneEditor.h"
 #include "runtime/PhysicsWorld.h"
+#include "script/ScriptRuntime.h"
 #include <OgreAbiUtils.h>
 #include <OgreArchiveManager.h>
 #include <OgreCamera.h>
@@ -18,6 +19,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <thread>
 #include <stdexcept>
 
@@ -40,6 +42,18 @@ void registerUnlit(Ogre::Root& root) {
 }
 
 int main(int argc, char** argv) {
+    // --dump-host-api [file]: the API scripts see, for the L^ language server; no window is opened.
+    if (argc > 1 && std::strcmp(argv[1], "--dump-host-api") == 0) {
+        const char* path = argc > 2 ? argv[2] : "lhat-host.json";
+        const auto json = throne::ScriptRuntime::hostApi();
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        if (!out.write(json.data(), static_cast<std::streamsize>(json.size()))) {
+            std::fprintf(stderr, "Could not write %s\n", path);
+            return 1;
+        }
+        std::printf("wrote %s (%zu bytes)\n", path, json.size());
+        return 0;
+    }
     const bool smoke = argc > 1 && std::strcmp(argv[1], "--smoke") == 0;
     try {
         throne::AudioSystem audio(smoke);

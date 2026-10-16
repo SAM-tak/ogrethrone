@@ -32,6 +32,10 @@ public:
     /// @param log Destination of throne.log.
     /// @throws ScriptError when any script is missing, rejected or breaks the contract.
     ScriptRuntime(SceneDocument& scene, const std::filesystem::path& root, Log log);
+    /// Returns the host API scripts can use (the `throne` module and `std.math`) as
+    /// the JSON the L^ language server reads from `lhat-host.json`.
+    static std::string hostApi();
+
     /// Releases the L^ machine and program.
     ~ScriptRuntime();
     ScriptRuntime(const ScriptRuntime&) = delete;

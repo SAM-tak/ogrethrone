@@ -110,6 +110,9 @@ int main() {
         if (message.find(failure.expected) == std::string::npos)
             return fail(std::string("Expected an error containing \"") + failure.expected + "\", got:\n" + message);
     }
+    const auto api = throne::ScriptRuntime::hostApi();
+    for (const char* name : {"\"throne\"", "Vec3", "Object", "setPosition", "math"})
+        if (api.find(name) == std::string::npos) return fail(std::string("Host API JSON lacks ") + name);
     fs::remove_all(root);
     std::printf("Scripts ran 10 frames; %zu failure cases were reported\n", std::size(failures));
 }

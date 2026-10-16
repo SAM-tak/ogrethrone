@@ -354,12 +354,29 @@ bool publishes(const LhatUnit* unit, std::string_view name) {
 }
 }
 
-ScriptRuntime::ScriptRuntime(SceneDocument& scene, const std::filesystem::path& root, Log log)
-    : state_(std::make_unique<State>(scene, root, std::move(log))) {
-    auto& s = *state_;
+namespace {
+/// Creates @p s's program with everything scripts may name registered.
+void createProgram(State& s) {
     s.program.reset(lhat_program_new(true, loadScript, &s));
     if (!s.program || !lhatstdlib_math_register(s.program.get()) || !registerThrone(s.program.get(), s))
         throw ScriptError("Could not set up the L^ program");
+}
+}
+
+std::string ScriptRuntime::hostApi() {
+    SceneDocument none;
+    State s(none, {}, {});
+    createProgram(s);
+    std::string json(lhat_program_dump_host_api(s.program.get(), nullptr, 0) + 1, '\0');
+    lhat_program_dump_host_api(s.program.get(), json.data(), json.size());
+    json.pop_back();
+    return json;
+}
+
+ScriptRuntime::ScriptRuntime(SceneDocument& scene, const std::filesystem::path& root, Log log)
+    : state_(std::make_unique<State>(scene, root, std::move(log))) {
+    auto& s = *state_;
+    createProgram(s);
     auto* program = s.program.get();
 
     std::string errors;

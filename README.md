@@ -159,8 +159,20 @@ The `throne` module provides:
   Using a handle whose object no longer exists panics; check `valid()` first.
 - `throne.find(name)`, `throne.log(text)` and `throne.time()` (seconds since Play).
 
-`std.math` is the only standard module scripts can import. [`scripts/spin.lh`](scripts/spin.lh)
-is a sample. The design is recorded in [TDDja/02-scripting.md](TDDja/02-scripting.md).
+`std.math` is the only standard module scripts can import.
+
+The L^ language server (VS Code extension) reads `lhat-host.json` at the workspace
+root to know the `throne` module. The committed file matches the current bindings;
+after changing them, regenerate it without opening a window:
+
+```powershell
+./out/build/windows-clang-ninja/bin/Debug/ogrethrone.exe --dump-host-api [file]
+```
+
+The file defaults to `lhat-host.json` in the working directory.
+
+[`scripts/spin.lh`](scripts/spin.lh) is a sample. The design is recorded in
+[TDDja/02-scripting.md](TDDja/02-scripting.md).
 
 ## Audio
 
