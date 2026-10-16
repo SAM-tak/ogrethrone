@@ -21,14 +21,22 @@ void write(const fs::path& root, const char* path, const char* text) {
     std::ofstream(root / path, std::ios::binary | std::ios::trunc) << text;
 }
 
-/// Returns the ScriptError message a session with @p script on the first object
-/// raises while starting or within three frames, or an empty string.
+/// A world with the example scene and one level runner using @p script.
+throne::World world(const char* script) {
+    throne::World result;
+    result.scenes.push_back({"scenes/main.scene.lton", throne::Scene::example()});
+    auto& runner = result.level.addRunner("Spinner");
+    runner.behaviours.push_back({script, {{"target", throne::NodeRef{"scenes/main.scene.lton", 1}}}});
+    return result;
+}
+
+/// Returns the ScriptError message a session with @p script raises while
+/// starting or within three frames, or an empty string.
 std::string error(const fs::path& root, const char* script) {
     write(root, "scripts/broken.lh", script);
-    auto scene = throne::Level::example();
-    scene.objects[0].script = "scripts/broken.lh";
+    auto broken = world("scripts/broken.lh");
     try {
-        throne::ScriptRuntime runtime(scene, root, [](const std::string&) {});
+        throne::ScriptRuntime runtime(broken, root, [](const std::string&) {});
         for (int i = 0; i < 3; ++i) runtime.update(0.1f);
     } catch (const throne::ScriptError& e) {
         return e.what();
@@ -41,15 +49,18 @@ import^ throne
 
 public^let^Behaviour = def^{
     self^{
-        speed = 90,
+        target : throne.SceneNode|nil^ = nil^,
+        degreesPerSecond = 90,
     },
-    start = p^self^, obj:throne.Object {
-        throne.log("start " .. obj.name())
+    start = p^self^, runner:throne.Runner {
+        throne.log("start " .. runner.name())
     },
-    update = p^self^, obj:throne.Object, dt:number^ {
-        var^ r = obj.rotation()
-        r.y := r.y + self^.speed * dt
-        obj.setRotation(r)
+    update = p^self^, runner:throne.Runner, dt:number^ {
+        if^ self^.target != nil^ {
+            var^ r = self^.target.rotation()
+            r.y := r.y + self^.degreesPerSecond * dt
+            self^.target.setRotation(r)
+        }
     },
 }
 )";
@@ -72,20 +83,32 @@ int main() {
     write(root, "scripts/spin.lh", spin);
     write(root, "scripts/main.lh", mainScript);
 
-    auto scene = throne::Level::example();
-    scene.objects[0].script = "scripts/spin.lh";
+    // A field value overrides the default; a field the script lacks is reported and skipped.
+    auto played = world("scripts/spin.lh");
+    auto& fields = played.level.runners[0].behaviours[0].fields;
+    fields["degreesPerSecond"] = 45.0;
+    fields["missing"] = 1.0;
     std::vector<std::string> logged;
     try {
-        throne::ScriptRuntime runtime(scene, root, [&](const std::string& line) { logged.push_back(line); });
+        throne::ScriptRuntime runtime(played, root, [&](const std::string& line) { logged.push_back(line); });
         for (int i = 0; i < 10; ++i) runtime.update(0.1f);
     } catch (const throne::ScriptError& e) {
         return fail(std::string("Valid scripts failed:\n") + e.what());
     }
-    if (std::abs(scene.objects[0].rotation.y - 90) > 0.01f)
-        return fail("Behaviour.update did not rotate: y=" + std::to_string(scene.objects[0].rotation.y));
-    if (std::abs(scene.objects[1].position.x - 3) > 0.01f)
-        return fail("main.lh update did not move Cube 2: x=" + std::to_string(scene.objects[1].position.x));
-    if (logged.size() != 1 || logged[0] != "start Cube 1") return fail("start was not logged exactly once");
+    const auto& nodes = played.scenes[0].scene.nodes;
+    if (std::abs(nodes[0].rotation.y - 45) > 0.01f)
+        return fail("Behaviour did not rotate its target node: y=" + std::to_string(nodes[0].rotation.y));
+    if (std::abs(nodes[1].position.x - 3) > 0.01f)
+        return fail("main.lh update did not move Cube 2: x=" + std::to_string(nodes[1].position.x));
+    if (logged.size() != 2 || logged[0].find("field missing ignored") == std::string::npos ||
+        logged[1] != "start Spinner")
+        return fail("Expected a skipped-field warning and one start line");
+
+    const auto described = throne::ScriptRuntime::fields(root, "scripts/spin.lh");
+    if (described.size() != 2 || described[0].name != "degreesPerSecond" ||
+        described[0].kind != throne::FieldKind::Number || std::get<double>(described[0].defaultValue) != 90 ||
+        described[1].name != "target" || described[1].kind != throne::FieldKind::SceneNode)
+        return fail("Field description did not list degreesPerSecond and target");
 
     // Each case must be refused with a message naming the problem.
     fs::remove(root / "scripts/main.lh");
@@ -95,13 +118,13 @@ int main() {
         {"import^ throne\nlet^ x = 1\n", "must declare module^"},
         {"module^ test.a\nlet^ x = 1\n", "must publish Behaviour"},
         {"module^ test.b\nimport^ throne\npublic^let^Behaviour = def^{\n"
-         "    update = p^self^, obj:throne.Object { },\n}\n",
+         "    update = p^self^, runner:throne.Runner { },\n}\n",
          "Behaviour.update must be"},
         {"module^ test.c\nimport^ throne\npublic^let^Behaviour = def^{\n"
-         "    update = p^self^, obj:throne.Object, dt:number^ { repeat^while^ true^ { } },\n}\n",
+         "    update = p^self^, runner:throne.Runner, dt:number^ { repeat^while^ true^ { } },\n}\n",
          "per-frame budget"},
         {"module^ test.d\nimport^ throne\npublic^let^Behaviour = def^{\n"
-         "    start = p^self^, obj:throne.Object { panic^ \"stop here\" },\n}\n",
+         "    start = p^self^, runner:throne.Runner { panic^ \"stop here\" },\n}\n",
          "stop here"},
         {"module^ test.e\npublic^let^Behaviour = def^{ oops }\n", "broken.lh"},
     };
@@ -110,8 +133,9 @@ int main() {
         if (message.find(failure.expected) == std::string::npos)
             return fail(std::string("Expected an error containing \"") + failure.expected + "\", got:\n" + message);
     }
+
     const auto api = throne::ScriptRuntime::hostApi();
-    for (const char* name : {"\"throne\"", "Vec3", "Object", "setPosition", "math"})
+    for (const char* name : {"\"throne\"", "Vec3", "SceneNode", "Runner", "setPosition", "math"})
         if (api.find(name) == std::string::npos) return fail(std::string("Host API JSON lacks ") + name);
     fs::remove_all(root);
     std::printf("Scripts ran 10 frames; %zu failure cases were reported\n", std::size(failures));

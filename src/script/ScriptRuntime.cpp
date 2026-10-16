@@ -21,11 +21,20 @@ constexpr std::int64_t frameBudget = 10'000'000;
 using Machine = std::unique_ptr<LhatMachine, decltype(&lhat_machine_dispose)>;
 using Program = std::unique_ptr<LhatProgram, decltype(&lhat_program_free)>;
 
-/// One scripted object: its Behaviour instance and the throne.Object handle passed to it.
-struct Behaviour {
-    std::string path;
-    LhatValue instance, handle;
+/// One behaviour of one runner: its instance and the throne.Runner handle passed to it.
+struct Instance {
+    std::string what;
+    LhatValue instance, runner;
     bool start, update;
+};
+
+/// A behaviour waiting to be instantiated, with where it came from.
+struct Pending {
+    /// Index of the runner's scene in World::scenes, or -1 for a level runner.
+    int scene;
+    std::size_t runner;
+    const Behaviour* behaviour;
+    std::string what;
 };
 
 /// Returns a number argument as a double, accepting integers and reals.
@@ -39,37 +48,49 @@ std::string_view text(LhatValue value) {
     return {string->text, string->length};
 }
 
-/// Returns the component storage of one of an object's vector properties (0-3).
-float* property(LevelObject& object, int which) {
+/// Returns the component storage of one of a node's vector properties (0-3).
+float* property(SceneNode& node, int which) {
     switch (which) {
-    case 0: return object.position.data();
-    case 1: return object.rotation.data();
-    case 2: return object.scale.data();
-    default: return object.colour.data();
+    case 0: return node.position.data();
+    case 1: return node.rotation.data();
+    case 2: return node.scale.data();
+    default: return node.colour.data();
+    }
+}
+
+/// The L^ type a field value has to fit, as conformance text.
+const char* fieldType(const FieldValue& value) {
+    switch (value.index()) {
+    case 0: return "number^";
+    case 1: return "bool^";
+    case 2: return "string^";
+    default: return "throne.SceneNode|nil^";
     }
 }
 }
 
 struct ScriptRuntime::State {
-    Level& scene;
+    World& world;
     std::filesystem::path root;
     Log log;
     Program program{nullptr, &lhat_program_free};
     // Declared after the program so that it is disposed first.
     Machine machine{nullptr, &lhat_machine_dispose};
     const LhatHostValueTag* vec3 = nullptr;
-    const LhatHostDataTag* object = nullptr;
+    const LhatHostDataTag *sceneNode = nullptr, *runner = nullptr;
     // Values the host holds are not roots, so everything kept between calls
     // also lives in this table, which is reachable from L^.
     LhatValue roots = lhat_nil();
     LhatInteger rootCount = 0;
     LhatValue main = lhat_nil();
     bool mainStart = false, mainUpdate = false, started = false;
-    std::vector<Behaviour> behaviours;
+    std::vector<Instance> instances;
+    /// Runners in run order; a throne.Runner handle is an index into this.
+    std::vector<const Runner*> runners;
     double time = 0;
 
-    State(Level& scene, std::filesystem::path root, Log log)
-        : scene(scene), root(std::move(root)), log(std::move(log)) {}
+    State(World& world, std::filesystem::path root, Log log)
+        : world(world), root(std::move(root)), log(std::move(log)) {}
 
     /// Keeps @p value alive for the session and returns it.
     LhatValue keep(LhatValue value) {
@@ -81,12 +102,31 @@ struct ScriptRuntime::State {
         return value;
     }
 
-    /// Returns a throne.Object handle for @p id.
-    LhatValue handle(std::uint32_t id) {
+    /// Returns a handle of @p tag holding @p bits.
+    LhatValue handle(LhatMachine* on, const LhatHostDataTag* tag, std::uintptr_t bits) {
         LhatValue result;
-        void* pointer = reinterpret_cast<void*>(static_cast<std::uintptr_t>(id));
-        if (!lhat_machine_make_hostdata(machine.get(), object, pointer, &result)) throw ScriptError("Out of memory");
+        if (!lhat_machine_make_hostdata(on, tag, reinterpret_cast<void*>(bits), &result)) return lhat_nil();
         return result;
+    }
+
+    /// A throne.SceneNode handle: the scene's index plus one, and the node ID.
+    static std::uintptr_t nodeBits(std::size_t scene, std::uint32_t node) {
+        return (static_cast<std::uintptr_t>(scene + 1) << 32) | node;
+    }
+
+    /// Returns the node a throne.SceneNode handle names, or nullptr.
+    SceneNode* resolve(LhatValue value) {
+        const auto bits = reinterpret_cast<std::uintptr_t>(lhat_hostdata_pointer(value, sceneNode));
+        const auto scene = static_cast<std::size_t>(bits >> 32);
+        if (scene == 0 || scene > world.scenes.size()) return nullptr;
+        return world.scenes[scene - 1].scene.findNode(static_cast<std::uint32_t>(bits & 0xFFFFFFFFu));
+    }
+
+    /// Returns the node a handle names, or panics and answers null.
+    SceneNode* target(LhatMachine* running, LhatValue value) {
+        if (auto* node = resolve(value)) return node;
+        lhat_machine_panic_text(running, "throne.SceneNode refers to a node that is gone; check valid() first");
+        return nullptr;
     }
 
     /// Runs @p result's call to completion or throws with what went wrong.
@@ -118,14 +158,6 @@ struct ScriptRuntime::State {
     /// Answers with @p value as a throne.Vec3.
     void answer(LhatValue* answers, int* count, const float* value) {
         if (lhat_make_hostvalue(machine.get(), vec3, value, &answers[0])) *count = 1;
-    }
-
-    /// Returns the scene object a throne.Object handle names, or panics and answers null.
-    LevelObject* target(LhatMachine* running, LhatValue value) {
-        const auto id = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(lhat_hostdata_pointer(value, object)));
-        if (auto* found = scene.find(id)) return found;
-        lhat_machine_panic_text(running, "throne.Object refers to a deleted object; check valid() first");
-        return nullptr;
     }
 };
 
@@ -213,58 +245,63 @@ THRONE_HOST(vecNormalized, {
     s.answer(answers, count, (length > 0 ? a * (1 / length) : a).data());
 })
 
-/// Object.id().
-THRONE_HOST(objectId, {
-    if (const auto* object = s.target(machine, arguments[0])) {
-        answers[0] = lhat_integer(object->id);
+/// SceneNode.id().
+THRONE_HOST(nodeId, {
+    if (const auto* node = s.target(machine, arguments[0])) {
+        answers[0] = lhat_integer(node->id);
         *count = 1;
     }
 })
-/// Object.name().
-THRONE_HOST(objectName, {
-    if (const auto* object = s.target(machine, arguments[0]))
-        if (lhat_machine_make_string(machine, object->name.data(), object->name.size(), &answers[0])) *count = 1;
+/// SceneNode.name().
+THRONE_HOST(nodeName, {
+    if (const auto* node = s.target(machine, arguments[0]))
+        if (lhat_machine_make_string(machine, node->name.data(), node->name.size(), &answers[0])) *count = 1;
 })
-/// Object.valid(): whether the object still exists.
-THRONE_HOST(objectValid, {
-    const auto id = reinterpret_cast<std::uintptr_t>(lhat_hostdata_pointer(arguments[0], s.object));
-    answers[0] = lhat_bool(s.scene.find(static_cast<std::uint32_t>(id)) != nullptr);
+/// SceneNode.valid(): whether the node is still in a loaded scene.
+THRONE_HOST(nodeValid, {
+    answers[0] = lhat_bool(s.resolve(arguments[0]) != nullptr);
     *count = 1;
 })
-
-/// Reads vector property @p Which of the receiver.
+/// Reads local vector property @p Which of the receiver.
 template <int Which>
-THRONE_HOST(objectGet, {
-    if (auto* object = s.target(machine, arguments[0])) s.answer(answers, count, property(*object, Which));
+THRONE_HOST(nodeGet, {
+    if (auto* node = s.target(machine, arguments[0])) s.answer(answers, count, property(*node, Which));
 })
-/// Writes vector property @p Which of the receiver, keeping scale and colour in range.
+/// Writes local vector property @p Which of the receiver, keeping scale and colour in range.
 template <int Which>
-THRONE_HOST(objectSet, {
-    auto* object = s.target(machine, arguments[0]);
-    if (!object) return;
+THRONE_HOST(nodeSet, {
+    auto* node = s.target(machine, arguments[0]);
+    if (!node) return;
     auto value = vec3(s, arguments[1]);
     for (float* component : {&value.x, &value.y, &value.z}) {
         if (!std::isfinite(*component)) {
-            lhat_machine_panic_text(machine, "throne.Object property must be finite");
+            lhat_machine_panic_text(machine, "throne.SceneNode property must be finite");
             return;
         }
         *component = std::clamp(*component, Which == 2 ? 0.001f : Which == 3 ? 0.0f : -1.0e6f,
                                 Which == 3 ? 1.0f : 1.0e6f);
     }
-    std::memcpy(property(*object, Which), value.data(), sizeof value);
+    std::memcpy(property(*node, Which), value.data(), sizeof value);
 })
 
-/// throne.find(name): the first object with that name, or nil^.
+/// Runner.name().
+THRONE_HOST(runnerName, {
+    const auto index = reinterpret_cast<std::uintptr_t>(lhat_hostdata_pointer(arguments[0], s.runner));
+    const auto& name = s.runners.at(index)->name;
+    if (lhat_machine_make_string(machine, name.data(), name.size(), &answers[0])) *count = 1;
+})
+
+/// throne.find(name): the first scene node with that name, scene by scene, or nil^.
 THRONE_HOST(find, {
     const auto name = text(arguments[0]);
     answers[0] = lhat_nil();
     *count = 1;
-    for (const auto& object : s.scene.objects)
-        if (object.name == name) {
-            void* pointer = reinterpret_cast<void*>(static_cast<std::uintptr_t>(object.id));
-            if (!lhat_machine_make_hostdata(machine, s.object, pointer, &answers[0])) answers[0] = lhat_nil();
-            return;
-        }
+    for (std::size_t scene = 0; scene < s.world.scenes.size(); ++scene)
+        for (const auto& node : s.world.scenes[scene].scene.nodes)
+            if (node.name == name) {
+                answers[0] = s.handle(machine, s.sceneNode, State::nodeBits(scene, node.id));
+                return;
+            }
 })
 /// throne.log(text).
 THRONE_HOST(log, { s.log(std::string(text(arguments[0]))); })
@@ -275,11 +312,12 @@ THRONE_HOST(time, {
 })
 #undef THRONE_HOST
 
-/// Registers the throne module: Vec3, Object and the free functions.
+/// Registers the throne module: Vec3, SceneNode, Runner and the free functions.
 bool registerThrone(LhatProgram* program, State& s) {
     s.vec3 = lhat_register_hostvalue_type(program, moduleName, "Vec3", sizeof(Vec3));
-    s.object = lhat_register_hostdata_type(program, moduleName, "Object");
-    if (!s.vec3 || !s.object) return false;
+    s.sceneNode = lhat_register_hostdata_type(program, moduleName, "SceneNode");
+    s.runner = lhat_register_hostdata_type(program, moduleName, "Runner");
+    if (!s.vec3 || !s.sceneNode || !s.runner) return false;
     const char* axes[] = {"x", "y", "z"};
     for (std::size_t i = 0; i < 3; ++i)
         if (!lhat_register_hostvalue_field(program, moduleName, "Vec3", axes[i], i * sizeof(float), LHAT_HVFIELD_F32))
@@ -299,28 +337,30 @@ bool registerThrone(LhatProgram* program, State& s) {
         {"Vec3", "cross", "f^self^, throne.Vec3 -> throne.Vec3;", vecCross},
         {"Vec3", "length", "f^self^ -> number^;", vecLength},
         {"Vec3", "normalized", "f^self^ -> throne.Vec3;", vecNormalized},
-        {"Object", "id", "f^self^ -> number^;", objectId},
-        {"Object", "name", "f^self^ -> string^;", objectName},
-        {"Object", "valid", "f^self^ -> bool^;", objectValid},
-        {"Object", "position", "f^self^ -> throne.Vec3;", objectGet<0>},
-        {"Object", "rotation", "f^self^ -> throne.Vec3;", objectGet<1>},
-        {"Object", "scale", "f^self^ -> throne.Vec3;", objectGet<2>},
-        {"Object", "colour", "f^self^ -> throne.Vec3;", objectGet<3>},
-        {"Object", "setPosition", "p^self^, throne.Vec3;", objectSet<0>},
-        {"Object", "setRotation", "p^self^, throne.Vec3;", objectSet<1>},
-        {"Object", "setScale", "p^self^, throne.Vec3;", objectSet<2>},
-        {"Object", "setColour", "p^self^, throne.Vec3;", objectSet<3>},
+        {"SceneNode", "id", "f^self^ -> number^;", nodeId},
+        {"SceneNode", "name", "f^self^ -> string^;", nodeName},
+        {"SceneNode", "valid", "f^self^ -> bool^;", nodeValid},
+        {"SceneNode", "position", "f^self^ -> throne.Vec3;", nodeGet<0>},
+        {"SceneNode", "rotation", "f^self^ -> throne.Vec3;", nodeGet<1>},
+        {"SceneNode", "scale", "f^self^ -> throne.Vec3;", nodeGet<2>},
+        {"SceneNode", "colour", "f^self^ -> throne.Vec3;", nodeGet<3>},
+        {"SceneNode", "setPosition", "p^self^, throne.Vec3;", nodeSet<0>},
+        {"SceneNode", "setRotation", "p^self^, throne.Vec3;", nodeSet<1>},
+        {"SceneNode", "setScale", "p^self^, throne.Vec3;", nodeSet<2>},
+        {"SceneNode", "setColour", "p^self^, throne.Vec3;", nodeSet<3>},
+        {"Runner", "name", "f^self^ -> string^;", runnerName},
         {nullptr, "vec3", "f^number^, number^, number^ -> throne.Vec3;", vecNew},
-        {nullptr, "find", "f^string^ -> throne.Object|nil^;", find},
+        {nullptr, "find", "f^string^ -> throne.SceneNode|nil^;", find},
         {nullptr, "log", "p^string^;", log},
         {nullptr, "time", "f^ -> number^;", time},
     };
     for (const auto& entry : entries) {
-        const bool ok =
-            !entry.type ? lhat_register_func(program, moduleName, entry.name, entry.signature, entry.call, &s)
-            : entry.type == std::string_view("Vec3")
-                ? lhat_register_hostvalue_member(program, moduleName, "Vec3", entry.name, entry.signature, entry.call, &s)
-                : lhat_register_member(program, moduleName, "Object", entry.name, entry.signature, entry.call, &s);
+        const std::string_view type = entry.type ? entry.type : "";
+        const bool ok = type.empty() ? lhat_register_func(program, moduleName, entry.name, entry.signature, entry.call, &s)
+                        : type == "Vec3" ? lhat_register_hostvalue_member(program, moduleName, entry.type, entry.name,
+                                                                          entry.signature, entry.call, &s)
+                                         : lhat_register_member(program, moduleName, entry.type, entry.name,
+                                                                entry.signature, entry.call, &s);
         if (!ok) return false;
     }
     return true;
@@ -352,19 +392,67 @@ bool publishes(const LhatUnit* unit, std::string_view name) {
     }
     return false;
 }
+
+/// Whether the instances of @p unit's Behaviour have a member @p name of type @p type.
+bool behaviourHas(const LhatUnit* unit, const std::string& name, const char* type) {
+    return lhat_unit_export_conforms(unit, "Behaviour", ("t^{ self^{ " + name + " : " + type + " } }").c_str());
 }
 
-namespace {
 /// Creates @p s's program with everything scripts may name registered.
 void createProgram(State& s) {
     s.program.reset(lhat_program_new(true, loadScript, &s));
     if (!s.program || !lhatstdlib_math_register(s.program.get()) || !registerThrone(s.program.get(), s))
         throw ScriptError("Could not set up the L^ program");
 }
+
+/// Checks @p path as a behaviour script, adding contract problems to @p errors.
+const LhatUnit* checkBehaviour(State& s, const std::string& path, std::string& errors) {
+    const auto* unit = lhat_program_check(s.program.get(), path.c_str());
+    if (!unit || !lhat_unit_ok(unit)) return unit;
+    const auto problem = [&](const char* text) { errors += path + ": " + text + "\n"; };
+    if (!lhat_unit_module_name(unit)) problem("must declare module^");
+    if (!publishes(unit, "Behaviour")) {
+        problem("must publish Behaviour = def^{ ... }");
+        return unit;
+    }
+    if (!lhat_unit_export_conforms(unit, "Behaviour", "t^{ new : f^ -> any^; }")) problem("Behaviour must be a def^");
+    if (behaviourHas(unit, "start", "any^") && !behaviourHas(unit, "start", "p^self^, throne.Runner;"))
+        problem("Behaviour.start must be p^self^, throne.Runner;");
+    if (behaviourHas(unit, "update", "any^") && !behaviourHas(unit, "update", "p^self^, throne.Runner, number^;"))
+        problem("Behaviour.update must be p^self^, throne.Runner, number^;");
+    return unit;
+}
+
+/// Compiles the checked program, throwing with the compiler's message on failure.
+void compile(State& s) {
+    auto* program = s.program.get();
+    if (lhat_program_compile(program)) return;
+    const auto failure = lhat_program_compile_failure(program, nullptr);
+    std::string message(lhat_compile_message_write(program, &failure, nullptr, 0) + 1, '\0');
+    lhat_compile_message_write(program, &failure, message.data(), message.size());
+    message.pop_back();
+    throw ScriptError(message);
+}
+
+/// Creates the machine, the root table and the installed registrations.
+void startMachine(State& s) {
+    s.machine.reset(lhat_machine_new());
+    if (!s.machine || !lhat_machine_make_table(s.machine.get(), &s.roots) ||
+        !lhat_machine_set_global(s.machine.get(), "throneRuntimeRoots", s.roots))
+        throw ScriptError("Out of memory");
+    lhat_program_install(s.program.get(), s.machine.get());
+    lhat_machine_set_budget(s.machine.get(), frameBudget);
+}
+
+/// Runs @p unit and returns its published Behaviour definition, kept alive.
+LhatValue definition(State& s, const LhatUnit* unit, const std::string& path) {
+    const auto exports = s.check(lhat_run(s.machine.get(), lhat_unit_proto(unit)), path);
+    return s.keep(lhat_table_get_bytes(reinterpret_cast<const LhatTable*>(lhat_as_object(exports)), "Behaviour", 9));
+}
 }
 
 std::string ScriptRuntime::hostApi() {
-    Level none;
+    World none;
     State s(none, {}, {});
     createProgram(s);
     std::string json(lhat_program_dump_host_api(s.program.get(), nullptr, 0) + 1, '\0');
@@ -373,85 +461,125 @@ std::string ScriptRuntime::hostApi() {
     return json;
 }
 
-ScriptRuntime::ScriptRuntime(Level& scene, const std::filesystem::path& root, Log log)
-    : state_(std::make_unique<State>(scene, root, std::move(log))) {
+std::vector<FieldInfo> ScriptRuntime::fields(const std::filesystem::path& root, const std::string& script) {
+    World none;
+    State s(none, root, {});
+    createProgram(s);
+    std::string errors;
+    const auto* unit = checkBehaviour(s, script, errors);
+    diagnostics(s.program.get(), errors);
+    if (!errors.empty()) throw ScriptError(errors);
+    compile(s);
+    const auto* type = lhat_unit_export_type(unit, "Behaviour");
+    if (!type || !type->instance) throw ScriptError(script + ": Behaviour must be a def^");
+    // The defaults are what a fresh instance holds.
+    startMachine(s);
+    const auto instance = s.keep(s.check(
+        lhat_machine_call_member(s.machine.get(), definition(s, unit, script), "new", 3, nullptr, 0), script + " new"));
+    const auto* table = reinterpret_cast<const LhatTable*>(lhat_as_object(instance));
+    std::vector<FieldInfo> result;
+    for (std::size_t i = 0; i < type->instance->member_count; ++i) {
+        const auto& member = type->instance->members[i];
+        if (!member.type) continue;
+        const std::string name(member.name->text, member.name->length);
+        const auto value = lhat_table_get_bytes(table, name.data(), name.size());
+        bool node = member.type->kind == LHAT_TYPE_RT_HOSTDATA && member.type->hostdata_tag == s.sceneNode;
+        for (std::size_t k = 0; member.type->kind == LHAT_TYPE_RT_UNION && k < member.type->part_count; ++k)
+            node = node || member.type->parts[k]->hostdata_tag == s.sceneNode;
+        if (node) result.push_back({name, FieldKind::SceneNode, NodeRef{}});
+        else if (member.type->kind == LHAT_TYPE_RT_NUMBER) result.push_back({name, FieldKind::Number, number(value)});
+        else if (member.type->kind == LHAT_TYPE_RT_BOOL) result.push_back({name, FieldKind::Bool, lhat_as_bool(value)});
+        else if (member.type->kind == LHAT_TYPE_RT_STRING)
+            result.push_back({name, FieldKind::String, std::string(text(value))});
+    }
+    std::sort(result.begin(), result.end(), [](const FieldInfo& a, const FieldInfo& b) { return a.name < b.name; });
+    return result;
+}
+
+ScriptRuntime::ScriptRuntime(World& world, const std::filesystem::path& root, Log log)
+    : state_(std::make_unique<State>(world, root, std::move(log))) {
     auto& s = *state_;
     createProgram(s);
     auto* program = s.program.get();
 
     std::string errors;
-    const auto contract = [&](const std::string& path, const char* problem) {
-        errors += path + ": " + problem + "\n";
-    };
-    // Each unit is checked once; objects sharing a script share its unit.
     const LhatUnit* mainUnit = nullptr;
     if (std::filesystem::exists(s.root / mainPath)) {
         mainUnit = lhat_program_check(program, mainPath);
         if (mainUnit && lhat_unit_ok(mainUnit)) {
-            if (!lhat_unit_module_name(mainUnit)) contract(mainPath, "must declare module^");
+            if (!lhat_unit_module_name(mainUnit)) errors += std::string(mainPath) + ": must declare module^\n";
             s.mainStart = publishes(mainUnit, "start");
             s.mainUpdate = publishes(mainUnit, "update");
             if (s.mainStart && !lhat_unit_export_conforms(mainUnit, "start", "p^;"))
-                contract(mainPath, "start must be p^;");
+                errors += std::string(mainPath) + ": start must be p^;\n";
             if (s.mainUpdate && !lhat_unit_export_conforms(mainUnit, "update", "p^number^;"))
-                contract(mainPath, "update must be p^number^;");
+                errors += std::string(mainPath) + ": update must be p^number^;\n";
         }
-    }
-    std::map<std::string, const LhatUnit*> units;
-    for (const auto& object : scene.objects) {
-        if (object.script.empty() || units.count(object.script)) continue;
-        const auto* unit = lhat_program_check(program, object.script.c_str());
-        units[object.script] = unit;
-        if (!unit || !lhat_unit_ok(unit)) continue;
-        const auto& path = object.script;
-        if (!lhat_unit_module_name(unit)) contract(path, "must declare module^");
-        if (!publishes(unit, "Behaviour")) {
-            contract(path, "must publish Behaviour = def^{ ... }");
-            continue;
-        }
-        if (!lhat_unit_export_conforms(unit, "Behaviour", "t^{ new : f^ -> any^; }"))
-            contract(path, "Behaviour must be a def^");
-        if (lhat_unit_export_conforms(unit, "Behaviour", "t^{ self^{ start : any^ } }") &&
-            !lhat_unit_export_conforms(unit, "Behaviour", "t^{ self^{ start : p^self^, throne.Object; } }"))
-            contract(path, "Behaviour.start must be p^self^, throne.Object;");
-        if (lhat_unit_export_conforms(unit, "Behaviour", "t^{ self^{ update : any^ } }") &&
-            !lhat_unit_export_conforms(unit, "Behaviour", "t^{ self^{ update : p^self^, throne.Object, number^; } }"))
-            contract(path, "Behaviour.update must be p^self^, throne.Object, number^;");
-    }
-    diagnostics(program, errors);
-    if (!errors.empty()) throw ScriptError(errors);
-    if (!lhat_program_compile(program)) {
-        const auto failure = lhat_program_compile_failure(program, nullptr);
-        std::string message(lhat_compile_message_write(program, &failure, nullptr, 0) + 1, '\0');
-        lhat_compile_message_write(program, &failure, message.data(), message.size());
-        message.pop_back();
-        throw ScriptError(message);
     }
 
-    s.machine.reset(lhat_machine_new());
-    if (!s.machine || !lhat_machine_make_table(s.machine.get(), &s.roots) ||
-        !lhat_machine_set_global(s.machine.get(), "throneRuntimeRoots", s.roots))
-        throw ScriptError("Out of memory");
-    lhat_program_install(program, s.machine.get());
-    lhat_machine_set_budget(s.machine.get(), frameBudget);
+    // Run order: scene runners scene by scene, then level runners.
+    std::vector<Pending> pending;
+    const auto collect = [&](int scene, const std::vector<Runner>& runners, const std::string& owner) {
+        for (const auto& runner : runners) {
+            s.runners.push_back(&runner);
+            for (const auto& behaviour : runner.behaviours)
+                pending.push_back({scene, s.runners.size() - 1, &behaviour,
+                                   owner + " " + runner.name + " " + behaviour.script});
+        }
+    };
+    for (std::size_t i = 0; i < world.scenes.size(); ++i)
+        collect(static_cast<int>(i), world.scenes[i].scene.runners, world.scenes[i].path);
+    collect(-1, world.level.runners, "level");
+
+    std::map<std::string, const LhatUnit*> units;
+    for (const auto& item : pending)
+        if (!units.count(item.behaviour->script))
+            units[item.behaviour->script] = checkBehaviour(s, item.behaviour->script, errors);
+    diagnostics(program, errors);
+    if (!errors.empty()) throw ScriptError(errors);
+    compile(s);
+    startMachine(s);
 
     if (mainUnit) s.main = s.keep(s.check(lhat_run(s.machine.get(), lhat_unit_proto(mainUnit)), mainPath));
     std::map<std::string, LhatValue> definitions;
-    for (const auto& [path, unit] : units) {
-        const auto exports = s.check(lhat_run(s.machine.get(), lhat_unit_proto(unit)), path);
-        definitions[path] = s.keep(lhat_table_get_bytes(reinterpret_cast<const LhatTable*>(lhat_as_object(exports)),
-                                                        "Behaviour", 9));
-    }
-    for (const auto& object : scene.objects) {
-        if (object.script.empty()) continue;
-        const auto* unit = units[object.script];
-        Behaviour behaviour{object.script, lhat_nil(), s.keep(s.handle(object.id)),
-                            lhat_unit_export_conforms(unit, "Behaviour", "t^{ self^{ start : any^ } }"),
-                            lhat_unit_export_conforms(unit, "Behaviour", "t^{ self^{ update : any^ } }")};
-        behaviour.instance =
-            s.keep(s.check(lhat_machine_call_member(s.machine.get(), definitions[object.script], "new", 3, nullptr, 0),
-                           object.script + " Behaviour.new"));
-        s.behaviours.push_back(std::move(behaviour));
+    for (const auto& [path, unit] : units) definitions[path] = definition(s, unit, path);
+    std::vector<LhatValue> runnerHandles;
+    for (std::size_t i = 0; i < s.runners.size(); ++i) runnerHandles.push_back(s.keep(s.handle(s.machine.get(), s.runner, i)));
+
+    for (const auto& item : pending) {
+        const auto& path = item.behaviour->script;
+        const auto* unit = units[path];
+        const auto instance = s.keep(s.check(
+            lhat_machine_call_member(s.machine.get(), definitions[path], "new", 3, nullptr, 0), item.what + " new"));
+        auto* table = reinterpret_cast<LhatTable*>(lhat_as_object(instance));
+        for (const auto& [name, value] : item.behaviour->fields) {
+            if (!behaviourHas(unit, name, fieldType(value))) {
+                s.log(item.what + ": field " + name + " ignored (the script has no " + fieldType(value) + " field of that name)");
+                continue;
+            }
+            LhatValue written = lhat_nil();
+            if (const auto* number = std::get_if<double>(&value)) written = lhat_real(*number);
+            else if (const auto* flag = std::get_if<bool>(&value)) written = lhat_bool(*flag);
+            else if (const auto* string = std::get_if<std::string>(&value)) {
+                if (!lhat_machine_make_string(s.machine.get(), string->data(), string->size(), &written))
+                    throw ScriptError("Out of memory");
+            } else {
+                const auto& ref = std::get<NodeRef>(value);
+                const auto scenePath = ref.scene.empty() && item.scene >= 0 ? world.scenes[item.scene].path : ref.scene;
+                for (std::size_t i = 0; i < world.scenes.size(); ++i)
+                    if (world.scenes[i].path == scenePath && world.scenes[i].scene.findNode(ref.node))
+                        written = s.handle(s.machine.get(), s.sceneNode, State::nodeBits(i, ref.node));
+                // A node that is not loaded leaves the script's default in place.
+                if (lhat_is_nil(written)) continue;
+            }
+            LhatValue key;
+            bool refused = false;
+            if (!lhat_machine_make_string(s.machine.get(), name.data(), name.size(), &key) ||
+                !lhat_machine_table_set(s.machine.get(), table, key, written, &refused) || refused)
+                throw ScriptError(item.what + ": could not set field " + name);
+        }
+        s.instances.push_back({item.what, instance, runnerHandles[item.runner], behaviourHas(unit, "start", "any^"),
+                               behaviourHas(unit, "update", "any^")});
     }
 }
 
@@ -462,15 +590,15 @@ void ScriptRuntime::update(float deltaSeconds) {
     if (!s.started) {
         s.started = true;
         if (s.mainStart) s.call(s.main, "start", nullptr, 0, mainPath);
-        for (const auto& behaviour : s.behaviours)
-            if (behaviour.start) s.call(behaviour.instance, "start", &behaviour.handle, 1, behaviour.path);
+        for (const auto& instance : s.instances)
+            if (instance.start) s.call(instance.instance, "start", &instance.runner, 1, instance.what);
     }
     s.time += deltaSeconds;
     const LhatValue dt = lhat_real(deltaSeconds);
     if (s.mainUpdate) s.call(s.main, "update", &dt, 1, mainPath);
-    for (const auto& behaviour : s.behaviours) {
-        const LhatValue arguments[2] = {behaviour.handle, dt};
-        if (behaviour.update) s.call(behaviour.instance, "update", arguments, 2, behaviour.path);
+    for (const auto& instance : s.instances) {
+        const LhatValue arguments[2] = {instance.runner, dt};
+        if (instance.update) s.call(instance.instance, "update", arguments, 2, instance.what);
     }
 }
 }

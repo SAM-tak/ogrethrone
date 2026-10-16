@@ -1,14 +1,18 @@
-# Sample object script: the main level attaches it to "Spinning Cube"; press Play (F5).
-module^samples.spin
-import^throne
+# Sample behaviour: the level's "SpinningCube" runner points `target` at the
+# SpinningCube scene node, so that node turns while playing (F5).
+module^ samples.spin
+import^ throne
 
 public^let^Behaviour = def^{
     self^{
+        target : throne.SceneNode|nil^ = nil^,
         degreesPerSecond = 90,
     },
-    update = p^self^, obj:throne.Object, dt:number^ {
-        var^ r = obj.rotation()
-        r.y := r.y + self^.degreesPerSecond * dt
-        obj.setRotation(r)
+    update = p^self^, runner:throne.Runner, dt:number^ {
+        if^ self^.target != nil^ {
+            var^ r = self^.target.rotation()
+            r.y := r.y + self^.degreesPerSecond * dt
+            self^.target.setRotation(r)
+        }
     },
 }

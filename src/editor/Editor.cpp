@@ -60,13 +60,6 @@ Ogre::Quaternion orientation(Vec3 degrees) {
            about(degrees.x, Ogre::Vector3::UNIT_X);
 }
 
-/// Returns the world transform of @p object.
-Ogre::Matrix4 transform(const LevelObject& object) {
-    Ogre::Matrix4 result;
-    result.makeTransform(toOgre(object.position), toOgre(object.scale), orientation(object.rotation));
-    return result;
-}
-
 /// Creates a double-sided unlit material whose colour multiplies the vertex colours.
 Ogre::HlmsUnlitDatablock* createMaterial(Ogre::HlmsUnlit& hlms, const std::string& name) {
     Ogre::HlmsMacroblock macroblock;
@@ -177,13 +170,15 @@ std::string formatTime(std::int64_t seconds) {
     return text;
 }
 
-/// Fills the window below the menu bar with a dock space. The first time (no
-/// saved layout) it docks the panels as hierarchy left, inspector right, browser
-/// below and viewport in the middle.
+/// Fills the window below the menu bar with a dock space. When there is no saved
+/// layout that knows the current panels, it docks Scene above Runners on the left,
+/// Inspector on the right, Browser below and Viewport in the middle.
 void dockSpace() {
     const auto* viewport = ImGui::GetMainViewport();
     const ImGuiID id = ImGui::DockSpaceOverViewport(0, viewport);
-    if (const auto* node = ImGui::DockBuilderGetNode(id); node && node->IsSplitNode()) return;
+    if (const auto* node = ImGui::DockBuilderGetNode(id);
+        node && node->IsSplitNode() && ImGui::FindWindowSettingsByID(ImHashStr("Runners")))
+        return;
     ImGui::DockBuilderRemoveNode(id);
     ImGui::DockBuilderAddNode(id, ImGuiDockNodeFlags_DockSpace);
     ImGui::DockBuilderSetNodeSize(id, viewport->WorkSize);
@@ -191,7 +186,10 @@ void dockSpace() {
     const ImGuiID left = ImGui::DockBuilderSplitNode(centre, ImGuiDir_Left, 0.18f, nullptr, &centre);
     const ImGuiID right = ImGui::DockBuilderSplitNode(centre, ImGuiDir_Right, 0.26f, nullptr, &centre);
     const ImGuiID bottom = ImGui::DockBuilderSplitNode(centre, ImGuiDir_Down, 0.27f, nullptr, &centre);
-    ImGui::DockBuilderDockWindow("Hierarchy", left);
+    ImGuiID runners = 0;
+    const ImGuiID scene = ImGui::DockBuilderSplitNode(left, ImGuiDir_Up, 0.55f, nullptr, &runners);
+    ImGui::DockBuilderDockWindow("Scene", scene);
+    ImGui::DockBuilderDockWindow("Runners", runners);
     ImGui::DockBuilderDockWindow("Inspector", right);
     ImGui::DockBuilderDockWindow("Browser", bottom);
     ImGui::DockBuilderDockWindow("Viewport", centre);
@@ -273,13 +271,12 @@ void Editor::openProject(const std::filesystem::path& path) {
         writeHostApi();
         const auto level = project_->mainLevel.empty() ? std::string(defaultLevelPath) : project_->mainLevel;
         std::snprintf(levelPath_, sizeof levelPath_, "%s", level.c_str());
-        document_ = std::filesystem::exists(project_->resolve(level)) ? Level::load(project_->resolve(level)) : Level();
+        world_ = World();
+        if (std::filesystem::exists(project_->resolve(level)) && !open()) throw std::runtime_error(fileError_);
         undo_.clear();
         redo_.clear();
         dirty_ = false;
-        selected_ = document_.objects.empty() ? 0 : document_.objects.front().id;
         rebuildScene();
-        focusSelection();
         launcherError_.clear();
         log("Opened project " + project_->name + " (" + project_->root.u8string() + ")");
     } catch (const std::exception& error) {
@@ -291,11 +288,11 @@ void Editor::openProject(const std::filesystem::path& path) {
 void Editor::closeProject() {
     if (runtime_) stop();
     project_.reset();
-    document_ = Level();
+    world_ = World();
     undo_.clear();
     redo_.clear();
     dirty_ = false;
-    selected_ = 0;
+    selected_ = {};
     rebuildScene();
     projectsChanged();
 }
@@ -415,20 +412,20 @@ void Editor::launcher() {
 }
 
 void Editor::play() {
-    playBackup_ = document_;
+    playBackup_ = world_;
     try {
-        runtime_ = std::make_unique<ScriptRuntime>(document_, project_->root,
+        runtime_ = std::make_unique<ScriptRuntime>(world_, project_->root,
                                                    [this](const std::string& line) { log(line); });
         log("Play");
     } catch (const ScriptError& error) {
-        document_ = std::move(playBackup_);
+        world_ = std::move(playBackup_);
         log(std::string("Play refused:\n") + error.what());
     }
 }
 
 void Editor::stop() {
     runtime_.reset();
-    document_ = std::move(playBackup_);
+    world_ = std::move(playBackup_);
     log("Stop");
 }
 
@@ -470,7 +467,8 @@ void Editor::frame(float deltaSeconds) {
     shortcuts();
     menu();
     dockSpace();
-    hierarchy();
+    scenePanel();
+    runnersPanel();
     inspector();
     viewport();
     browser();
@@ -483,47 +481,58 @@ void Editor::frame(float deltaSeconds) {
 
 void Editor::rebuildScene() {
     destroyRenderObjects();
-    for (const auto& object : document_.objects) {
-        const auto name = "ThroneEditor/Object/" + std::to_string(object.id);
-        auto* material = createMaterial(unlit_, name);
-        auto* mesh = scene_.createManualObject();
-        addCubeGeometry(*mesh, name);
-        renderObjects_.push_back({attach(scene_, mesh), mesh, material});
+    for (std::size_t scene = 0; scene < world_.scenes.size(); ++scene) {
+        // Parents come first, so each node's OGRE parent already exists.
+        std::map<std::uint32_t, Ogre::SceneNode*> created;
+        for (const auto& node : world_.scenes[scene].scene.nodes) {
+            const auto name = "ThroneEditor/Node/" + std::to_string(scene) + "/" + std::to_string(node.id);
+            auto* material = createMaterial(unlit_, name);
+            auto* mesh = scene_.createManualObject();
+            addCubeGeometry(*mesh, name);
+            auto* parent = node.parent ? created.at(node.parent) : scene_.getRootSceneNode();
+            auto* ogreNode = parent->createChildSceneNode();
+            ogreNode->attachObject(mesh);
+            created[node.id] = ogreNode;
+            renderObjects_.push_back({scene, node.id, ogreNode, mesh, material});
+        }
     }
     syncTransforms();
 }
 
 void Editor::destroyRenderObjects() {
-    for (const auto& render : renderObjects_) {
-        scene_.destroyManualObject(render.mesh);
-        scene_.destroySceneNode(render.node);
-        unlit_.destroyDatablock(render.material->getName());
+    // Children before parents, so no node is destroyed while it still has children.
+    for (auto it = renderObjects_.rbegin(); it != renderObjects_.rend(); ++it) {
+        scene_.destroyManualObject(it->mesh);
+        scene_.destroySceneNode(it->node);
+        unlit_.destroyDatablock(it->material->getName());
     }
     renderObjects_.clear();
 }
 
 void Editor::syncTransforms() {
-    for (std::size_t i = 0; i < renderObjects_.size(); ++i) {
-        const auto& object = document_.objects[i];
-        const auto& render = renderObjects_[i];
-        render.node->setPosition(toOgre(object.position));
-        render.node->setOrientation(orientation(object.rotation));
-        render.node->setScale(toOgre(object.scale));
-        render.material->setColour(Ogre::ColourValue(object.colour[0], object.colour[1], object.colour[2]));
+    const RenderObject* outlined = nullptr;
+    for (const auto& render : renderObjects_) {
+        const auto* node = world_.scenes[render.scene].scene.findNode(render.id);
+        render.node->setPosition(toOgre(node->position));
+        render.node->setOrientation(orientation(node->rotation));
+        render.node->setScale(toOgre(node->scale));
+        render.material->setColour(Ogre::ColourValue(node->colour[0], node->colour[1], node->colour[2]));
+        if (selected_.kind == Selection::Kind::Node && selected_.scene == static_cast<int>(render.scene) &&
+            selected_.id == render.id)
+            outlined = &render;
     }
     gridNode_->setVisible(showGrid_);
-    const auto* selected = document_.find(selected_);
-    outlineNode_->setVisible(selected != nullptr);
-    if (selected) {
-        outlineNode_->setPosition(toOgre(selected->position));
-        outlineNode_->setOrientation(orientation(selected->rotation));
-        outlineNode_->setScale(toOgre(selected->scale) * 1.02f);
+    outlineNode_->setVisible(outlined != nullptr);
+    if (outlined) {
+        outlineNode_->setPosition(outlined->node->_getDerivedPositionUpdated());
+        outlineNode_->setOrientation(outlined->node->_getDerivedOrientationUpdated());
+        outlineNode_->setScale(outlined->node->_getDerivedScaleUpdated() * 1.02f);
     }
 }
 
-void Editor::checkpoint() { commit(document_); }
+void Editor::checkpoint() { commit(world_); }
 
-void Editor::commit(Level before) {
+void Editor::commit(World before) {
     undo_.push_back(std::move(before));
     if (undo_.size() > historyLimit) undo_.erase(undo_.begin());
     redo_.clear();
@@ -532,8 +541,8 @@ void Editor::commit(Level before) {
 
 void Editor::undo() {
     if (undo_.empty()) return;
-    redo_.push_back(std::move(document_));
-    document_ = std::move(undo_.back());
+    redo_.push_back(std::move(world_));
+    world_ = std::move(undo_.back());
     undo_.pop_back();
     dirty_ = true;
     rebuildScene();
@@ -541,17 +550,42 @@ void Editor::undo() {
 
 void Editor::redo() {
     if (redo_.empty()) return;
-    undo_.push_back(std::move(document_));
-    document_ = std::move(redo_.back());
+    undo_.push_back(std::move(world_));
+    world_ = std::move(redo_.back());
     redo_.pop_back();
     dirty_ = true;
     rebuildScene();
 }
 
-void Editor::addCube() {
+SceneNode* Editor::selectedNode() {
+    if (selected_.kind != Selection::Kind::Node || selected_.scene < 0 ||
+        selected_.scene >= static_cast<int>(world_.scenes.size()))
+        return nullptr;
+    return world_.scenes[selected_.scene].scene.findNode(selected_.id);
+}
+
+Runner* Editor::selectedRunner() {
+    if (selected_.kind != Selection::Kind::Runner || selected_.scene >= static_cast<int>(world_.scenes.size()))
+        return nullptr;
+    return runnersOf(selected_.scene).findRunner(selected_.id);
+}
+
+RunnerSet& Editor::runnersOf(int scene) {
+    return scene < 0 ? static_cast<RunnerSet&>(world_.level) : world_.scenes[scene].scene;
+}
+
+void Editor::addNode() {
+    if (world_.scenes.empty()) {
+        log("Add a scene first (Scene panel)");
+        return;
+    }
+    const auto* parent = selectedNode();
+    const int scene = parent ? selected_.scene : 0;
     try {
-        auto before = document_;
-        selected_ = document_.addCube().id;
+        auto before = world_;
+        auto& added = world_.scenes[scene].scene.addNode("Cube", parent ? parent->id : 0);
+        added.name = "Cube " + std::to_string(added.id);
+        selected_ = {Selection::Kind::Node, scene, added.id};
         commit(std::move(before));
         rebuildScene();
     } catch (const std::exception& error) {
@@ -559,18 +593,46 @@ void Editor::addCube() {
     }
 }
 
+void Editor::addRunner(int scene) {
+    try {
+        auto before = world_;
+        auto& added = runnersOf(scene).addRunner("Runner");
+        added.name = "Runner " + std::to_string(added.id);
+        selected_ = {Selection::Kind::Runner, scene, added.id};
+        commit(std::move(before));
+    } catch (const std::exception& error) {
+        log(error.what());
+    }
+}
+
+void Editor::addScene() {
+    const std::string path = newScenePath_;
+    if (path.empty() || world_.findScene(path)) return;
+    try {
+        auto before = world_;
+        const auto file = project_->resolve(path);
+        world_.scenes.push_back({path, std::filesystem::exists(file) ? Scene::load(file) : Scene()});
+        world_.level.scenes.push_back(path);
+        commit(std::move(before));
+        rebuildScene();
+    } catch (const std::exception& error) {
+        log("Could not add " + path + ": " + error.what());
+    }
+}
+
 void Editor::duplicate() {
-    const auto* source = document_.find(selected_);
+    const auto* source = selectedNode();
     if (!source) return;
     try {
-        auto before = document_;
+        auto before = world_;
         auto copy = *source;
-        auto& added = document_.addCube();
+        auto& scene = world_.scenes[selected_.scene].scene;
+        auto& added = scene.addNode(copy.name, copy.parent);
         copy.id = added.id;
         if (copy.name.size() <= 250) copy.name += " Copy";
         copy.position.x += 1;
         added = std::move(copy);
-        selected_ = added.id;
+        selected_.id = added.id;
         commit(std::move(before));
         rebuildScene();
     } catch (const std::exception& error) {
@@ -579,23 +641,38 @@ void Editor::duplicate() {
 }
 
 void Editor::erase() {
-    auto& objects = document_.objects;
-    const auto it = std::find_if(objects.begin(), objects.end(),
-                                 [this](const auto& object) { return object.id == selected_; });
-    if (it == objects.end()) return;
-    checkpoint();
-    document_.objects.erase(it);
-    selected_ = 0;
+    if (selectedNode()) {
+        checkpoint();
+        world_.scenes[selected_.scene].scene.removeNode(selected_.id);
+    } else if (selectedRunner()) {
+        checkpoint();
+        runnersOf(selected_.scene).removeRunner(selected_.id);
+    } else {
+        return;
+    }
+    selected_ = {};
     rebuildScene();
 }
 
 bool Editor::open() {
     try {
-        auto loaded = Level::load(project_->resolve(levelPath_));
+        World loaded;
+        loaded.level = Level::load(project_->resolve(levelPath_));
+        for (const auto& path : loaded.level.scenes) {
+            const auto file = project_->resolve(path);
+            if (std::filesystem::exists(file)) {
+                loaded.scenes.push_back({path, Scene::load(file)});
+            } else {
+                log("Scene " + path + " does not exist yet; it will be created on save");
+                loaded.scenes.push_back({path, Scene()});
+            }
+        }
         checkpoint();
-        document_ = std::move(loaded);
+        world_ = std::move(loaded);
         dirty_ = false;
-        selected_ = document_.objects.empty() ? 0 : document_.objects.front().id;
+        selected_ = {};
+        if (!world_.scenes.empty() && !world_.scenes[0].scene.nodes.empty())
+            selected_ = {Selection::Kind::Node, 0, world_.scenes[0].scene.nodes.front().id};
         rebuildScene();
         focusSelection();
         log(std::string("Opened ") + levelPath_);
@@ -609,9 +686,10 @@ bool Editor::open() {
 
 bool Editor::save() {
     try {
-        document_.save(project_->resolve(levelPath_));
+        for (const auto& loaded : world_.scenes) loaded.scene.save(project_->resolve(loaded.path));
+        world_.level.save(project_->resolve(levelPath_));
         dirty_ = false;
-        log(std::string("Saved ") + levelPath_);
+        log(std::string("Saved ") + levelPath_ + " and " + std::to_string(world_.scenes.size()) + " scene(s)");
         return true;
     } catch (const std::exception& error) {
         fileError_ = error.what();
@@ -640,10 +718,11 @@ void Editor::menu() {
     if (!ImGui::BeginMainMenuBar()) return;
     const bool editing = !runtime_;
     if (ImGui::BeginMenu("File")) {
-        if (ImGui::MenuItem("New", nullptr, false, editing)) {
+        if (ImGui::MenuItem("New Level", nullptr, false, editing)) {
             checkpoint();
-            document_ = Level();
-            selected_ = 0;
+            world_ = World();
+            selected_ = {};
+            std::snprintf(levelPath_, sizeof levelPath_, "levels/untitled.level.lton");
             rebuildScene();
         }
         if (ImGui::MenuItem("Open...", "Ctrl+O", false, editing)) showFiles_ = true, saving_ = false;
@@ -658,10 +737,10 @@ void Editor::menu() {
         if (ImGui::MenuItem("Undo", "Ctrl+Z", false, !undo_.empty())) undo();
         if (ImGui::MenuItem("Redo", "Ctrl+Y", false, !redo_.empty())) redo();
         ImGui::Separator();
-        const bool hasSelection = document_.find(selected_) != nullptr;
-        if (ImGui::MenuItem("Add Cube")) addCube();
-        if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, hasSelection)) duplicate();
-        if (ImGui::MenuItem("Delete", "Del", false, hasSelection)) erase();
+        if (ImGui::MenuItem("Add Node", nullptr, false, !world_.scenes.empty())) addNode();
+        if (ImGui::MenuItem("Add Level Runner")) addRunner(-1);
+        if (ImGui::MenuItem("Duplicate Node", "Ctrl+D", false, selectedNode() != nullptr)) duplicate();
+        if (ImGui::MenuItem("Delete", "Del", false, selectedNode() || selectedRunner())) erase();
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("View")) {
@@ -722,59 +801,6 @@ void Editor::closeDialog() {
     ImGui::SameLine();
     if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
-}
-
-void Editor::hierarchy() {
-    if (ImGui::Begin("Hierarchy")) {
-        ImGui::BeginDisabled(runtime_ != nullptr);
-        if (ImGui::Button("Add Cube")) addCube();
-        ImGui::EndDisabled();
-        ImGui::Separator();
-        for (const auto& object : document_.objects) {
-            ImGui::PushID(static_cast<int>(object.id));
-            if (ImGui::Selectable(object.name.c_str(), object.id == selected_)) selected_ = object.id;
-            ImGui::PopID();
-        }
-    }
-    ImGui::End();
-}
-
-void Editor::inspector() {
-    if (ImGui::Begin("Inspector")) {
-        if (auto* object = document_.find(selected_)) {
-            ImGui::BeginDisabled(runtime_ != nullptr);
-            // One undo step per widget interaction, recorded when the widget is released.
-            const auto track = [this] {
-                if (ImGui::IsItemActivated()) editStart_ = document_;
-                if (ImGui::IsItemDeactivatedAfterEdit()) commit(std::move(editStart_));
-            };
-            constexpr auto clamp = ImGuiSliderFlags_AlwaysClamp;
-            char name[256];
-            std::snprintf(name, sizeof name, "%s", object->name.c_str());
-            if (ImGui::InputText("Name", name, sizeof name) && name[0]) object->name = name;
-            track();
-            ImGui::DragFloat3("Position", object->position.data(), 0.05f, -1.0e6f, 1.0e6f, "%.3f", clamp);
-            track();
-            ImGui::DragFloat3("Rotation", object->rotation.data(), 0.5f, -1.0e6f, 1.0e6f, "%.1f", clamp);
-            track();
-            ImGui::DragFloat3("Scale", object->scale.data(), 0.01f, 0.001f, 1.0e6f, "%.3f", clamp);
-            track();
-            ImGui::ColorEdit3("Colour", object->colour.data());
-            track();
-            char script[256];
-            std::snprintf(script, sizeof script, "%s", object->script.c_str());
-            if (ImGui::InputTextWithHint("Script", "scripts/....lh", script, sizeof script)) object->script = script;
-            track();
-            ImGui::Separator();
-            if (ImGui::Button("Duplicate")) duplicate();
-            ImGui::SameLine();
-            if (ImGui::Button("Delete")) erase();
-            ImGui::EndDisabled();
-        } else {
-            ImGui::TextDisabled("Nothing selected");
-        }
-    }
-    ImGui::End();
 }
 
 void Editor::viewport() {
@@ -851,26 +877,30 @@ void Editor::updateCamera() {
 }
 
 void Editor::focusSelection() {
-    const auto* object = document_.find(selected_);
-    if (!object) return;
-    target_ = toOgre(object->position);
-    distance_ = std::max({3.0f, object->scale.x * 3, object->scale.y * 3, object->scale.z * 3});
+    for (const auto& render : renderObjects_) {
+        if (selected_.kind != Selection::Kind::Node || selected_.scene != static_cast<int>(render.scene) ||
+            selected_.id != render.id)
+            continue;
+        target_ = render.node->_getDerivedPositionUpdated();
+        const auto scale = render.node->_getDerivedScaleUpdated();
+        distance_ = std::max({Ogre::Real(3), scale.x * 3, scale.y * 3, scale.z * 3});
+    }
 }
 
 void Editor::pick(float x, float y) {
     const Ogre::Ray ray = camera_.getCameraToViewportRay(x, y);
     const Ogre::AxisAlignedBox unit(-0.5f, -0.5f, -0.5f, 0.5f, 0.5f, 0.5f);
     auto nearest = std::numeric_limits<Ogre::Real>::max();
-    selected_ = 0;
-    for (const auto& object : document_.objects) {
-        // Test in object space; the unnormalized direction keeps distances comparable.
-        const auto inverse = transform(object).inverseAffine();
+    selected_ = {};
+    for (const auto& render : renderObjects_) {
+        // Test in node space; the unnormalized direction keeps distances comparable.
+        const auto inverse = render.node->_getFullTransformUpdated().inverseAffine();
         const Ogre::Ray local(inverse.transformAffine(ray.getOrigin()),
                               inverse.transformDirectionAffine(ray.getDirection()));
         const auto hit = local.intersects(unit);
         if (hit.first && hit.second < nearest) {
             nearest = hit.second;
-            selected_ = object.id;
+            selected_ = {Selection::Kind::Node, static_cast<int>(render.scene), render.id};
         }
     }
 }

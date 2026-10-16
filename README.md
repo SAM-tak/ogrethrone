@@ -52,21 +52,32 @@ A project is a folder containing `project.throne.lton`:
     project.throne.lton   # name and optional mainLevel
     lhat-host.json        # written by the editor for the L^ language server
     levels/               # *.level.lton
+    scenes/               # *.scene.lton
     scripts/              # *.lh
 ```
 
-Every path inside a project, including those stored in levels, is relative to the
-project folder. [`samples/basic`](samples/basic) is a sample project; the VS Code
+Every path inside a project, including those stored in levels and scenes, is
+relative to the project folder. [`samples/basic`](samples/basic) is a sample project; the VS Code
 launch configurations open it or show the launcher.
 
-The editor has a Dear ImGui hierarchy, inspector, level browser/log and an
-offscreen-rendered viewport. A level holds the game-side data; "scene" is left to
-OGRE's rendering. Levels are cubes with position, rotation (degrees, applied about
-X, then Y, then Z), scale, colour and an optional script, saved as `*.level.lton`
-(L^ Table Object Notation, read by L^ as effect-free data). Right-drag orbits,
-middle-drag pans, the wheel zooms, left-click selects and `F` frames the selection.
-Ctrl+Z/Ctrl+Y undo/redo, Ctrl+D duplicates, Delete removes, Ctrl+S saves and
-Ctrl+O opens. New and Open are undoable; closing the window or the project with
+The editor's dockable panels are Scene, Runners, Inspector, Viewport and Browser
+(the layout is kept in `editor.ini` beside the project list). The data is split
+in three kinds of file, all LTON (L^ Table Object Notation, read by L^ as
+effect-free data):
+
+- A **scene** (`*.scene.lton`) is a hierarchy of drawable nodes. Each node has a
+  local position, rotation (degrees, applied about X, then Y, then Z), scale and
+  colour; nodes are unit cubes for now. Drag nodes in the Scene panel to reparent
+  them. A scene is a prefab (`*.prefab.lton`) extended with scene-wide data.
+- A **runner** runs behaviours. It is not part of the scene hierarchy and has no
+  transform; it reaches nodes only through its behaviours' fields. Scenes and
+  levels can both hold runners.
+- A **level** (`*.level.lton`) lists the scenes it loads and its own runners.
+
+Right-drag orbits, middle-drag pans, the wheel zooms, left-click selects a node
+and `F` frames it. Ctrl+Z/Ctrl+Y undo/redo, Ctrl+D duplicates a node, Delete
+removes the selected node or runner, Ctrl+S saves the level and its scenes and
+Ctrl+O opens a level. New and Open are undoable; closing the window or the project with
 unsaved changes asks to save or discard them (on Windows this also covers the
 window's close button). Colibri widgets and model import are not wired yet.
 `ogrethrone --smoke` creates a throwaway project, runs the editor on it for three
@@ -139,36 +150,47 @@ globally or modifying the bundled ICU sources.
 ## Scripting
 
 Scripts are written in L^ and run only in the editor's Play mode (F5 or the Play
-menu item). Play runs on a copy of the scene; Stop discards it, so script changes
-to objects never reach the edited document. Editing is disabled while playing.
+menu item). Play runs on a copy of the level and its scenes; Stop discards it, so
+script changes never reach the edited data. Editing is disabled while playing.
 Each Play checks and compiles every script anew, so edited scripts take effect
 on the next Play. Rejected scripts, run-time errors, and frames over the loop
 budget (treated as endless loops) are written to the Log tab and stop Play.
 
 Paths are relative to the project folder. `scripts/main.lh` is optional; when
 present it must declare `module^` and may publish `start: p^;` and
-`update: p^number^;`. An object's **Script** field names a `module^` that
-publishes a definition called `Behaviour`; each scripted object gets its own
-instance, whose `self^{ ... }` fields hold per-object state:
+`update: p^number^;`; it stays the game's entry point. A runner holds any number
+of behaviours. Each behaviour names a `module^` that publishes a definition called
+`Behaviour`, and gets its own instance per runner:
 
 ```lhat
 module^ samples.spin
 import^ throne
 
 public^let^Behaviour = def^{
-    self^{ degreesPerSecond = 90 },
-    start = p^self^, obj:throne.Object { throne.log("hello " .. obj.name()) },
-    update = p^self^, obj:throne.Object, dt:number^ {
-        var^ r = obj.rotation()
-        r.y := r.y + self^.degreesPerSecond * dt
-        obj.setRotation(r)
+    self^{
+        target : throne.SceneNode|nil^ = nil^,
+        degreesPerSecond = 90,
+    },
+    start = p^self^, runner:throne.Runner { throne.log("hello " .. runner.name()) },
+    update = p^self^, runner:throne.Runner, dt:number^ {
+        if^ self^.target != nil^ {
+            var^ r = self^.target.rotation()
+            r.y := r.y + self^.degreesPerSecond * dt
+            self^.target.setRotation(r)
+        }
     },
 }
 ```
 
+The `self^{ ... }` fields are what the Inspector shows for that behaviour: number,
+bool and string fields are edited directly, and `throne.SceneNode` fields pick a
+node from any loaded scene. A runner stores only the values that differ from the
+script's defaults (Reset removes one); a value whose field is gone or has another
+type is skipped with a warning in the log.
+
 `start` and `update` are optional; when present their signatures are checked
-before Play starts. Order per frame: `main.lh`, then objects in hierarchy order;
-every `start` runs once before the first `update`.
+before Play starts. Order per frame: `main.lh`, then each scene's runners, then the
+level's runners; every `start` runs once before the first `update`.
 
 The `throne` module provides:
 
@@ -176,11 +198,14 @@ The `throne` module provides:
   `dot`, `cross`, `length` and `normalized`; made with `throne.vec3(x, y, z)`. The
   axes match OGRE, Box3D and Steam Audio: right-handed, +Y up, -Z forward. Like
   any L^ host value it cannot be stored in a table; keep one with `throne.Vec3.Box^`.
-- `throne.Object`: `id()`, `name()`, `valid()`, `position()`/`rotation()`/`scale()`/
-  `colour()` and the matching `setPosition(v)` etc. Rotation is in degrees, applied
-  about X, then Y, then Z; scale and colour are clamped to their valid ranges.
-  Using a handle whose object no longer exists panics; check `valid()` first.
-- `throne.find(name)`, `throne.log(text)` and `throne.time()` (seconds since Play).
+- `throne.SceneNode`: `id()`, `name()`, `valid()`, `position()`/`rotation()`/`scale()`/
+  `colour()` and the matching `setPosition(v)` etc., all relative to the parent.
+  Rotation is in degrees, applied about X, then Y, then Z; scale and colour are
+  clamped to their valid ranges. Using a handle whose node is gone panics; check
+  `valid()` first.
+- `throne.Runner`: `name()`; passed to `start` and `update`.
+- `throne.find(name)` (the first node with that name, scene by scene),
+  `throne.log(text)` and `throne.time()` (seconds since Play).
 
 `std.math` is the only standard module scripts can import.
 
@@ -195,8 +220,10 @@ without opening a window:
 
 The file defaults to `lhat-host.json` in the working directory.
 
-[`samples/basic/scripts/spin.lh`](samples/basic/scripts/spin.lh) is a sample. The design is recorded in
-[TDDja/02-scripting.md](TDDja/02-scripting.md).
+In [`samples/basic`](samples/basic), the level's SpinningCube runner gives
+[`spin.lh`](samples/basic/scripts/spin.lh) the SpinningCube node as its `target`.
+The design is recorded in [TDDja/02-scripting.md](TDDja/02-scripting.md) and
+[TDDja/05-runner.md](TDDja/05-runner.md).
 
 ## Audio
 

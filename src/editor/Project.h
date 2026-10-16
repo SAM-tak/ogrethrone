@@ -20,7 +20,8 @@ struct Project {
     /// Project-relative path of the level opened with the project; may be empty.
     std::string mainLevel;
 
-    /// Creates `<parent>/<name>/` with the standard layout and an example main level.
+    /// Creates `<parent>/<name>/` with the standard layout, an example scene and a
+    /// main level that loads it.
     /// @throws std::runtime_error when the name is unusable or the folder exists and is not empty.
     static Project create(const std::filesystem::path& parent, const std::string& name);
     /// Opens the project at @p path, which may be the folder or its marker file.

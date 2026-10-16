@@ -47,7 +47,8 @@ if(BUILD_TESTING)
 endif()
 
 # Levels, projects and the project list: the editor's LTON data, without OGRE.
-add_library(throne_data STATIC src/editor/Lton.cpp src/editor/Level.cpp src/editor/Project.cpp)
+add_library(throne_data STATIC src/editor/Lton.cpp src/editor/Scene.cpp src/editor/Level.cpp
+    src/editor/Project.cpp)
 target_include_directories(throne_data PUBLIC src)
 # stdlib/*.h are included by path relative to the L^ source root.
 target_include_directories(throne_data PRIVATE "${THRONE_LHAT_SOURCE_DIR}")
@@ -70,7 +71,7 @@ if(BUILD_TESTING)
 endif()
 
 if(THRONE_BUILD_GRAPHICS)
-    add_executable(ogrethrone src/editor/main.cpp src/editor/Editor.cpp
+    add_executable(ogrethrone src/editor/main.cpp src/editor/Editor.cpp src/editor/EditorPanels.cpp
         src/editor/EditorPlatform.cpp)
     target_link_libraries(ogrethrone PRIVATE throne_runtime throne_audio throne_script OgreNextMain
         RenderSystem_Vulkan OgreNextHlmsPbs OgreNextHlmsUnlit OgreNextImgui ColibriGui)

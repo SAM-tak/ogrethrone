@@ -27,7 +27,10 @@ Project Project::create(const fs::path& parent, const std::string& name) {
     if (fs::exists(root) && !fs::is_empty(root)) throw std::runtime_error(root.u8string() + " is not empty");
     fs::create_directories(root / "scripts");
     Project project{root, name, mainLevelPath};
-    Level::example().save(project.resolve(mainLevelPath));
+    Scene::example().save(project.resolve("scenes/main.scene.lton"));
+    Level level;
+    level.scenes.push_back("scenes/main.scene.lton");
+    level.save(project.resolve(mainLevelPath));
     project.save();
     return project;
 }

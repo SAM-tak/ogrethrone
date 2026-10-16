@@ -3,8 +3,10 @@
 #include "editor/EditorPlatform.h"
 #include "editor/Level.h"
 #include "editor/Project.h"
+#include "script/ScriptRuntime.h"
 #include <OgreVector3.h>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -26,9 +28,10 @@ class HlmsUnlitDatablock;
 }
 
 namespace throne {
-class ScriptRuntime;
-
 /// Dear ImGui level editor and project launcher drawn over the OGRE window.
+///
+/// The editor works on a World: the level's runners plus the scenes it loads.
+/// Panels: Scene (node hierarchies), Runners, Inspector, Viewport and Browser.
 ///
 /// Without an open project the window shows the launcher (TDDja/03 4). With one,
 /// the level is rendered into an offscreen texture shown in the viewport panel;
@@ -77,36 +80,65 @@ private:
     void projectsChanged();
     /// Draws the launcher: new, import, and the known projects.
     void launcher();
-    /// OGRE objects that display one LevelObject; same order as Level::objects.
+    /// OGRE objects that display one scene node.
     struct RenderObject {
+        std::size_t scene;
+        std::uint32_t id;
         Ogre::SceneNode* node;
         Ogre::ManualObject* mesh;
         Ogre::HlmsUnlitDatablock* material;
     };
-    /// Recreates all render objects from the document (after load, undo or structural edits).
+    /// What the inspector shows: a scene node, or a runner of a scene or of the level.
+    struct Selection {
+        enum class Kind { None, Node, Runner } kind = Kind::None;
+        /// Index into World::scenes, or -1 for a level runner.
+        int scene = -1;
+        std::uint32_t id = 0;
+    };
+    /// A script's editable fields, refreshed when the file changes.
+    struct CachedFields {
+        std::filesystem::file_time_type stamp;
+        std::vector<FieldInfo> fields;
+        std::string error;
+        bool loaded = false;
+    };
+
+    /// Recreates all render objects from the world (after load, undo or structural edits).
     void rebuildScene();
     /// Destroys every render object and its material.
     void destroyRenderObjects();
-    /// Copies document transforms and colours to the render objects and selection outline.
+    /// Copies node transforms and colours to the render objects and the selection outline.
     void syncTransforms();
-    /// Records the current document for undo before an edit.
+    /// Records the current world for undo before an edit.
     void checkpoint();
     /// Records @p before for undo when an edit that started from it has finished.
-    void commit(Level before);
-    /// Restores the previous document state, if any.
+    void commit(World before);
+    /// Restores the previous world state, if any.
     void undo();
     /// Reapplies the most recently undone state, if any.
     void redo();
-    /// Adds a default cube and selects it.
-    void addCube();
-    /// Copies the selected object with a small offset and selects the copy.
+    /// The selected scene node, or nullptr.
+    SceneNode* selectedNode();
+    /// The selected runner, or nullptr.
+    Runner* selectedRunner();
+    /// The runners of a scene (index) or of the level (-1).
+    RunnerSet& runnersOf(int scene);
+    /// Adds a cube under the selected node, or at the root of the first scene, and selects it.
+    void addNode();
+    /// Adds a runner to a scene (index) or the level (-1) and selects it.
+    void addRunner(int scene);
+    /// Loads the scene at newScenePath_ into the level, creating it when the file is absent.
+    void addScene();
+    /// Copies the selected node (without children) beside itself and selects the copy.
     void duplicate();
-    /// Deletes the selected object.
+    /// Deletes the selected node (with its children) or runner.
     void erase();
-    /// Replaces the document with the file at levelPath_; undoable.
+    /// Returns the fields of @p script, reading it again when the file has changed.
+    const CachedFields& fieldsOf(const std::string& script);
+    /// Replaces the world with the level at levelPath_ and its scenes; undoable.
     /// @return false on failure, with the reason in fileError_.
     bool open();
-    /// Writes the document to levelPath_.
+    /// Writes the level to levelPath_ and every loaded scene to its path.
     /// @return false on failure, with the reason in fileError_.
     bool save();
     /// Handles keyboard shortcuts while no text field has focus.
@@ -126,19 +158,27 @@ private:
     void leave(Leave action);
     /// Draws the Save / Discard / Cancel prompt requested through confirmClose_.
     void closeDialog();
-    /// Draws the object list panel.
-    void hierarchy();
-    /// Draws the property panel for the selected object.
+    /// Draws the Scene panel: each loaded scene's node hierarchy, with drag and drop reparenting.
+    void scenePanel();
+    /// Draws the children of @p parent in scene @p scene as a tree.
+    void nodeTree(std::size_t scene, std::uint32_t parent);
+    /// Draws the Runners panel: the level's runners and each scene's.
+    void runnersPanel();
+    /// Draws the property panel for the selected node or runner.
     void inspector();
+    /// Draws the node properties.
+    void nodeInspector(SceneNode& node);
+    /// Draws the runner's name and its behaviours with their fields.
+    void runnerInspector(Runner& runner, int scene);
     /// Draws the rendered scene and handles camera and picking input.
     void viewport();
     /// Draws the bottom panel listing the project's levels and log messages.
     void browser();
     /// Applies the orbit parameters and projection mode to the camera.
     void updateCamera();
-    /// Centres the orbit camera on the selected object.
+    /// Centres the orbit camera on the selected node.
     void focusSelection();
-    /// Selects the frontmost object under normalized viewport coordinates, or clears selection.
+    /// Selects the frontmost node under normalized viewport coordinates, or clears selection.
     void pick(float x, float y);
     /// Resizes the viewport texture and recreates the workspaces that reference it.
     void resizeViewport(unsigned width, unsigned height);
@@ -175,13 +215,15 @@ private:
     char newName_[101] = "", newParent_[512] = "", importPath_[512] = "";
     std::string launcherError_;
     Leave leaving_ = Leave::Exit;
-    Level document_;
-    Level editStart_;
-    std::vector<Level> undo_, redo_;
-    /// Non-null while playing; runs on document_, with the edited state kept in playBackup_.
+    World world_;
+    World editStart_;
+    std::vector<World> undo_, redo_;
+    /// Non-null while playing; runs on world_, with the edited state kept in playBackup_.
     std::unique_ptr<ScriptRuntime> runtime_;
-    Level playBackup_;
-    std::uint32_t selected_ = 0;
+    World playBackup_;
+    Selection selected_;
+    std::map<std::string, CachedFields> fieldCache_;
+    char newScenePath_[256] = "scenes/new.scene.lton";
     Ogre::Vector3 target_{0, 0.5f, 0};
     float yaw_ = 0.65f, pitch_ = 0.45f, distance_ = 9.0f;
     unsigned viewportWidth_ = 0, viewportHeight_ = 0;
