@@ -1,0 +1,11 @@
+/out/
+/build/
+/.fetchcontent-cache/
+/CMakeUserPresets.json
+/.vs/
+/.vscode/
+*.log
+imgui.ini
+
+CLAUDE.md
+AGENT.md

@@ -1,0 +1,20 @@
+name: CPU bootstrap
+
+on: [push, pull_request, workflow_dispatch]
+
+jobs:
+  runtime:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Configure
+        run: cmake -S . -B out/ci -DTHRONE_BUILD_GRAPHICS=OFF -DCMAKE_BUILD_TYPE=Debug
+      - name: Build
+        run: cmake --build out/ci --config Debug --parallel 4
+      - name: Test
+        run: ctest --test-dir out/ci -C Debug --output-on-failure
