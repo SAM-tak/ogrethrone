@@ -44,7 +44,9 @@ int main(int argc, char** argv) {
         // GUI rendering and platform input are wired in the next editor milestone.
         {
             Ogre::ImguiManager editorGui;
-            Colibri::ColibriManager gui(nullptr, nullptr);
+            Colibri::LogListener guiLog;
+            Colibri::ColibriListener guiPlatform;
+            Colibri::ColibriManager gui(&guiLog, &guiPlatform);
             throne::PhysicsWorld physics;
             auto previous = std::chrono::steady_clock::now();
             double accumulator = 0.0;

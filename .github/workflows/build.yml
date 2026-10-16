@@ -6,15 +6,36 @@ jobs:
   runtime:
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            compiler: default
+            configure: linux-headless
+            build: linux-headless
+          - os: windows-latest
+            compiler: clang
+            configure: windows-headless
+            build: windows-headless
+          - os: windows-latest
+            compiler: msvc
+            configure: windows-msvc-headless
+            build: windows-msvc-headless
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+      - name: Set up Windows compiler environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
       - name: Configure
-        run: cmake -S . -B out/ci -DTHRONE_BUILD_GRAPHICS=OFF -DCMAKE_BUILD_TYPE=Debug
+        if: matrix.compiler != 'msvc'
+        run: cmake --preset ${{ matrix.configure }}
+      - name: Configure MSVC compatibility build
+        if: matrix.compiler == 'msvc'
+        run: cmake --preset windows-msvc-headless -G "Visual Studio 17 2022"
       - name: Build
-        run: cmake --build out/ci --config Debug --parallel 4
+        run: cmake --build --preset ${{ matrix.build }} --parallel 4
       - name: Test
-        run: ctest --test-dir out/ci -C Debug --output-on-failure
+        run: ctest --preset ${{ matrix.build }}

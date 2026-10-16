@@ -18,16 +18,19 @@ submodule is required. The original sibling checkouts remain independent.
 
 ## Windows
 
-Requirements: Visual Studio 2026 with Desktop development with C++, CMake 3.25+,
-and the LunarG Vulkan SDK (headers and loader library). The existing preset uses
-VS 2026; a VS 2022 user can inherit it in `CMakeUserPresets.json` and override the
-generator. A Vulkan-capable GPU and driver are required to run graphics.
+Requirements: Visual Studio 2026 with Desktop development with C++ and C++ Clang
+tools for Windows, CMake 3.25+, Ninja, and the LunarG Vulkan SDK (headers and loader
+library). Open an **x64 Native Tools Command Prompt** or an x64 Developer PowerShell
+before configuring or building with Clang. The standard Windows presets use
+`clang-cl` and Ninja Multi-Config, retaining the MSVC ABI, standard library and
+static CRT. Visual Studio's LLVM directory is added to PATH by the preset.
+A Vulkan-capable GPU and driver are required to run graphics.
 
 ```powershell
 cmake --preset windows -DOGRE_VULKAN_SDK=C:/VulkanSDK/<installed-version>
 cmake --build --preset windows-debug --parallel 8
 ctest --preset windows-debug
-./out/build/windows/bin/Debug/ogrethrone.exe
+./out/build/windows-clang-ninja/bin/Debug/ogrethrone.exe
 ```
 
 `VULKAN_SDK` can also locate the SDK. A terminal opened before SDK installation
@@ -48,14 +51,32 @@ cmake --build --preset windows-headless --parallel 8
 ctest --preset windows-headless
 ```
 
+MSVC remains available for compatibility checks in a separate build directory:
+
+```powershell
+cmake --preset windows-msvc -DOGRE_VULKAN_SDK=C:/VulkanSDK/<installed-version>
+cmake --build --preset windows-msvc-debug --parallel 4
+ctest --preset windows-msvc-debug
+```
+
+Use `windows-release` / `windows-msvc-release` to build and test Release, and
+`windows-msvc-headless` for CPU checks with MSVC. The MSVC presets use VS 2026;
+with VS 2022, override the generator with `-G "Visual Studio 17 2022"` at initial
+configuration. Clang and MSVC use independent build trees; old `out/build/windows`
+and `out/build/windows-headless` directories are not reused.
+The VS 2026 generator requires a CMake version that supports that generator;
+the Clang/Ninja presets do not require the ClangCL MSBuild integration component.
+
 The smoke check initializes an L^ VM, simulates a box falling onto a ground plane,
 and compares all 180 positions against a second identical run. This verifies
 same-build repeatability; it does not establish cross-platform determinism.
 
-Verified locally on Windows with Visual Studio 2026, Vulkan SDK 1.4.363.0 and an
-NVIDIA GeForce GTX 1660 Ti: Debug and Release builds, the CPU smoke test in both
-configurations, and three-frame Vulkan runs all passed. Both graphics runs also
-compiled the ImGui vertex and fragment shaders successfully.
+Verified locally with Clang 22.1.3 (MSVC ABI), Visual Studio 2026's Windows toolchain,
+Vulkan SDK 1.4.363.0 and an NVIDIA GeForce GTX 1660 Ti: Debug and Release builds,
+all three CTest checks, and three-frame Vulkan runs passed. Both graphics runs
+compiled the ImGui vertex and fragment shaders successfully; Release also passed
+the audio device playback check. The separate MSVC headless preset passed all
+three CTest checks. CI is configured to check both Windows compilers.
 
 ## Audio
 
@@ -117,7 +138,7 @@ headless preset successfully fetched and verified the SDK without a root overrid
 An optional device check plays a short, quiet spatialized tone:
 
 ```powershell
-./out/build/windows/bin/Debug/throne_audio_smoke.exe --device
+./out/build/windows-clang-ninja/bin/Debug/throne_audio_smoke.exe --device
 ```
 
 This is an audio bootstrap. Moving-source/listener updates, OGRE/Box3D acoustic
@@ -139,7 +160,14 @@ X11/XCB development packages. Linux builds have not yet been verified.
   ImGui copy. `ImTextureID` is configured as `void*` for the OGRE renderer.
 - The pinned OGRE build scripts re-add the disabled FreeImage codec via their
   unity-build exclusion list. The parent CMake adapter removes that source from
-  the target; upstream source files are unchanged.
+  the target without editing the codec sources.
+- The OGRE fork includes clang-cl compatibility fixes: native SIMD vector
+  operators must not be redeclared, and the existing Clang workaround for arrays
+  of restricted pointers also applies to clang-cl. `-Wall` reaches the Clang
+  frontend instead of selecting clang-cl's MSVC `/Wall` behavior. Clang uses
+  `/fp:precise` because OGRE relies on infinity for unbounded objects. Windows
+  module-handle sentinels are explicitly initialized, and resource compilation
+  does not receive PIC or C/C++ warning options.
 - Colibri builds its bundled FreeType, HarfBuzz, ICU and zlib dependencies.
 - glslang is pinned and built with SPIR-V output enabled. SPIRV-Tools optimization
   is disabled; it is not bundled by this bootstrap.

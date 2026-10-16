@@ -3,41 +3,69 @@
   "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
   "configurePresets": [
     {
-      "name": "windows",
-      "displayName": "Windows x64 / Vulkan",
-      "generator": "Visual Studio 18 2026",
-      "architecture": "x64",
+      "name": "windows-base",
+      "hidden": true,
       "binaryDir": "${sourceDir}/out/build/${presetName}",
-      "cacheVariables": { "BUILD_TESTING": "ON" }
+      "cacheVariables": {"BUILD_TESTING": "ON"}
+    },
+    {
+      "name": "windows",
+      "inherits": "windows-base",
+      "displayName": "Windows x64 / Clang / Vulkan",
+      "binaryDir": "${sourceDir}/out/build/windows-clang-ninja",
+      "generator": "Ninja Multi-Config",
+      "cacheVariables": {"CMAKE_C_COMPILER": "clang-cl", "CMAKE_CXX_COMPILER": "clang-cl"},
+      "environment": {"PATH": "$penv{VSINSTALLDIR}/VC/Tools/Llvm/x64/bin;$penv{PATH}"}
     },
     {
       "name": "windows-headless",
       "inherits": "windows",
-      "displayName": "Windows x64 / CPU smoke checks",
-      "cacheVariables": { "THRONE_BUILD_GRAPHICS": "OFF" }
+      "displayName": "Windows x64 / Clang / CPU smoke checks",
+      "binaryDir": "${sourceDir}/out/build/windows-clang-headless",
+      "cacheVariables": {"THRONE_BUILD_GRAPHICS": "OFF"}
+    },
+    {
+      "name": "windows-msvc",
+      "inherits": "windows-base",
+      "displayName": "Windows x64 / MSVC / Vulkan",
+      "generator": "Visual Studio 18 2026",
+      "architecture": "x64"
+    },
+    {
+      "name": "windows-msvc-headless",
+      "inherits": "windows-msvc",
+      "displayName": "Windows x64 / MSVC / CPU smoke checks",
+      "cacheVariables": {"THRONE_BUILD_GRAPHICS": "OFF"}
     },
     {
       "name": "linux",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/out/build/${presetName}",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "BUILD_TESTING": "ON" }
+      "cacheVariables": {"CMAKE_BUILD_TYPE": "Debug", "BUILD_TESTING": "ON"}
     },
     {
       "name": "linux-headless",
       "inherits": "linux",
-      "cacheVariables": { "THRONE_BUILD_GRAPHICS": "OFF" }
+      "cacheVariables": {"THRONE_BUILD_GRAPHICS": "OFF"}
     }
   ],
   "buildPresets": [
-    { "name": "windows-debug", "configurePreset": "windows", "configuration": "Debug" },
-    { "name": "windows-release", "configurePreset": "windows", "configuration": "Release" },
-    { "name": "windows-headless", "configurePreset": "windows-headless", "configuration": "Debug" },
-    { "name": "linux", "configurePreset": "linux" },
-    { "name": "linux-headless", "configurePreset": "linux-headless" }
+    {"name": "windows-debug", "configurePreset": "windows", "configuration": "Debug"},
+    {"name": "windows-release", "configurePreset": "windows", "configuration": "Release"},
+    {"name": "windows-headless", "configurePreset": "windows-headless", "configuration": "Debug"},
+    {"name": "linux", "configurePreset": "linux"},
+    {"name": "linux-headless", "configurePreset": "linux-headless"},
+    {"name": "windows-msvc-debug", "configurePreset": "windows-msvc", "configuration": "Debug"},
+    {"name": "windows-msvc-release", "configurePreset": "windows-msvc", "configuration": "Release"},
+    {"name": "windows-msvc-headless", "configurePreset": "windows-msvc-headless", "configuration": "Debug"}
   ],
   "testPresets": [
-    { "name": "windows-debug", "configurePreset": "windows", "configuration": "Debug", "output": { "outputOnFailure": true } },
-    { "name": "windows-headless", "configurePreset": "windows-headless", "configuration": "Debug", "output": { "outputOnFailure": true } },
-    { "name": "linux-headless", "configurePreset": "linux-headless", "output": { "outputOnFailure": true } }
+    {"name": "windows-debug", "configurePreset": "windows", "configuration": "Debug", "output": {"outputOnFailure": true}},
+    {"name": "windows-headless", "configurePreset": "windows-headless", "configuration": "Debug", "output": {"outputOnFailure": true}},
+    {"name": "linux-headless", "configurePreset": "linux-headless", "output": {"outputOnFailure": true}},
+    {"name": "windows-msvc-debug", "configurePreset": "windows-msvc", "configuration": "Debug", "output": {"outputOnFailure": true}},
+    {"name": "windows-release", "configurePreset": "windows", "configuration": "Release", "output": {"outputOnFailure": true}},
+    {"name": "windows-msvc-release", "configurePreset": "windows-msvc", "configuration": "Release", "output": {"outputOnFailure": true}},
+    {"name": "windows-msvc-headless", "configurePreset": "windows-msvc-headless", "configuration": "Debug", "output": {"outputOnFailure": true}}
   ]
 }
