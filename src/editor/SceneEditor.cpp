@@ -238,6 +238,7 @@ void SceneEditor::frame(float deltaSeconds) {
     platform_.newFrame();
     ImGui::GetIO().DeltaTime = std::max(deltaSeconds, 1.0e-4f);
     ImGui::NewFrame();
+    if (platform_.takeCloseRequest()) requestClose();
     shortcuts();
     menu();
     hierarchy();
@@ -245,6 +246,7 @@ void SceneEditor::frame(float deltaSeconds) {
     viewport();
     browser();
     fileDialog();
+    closeDialog();
     syncTransforms();
     updateCamera();
     gui_->prepareForRender(&scene_);
@@ -415,7 +417,7 @@ void SceneEditor::menu() {
         if (ImGui::MenuItem("Save", "Ctrl+S")) save();
         if (ImGui::MenuItem("Save As...")) showFiles_ = true, saving_ = true;
         ImGui::Separator();
-        if (ImGui::MenuItem("Exit")) close_ = true;
+        if (ImGui::MenuItem("Exit")) requestClose();
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Edit")) {
@@ -451,6 +453,28 @@ void SceneEditor::fileDialog() {
     if (!fileError_.empty()) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "%s", fileError_.c_str());
     if ((ImGui::Button(saving_ ? "Save" : "Open") || enter) && (saving_ ? save() : open()))
         ImGui::CloseCurrentPopup();
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
+
+void SceneEditor::requestClose() {
+    if (dirty_) confirmClose_ = true;
+    else close_ = true;
+}
+
+void SceneEditor::closeDialog() {
+    if (confirmClose_) {
+        ImGui::OpenPopup("Unsaved Changes");
+        confirmClose_ = false;
+        fileError_.clear();
+    }
+    if (!ImGui::BeginPopupModal("Unsaved Changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    ImGui::Text("Save changes to %s before closing?", scenePath_);
+    if (!fileError_.empty()) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "%s", fileError_.c_str());
+    if (ImGui::Button("Save") && save()) close_ = true;
+    ImGui::SameLine();
+    if (ImGui::Button("Discard")) close_ = true;
     ImGui::SameLine();
     if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
     ImGui::EndPopup();

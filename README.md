@@ -44,8 +44,9 @@ rotation (degrees, applied about X, then Y, then Z), scale and colour, saved as
 `*.throne.json` (relative paths resolve against the working directory; the browser
 lists `scenes/`). Right-drag orbits, middle-drag pans, the wheel zooms, left-click
 selects and `F` frames the selection. Ctrl+Z/Ctrl+Y undo/redo, Ctrl+D duplicates,
-Delete removes, Ctrl+S saves and Ctrl+O opens. There is no unsaved-changes prompt
-on exit. Colibri widgets and model import are not wired yet.
+Delete removes, Ctrl+S saves and Ctrl+O opens. New and Open are undoable; closing
+with unsaved changes asks to save or discard them (on Windows this also covers the
+window's close button). Colibri widgets and model import are not wired yet.
 `ogrethrone --smoke` runs the same editor for three frames and exits.
 It uses OGRE's native window and message pump. HlmsUnlit shader templates are read
 from the pinned `third_party/ogre-next/Samples/Media`, so the executable currently

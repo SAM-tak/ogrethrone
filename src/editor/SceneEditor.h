@@ -43,7 +43,8 @@ public:
 
     /// Builds the UI and updates the scene; call once before each Root::renderOneFrame().
     void frame(float deltaSeconds);
-    /// True once File > Exit was chosen.
+    /// True once the user chose to close (File > Exit or the window's close button),
+    /// after resolving unsaved changes.
     bool shouldClose() const { return close_; }
 
 private:
@@ -85,6 +86,10 @@ private:
     void menu();
     /// Draws the modal open/save dialog requested through showFiles_.
     void fileDialog();
+    /// Closes immediately, or asks first when the document has unsaved changes.
+    void requestClose();
+    /// Draws the Save / Discard / Cancel prompt requested through confirmClose_.
+    void closeDialog();
     /// Draws the object list panel.
     void hierarchy();
     /// Draws the property panel for the selected object.
@@ -132,7 +137,7 @@ private:
     float yaw_ = 0.65f, pitch_ = 0.45f, distance_ = 9.0f;
     unsigned viewportWidth_ = 0, viewportHeight_ = 0;
     bool showGrid_ = true, orthographic_ = false, close_ = false;
-    bool dirty_ = false, showFiles_ = false, saving_ = true;
+    bool dirty_ = false, showFiles_ = false, saving_ = true, confirmClose_ = false;
     char scenePath_[512] = "scenes/Untitled.throne.json";
     std::string fileError_;
     std::vector<std::string> messages_;
