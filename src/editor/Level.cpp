@@ -10,7 +10,7 @@ constexpr LhatInteger levelVersion = 3;
 
 SceneInstance& Level::addScene(const std::string& path) {
     if (nextSceneId == std::numeric_limits<std::uint32_t>::max()) throw std::runtime_error("Scene ID limit reached");
-    scenes.push_back({nextSceneId++, path, {}});
+    scenes.push_back({nextSceneId++, path});
     return scenes.back();
 }
 
@@ -30,7 +30,6 @@ void Level::save(const std::filesystem::path& path) const {
         const auto item = out.table();
         out.set(item, "id", lhat_integer(instance.id));
         out.set(item, "scene", out.string(instance.scene));
-        if (!instance.overrides.empty()) out.set(item, "overrides", writeOverrides(out, instance.overrides));
         out.set(item, "position", out.vector(instance.transform.position.data()));
         out.set(item, "rotation", out.vector(instance.transform.rotation.data()));
         out.set(item, "scale", out.vector(instance.transform.scale.data()));
@@ -51,8 +50,7 @@ Level Level::load(const std::filesystem::path& path) {
         const auto id = lton::integer(lton::field(item, "id"));
         if (id <= 0 || id >= std::numeric_limits<std::uint32_t>::max() || result.findScene(static_cast<std::uint32_t>(id)))
             lton::invalid();
-        result.scenes.push_back({static_cast<std::uint32_t>(id), lton::relativePath(lton::field(item, "scene")),
-                                 readOverrides(lton::field(item, "overrides"))});
+        result.scenes.push_back({static_cast<std::uint32_t>(id), lton::relativePath(lton::field(item, "scene"))});
         // An instance without a transform sits at the level's origin.
         auto& transform = result.scenes.back().transform;
         for (const auto& [key, out] : {std::pair{"position", &transform.position}, std::pair{"rotation", &transform.rotation},

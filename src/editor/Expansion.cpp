@@ -206,7 +206,7 @@ std::size_t Expansion::find(const NodePath& path) const {
     return at;
 }
 
-Expansion expand(const Prefab& content, Library& library, const std::string& self, const Overrides* outer) {
+Expansion expand(const Prefab& content, Library& library, const std::string& self) {
     Expansion out;
     Expander expander{library, {}, out, {}};
     if (!self.empty()) expander.stack.push_back(self);
@@ -220,10 +220,8 @@ Expansion expand(const Prefab& content, Library& library, const std::string& sel
             index[node.id] = expander.place(node, {node.id}, node.parent ? index.at(node.parent) : Expansion::npos);
         for (const auto& runner : content.runners) out.runners.push_back({{}, runner});
     }
-    if (outer) expander.add(*outer, {});
     std::set<std::size_t> gone;
     for (const auto& entry : expander.pending) apply(out, entry.prefix, entry.overrides, gone);
-    if (outer) apply(out, {}, *outer, gone);
     if (gone.empty()) return out;
     // Removed nodes go with everything below them, and the runners of instances among them.
     std::vector<std::size_t> kept(out.nodes.size(), Expansion::npos);
@@ -266,7 +264,7 @@ LevelExpansion expand(const World& world, Library& library) {
             continue;
         }
         result.instances.push_back(
-            {instance.id, expand(scene->second, library, instance.scene, &instance.overrides), instance.transform});
+            {instance.id, expand(scene->second, library, instance.scene), instance.transform});
     }
     return result;
 }

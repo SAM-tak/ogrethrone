@@ -105,7 +105,7 @@ int main() {
         return fail("Project list did not keep most-recent-first order");
 
     // Nested prefabs: a stack of two crates; the scene places the stack and
-    // overrides one lid, and so does the level's second instance of the scene.
+    // overrides one lid.
     // An instance node is its prefab's root, so the stack's crates are its children.
     throne::Prefab crate;
     const auto body = crate.addNode("Body").id;
@@ -247,16 +247,15 @@ int main() {
     world.scenes["scenes/room.scene.lton"] = reloaded;
     world.level.addScene("scenes/room.scene.lton");
     auto& other = world.level.addScene("scenes/room.scene.lton");
-    other.overrides.node({reloaded.nodes[0].id}).name = "Other Floor";
     other.transform.position = {10, 0, 0};
     other.transform.rotation = {0, 90, 0};
     world.level.save(directory / "levels/two.level.lton");
     world.level = throne::Level::load(directory / "levels/two.level.lton");
     auto both = throne::expand(world, library);
-    if (both.instances.size() != 2 || both.find(1)->nodes[0].node.name != "Floor" ||
-        both.find(2)->nodes[0].node.name != "Other Floor" || both.instances[1].transform.position.x != 10 ||
-        both.instances[1].transform.rotation.y != 90 || both.instances[0].transform.position.x != 0)
-        return fail("Two instances of one scene did not keep their own overrides and transforms");
+    if (both.instances.size() != 2 || both.find(1)->nodes.size() != both.find(2)->nodes.size() ||
+        both.instances[1].transform.position.x != 10 || both.instances[1].transform.rotation.y != 90 ||
+        both.instances[0].transform.position.x != 0)
+        return fail("Two instances of one scene did not keep their own transforms");
 
     fs::remove_all(directory);
     std::printf("Scene, level, prefab expansion, project and list round-tripped\n");

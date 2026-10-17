@@ -9,18 +9,22 @@
 
 namespace throne {
 namespace {
-/// A pending reparent, applied after the tree has been drawn: @p id goes under
-/// @p parent, before its child @p before (0: last).
+/// A pending reparent in the file view instance @p instance shows, applied after
+/// the tree has been drawn: @p id goes under @p parent, before its child @p before (0: last).
 struct Move {
+    int instance;
     NodeId id, parent, before = 0;
 };
 std::optional<Move> pendingMove;
 
-/// Accepts a node of the edited file (payload @p type) dropped on the last item, to go under @p parent.
-void dropTarget(const char* type, NodeId parent) {
+/// Accepts a node (payload @p type, a DragNode) dropped on the last item, to go
+/// under @p parent; only a node of the same view instance, so of the same file.
+void dropTarget(const char* type, int instance, NodeId parent) {
     if (!ImGui::BeginDragDropTarget()) return;
-    if (const auto* payload = ImGui::AcceptDragDropPayload(type))
-        pendingMove = Move{*static_cast<const NodeId*>(payload->Data), parent};
+    if (const auto* payload = ImGui::AcceptDragDropPayload(type)) {
+        const auto& dragged = *static_cast<const DragNode*>(payload->Data);
+        if (dragged.instance == instance) pendingMove = Move{instance, dragged.id, parent};
+    }
     ImGui::EndDragDropTarget();
 }
 
@@ -34,14 +38,17 @@ struct Slot {
 /// Accepts a node dropped on @p rect into one of @p slots, deepest first: the
 /// mouse picks the deepest one whose indentation it is right of (else the last).
 /// While hovering, draws a line at @p y where it would go.
-void siblingTarget(const char* type, const ImRect& rect, const char* id, const std::vector<Slot>& slots, float y) {
+void siblingTarget(const char* type, int instance, const ImRect& rect, const char* id, const std::vector<Slot>& slots,
+                   float y) {
     if (!ImGui::BeginDragDropTargetCustom(rect, ImGui::GetID(id))) return;
     if (const auto* payload = ImGui::AcceptDragDropPayload(
             type, ImGuiDragDropFlags_AcceptBeforeDelivery | ImGuiDragDropFlags_AcceptNoDrawDefaultRect)) {
         const float mouse = ImGui::GetIO().MousePos.x, half = ImGui::GetStyle().IndentSpacing * 0.5f;
         const auto slot = std::find_if(slots.begin(), slots.end() - 1, [&](const Slot& each) { return mouse >= each.x - half; });
         ImGui::GetWindowDrawList()->AddLine({slot->x, y}, {rect.Max.x, y}, ImGui::GetColorU32(ImGuiCol_DragDropTarget), 2);
-        if (payload->IsDelivery()) pendingMove = Move{*static_cast<const NodeId*>(payload->Data), slot->parent, slot->before};
+        const auto& dragged = *static_cast<const DragNode*>(payload->Data);
+        if (payload->IsDelivery() && dragged.instance == instance)
+            pendingMove = Move{instance, dragged.id, slot->parent, slot->before};
     }
     ImGui::EndDragDropTarget();
 }
@@ -115,7 +122,8 @@ void Editor::scenePanel() {
             if (!content() && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !runtime_)
                 if (const auto* instance = doc_.world.level.findScene(view_.instances[i].id))
                     enter({Context::Kind::Scene, instance->scene});
-            if (contexts_.back().kind == Context::Kind::Scene) dropTarget(nodePayload, 0);
+            if (contexts_.back().kind != Context::Kind::Prefab && fileOf(static_cast<int>(i)))
+                dropTarget(nodePayload, static_cast<int>(i), 0);
             if (!content() && !runtime_) {
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Remove")) removed = view_.instances[i].id;
@@ -128,9 +136,9 @@ void Editor::scenePanel() {
             }
             ImGui::PopID();
         }
-        if (pendingMove && !runtime_ && content()) {
+        if (auto* file = pendingMove && !runtime_ ? fileOf(pendingMove->instance) : nullptr) {
             auto before = doc_;
-            if (content()->reparent(pendingMove->id, pendingMove->parent, pendingMove->before)) commit(std::move(before));
+            if (file->reparent(pendingMove->id, pendingMove->parent, pendingMove->before)) commit(std::move(before));
         }
         pendingMove.reset();
         if (removed) removeScene(*removed);
@@ -147,7 +155,8 @@ void Editor::nodeTree(std::size_t instance, std::size_t parent) {
         const bool chosen = selected_.kind == Selection::Kind::Node && selected_.instance == static_cast<int>(instance) &&
                             selected_.path == expanded.path;
         // Only the edited file's own nodes can be dragged or take children.
-        const bool own = content() && expanded.path.size() == 1 && content()->findNode(expanded.path[0]);
+        auto* file = fileOf(static_cast<int>(instance));
+        const bool own = file && expanded.path.size() == 1 && file->findNode(expanded.path[0]);
         auto flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_DefaultOpen;
         if (leaf) flags |= ImGuiTreeNodeFlags_Leaf;
         if (chosen) flags |= ImGuiTreeNodeFlags_Selected;
@@ -163,7 +172,8 @@ void Editor::nodeTree(std::size_t instance, std::size_t parent) {
             !runtime_)
             enter({Context::Kind::Prefab, expanded.node.prefab});
         if (own && ImGui::BeginDragDropSource()) {
-            ImGui::SetDragDropPayload(nodePayload, &expanded.path[0], sizeof expanded.path[0]);
+            const DragNode dragged{static_cast<int>(instance), expanded.path[0]};
+            ImGui::SetDragDropPayload(nodePayload, &dragged, sizeof dragged);
             ImGui::TextUnformatted(expanded.node.name.c_str());
             ImGui::EndDragDropSource();
         }
@@ -171,7 +181,7 @@ void Editor::nodeTree(std::size_t instance, std::size_t parent) {
         // inside it (smaller drop targets win). A prefab keeps its single root.
         const auto movable = [&](std::size_t at) {
             const auto& each = nodes[at];
-            return content() && each.path.size() == 1 && content()->findNode(each.path[0]) &&
+            return file && each.path.size() == 1 && file->findNode(each.path[0]) &&
                    !(contexts_.back().kind == Context::Kind::Prefab && each.node.parent == 0);
         };
         if (movable(k)) {
@@ -188,12 +198,12 @@ void Editor::nodeTree(std::size_t instance, std::size_t parent) {
                 at = nodes[at].parent;
             }
             const float left = ImGui::GetCurrentWindow()->WorkRect.Min.x;
-            siblingTarget(nodePayload, ImRect({left, row.Min.y}, {row.Max.x, row.Min.y + edge}),
+            siblingTarget(nodePayload, static_cast<int>(instance), ImRect({left, row.Min.y}, {row.Max.x, row.Min.y + edge}),
                           ("above" + std::to_string(k)).c_str(), {{expanded.node.parent, expanded.node.id, row.Min.x}}, row.Min.y);
-            siblingTarget(nodePayload, ImRect({left, row.Max.y - edge}, row.Max), ("below" + std::to_string(k)).c_str(), below,
+            siblingTarget(nodePayload, static_cast<int>(instance), ImRect({left, row.Max.y - edge}, row.Max), ("below" + std::to_string(k)).c_str(), below,
                           row.Max.y);
         }
-        if (own && expanded.node.prefab.empty()) dropTarget(nodePayload, expanded.path[0]);
+        if (own && expanded.node.prefab.empty()) dropTarget(nodePayload, static_cast<int>(instance), expanded.path[0]);
         // An instance names its prefab after it, coloured by whether that is a variant.
         if (!expanded.node.prefab.empty()) {
             ImGui::SameLine();
@@ -213,7 +223,7 @@ void Editor::runnersPanel() {
         if (ImGui::Button("+ Runner")) addRunner();
         ImGui::EndDisabled();
         ImGui::SameLine();
-        ImGui::TextDisabled(content() ? "to the edited file" : "to the level");
+        ImGui::TextDisabled(content() ? "to the edited file" : "to the selected scene, or the level");
         // Runners from instances are blue; those an instance added are overrides.
         const auto item = [&](const char* label, int instance, const NodePath& path, std::uint32_t id, bool own,
                               bool added = false) {
@@ -237,7 +247,9 @@ void Editor::runnersPanel() {
                     const auto& expanded = view_.instances[i].expansion.runners[r];
                     ImGui::PushID(static_cast<int>(r));
                     item(expanded.runner.name.c_str(), static_cast<int>(i), expanded.instance, expanded.runner.id,
-                         content() && !content()->variant() && expanded.instance.empty() && !expanded.added, expanded.added);
+                         fileOf(static_cast<int>(i)) && !fileOf(static_cast<int>(i))->variant() && expanded.instance.empty() &&
+                             !expanded.added,
+                         expanded.added);
                     ImGui::PopID();
                 }
                 ImGui::TreePop();
@@ -318,11 +330,11 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         // Only an instance the edited file holds itself can be unpacked into it.
         if (target.node && !target.addedTo) {
             ImGui::SameLine();
-            if (ImGui::Button("Unpack")) unpack(target.node->id);
+            if (ImGui::Button("Unpack")) unpack(selected_.instance, target.node->id);
             // Writes every override of this instance into the prefab (as dropping it on the file does).
             ImGui::SameLine();
             ImGui::BeginDisabled(target.node->overrides.empty());
-            if (ImGui::Button("Apply")) applyOverrides(target.node->id);
+            if (ImGui::Button("Apply")) applyOverrides(selected_.instance, target.node->id);
             ImGui::EndDisabled();
         }
         if (target.node && target.overrides)
@@ -352,12 +364,6 @@ void Editor::sceneInspector(SceneInstance& instance) {
     ImGui::DragFloat3("Scale", transform.scale.data(), 0.01f, 0.001f, 1.0e6f, "%.3f", clamp);
     track();
     ImGui::Separator();
-    ImGui::Text("%zu node and %zu runner overrides", instance.overrides.nodes.size(), instance.overrides.runners.size());
-    removedList(instance.overrides, view_.instances[selected_.instance].expansion, {});
-    if (!instance.overrides.empty() && ImGui::Button("Revert All Overrides")) {
-        checkpoint();
-        instance.overrides = {};
-    }
     ImGui::Separator();
     if (ImGui::Button("Open Scene")) enter({Context::Kind::Scene, instance.scene});
     ImGui::SameLine();

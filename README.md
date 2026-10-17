@@ -88,8 +88,9 @@ effect-free data):
   levels can both hold runners.
 - A **level** (`*.level.lton`) holds scene instances and its own runners. The
   same scene can be placed more than once; each instance has its own transform,
-  under which all of the scene's nodes lie, and its own overrides. A level holds
-  no nodes and no prefab instances of its own.
+  under which all of the scene's nodes lie. A level holds no nodes, no prefab
+  instances and no overrides of its own: editing a scene's content at the Level
+  step writes to that scene's file, so every instance of it shows the change.
 
 The editor drills down: at the Level step the Scene panel lists the scene
 instances; selecting one shows its transform in the Inspector and the gizmo,
@@ -98,7 +99,7 @@ scene, and double-clicking an instance node (or a file in the Prefabs tab) edits
 that prefab. The breadcrumb over the viewport returns to an outer step. Nodes and
 runners that come from an instance are drawn in blue; editing them writes an
 override, shown in orange with a Revert button. With a node inside an instance
-(or a scene instance at the Level step) selected, Add Node and Add Instance add
+selected, Add Node and Add Instance add
 the new node as an override of that instance, also shown in orange; Delete on a
 node inside an instance records its removal, which the instance's Inspector
 lists with a Restore button. Runners work the same way: + Runner with an

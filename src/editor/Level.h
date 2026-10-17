@@ -13,8 +13,6 @@ struct SceneInstance {
     std::uint32_t id = 0;
     /// Project-relative path of the scene.
     std::string scene;
-    /// What this placement changes in the scene.
-    Overrides overrides;
     /// Where the scene is placed; every node of the scene lies below it.
     Transform transform;
 };

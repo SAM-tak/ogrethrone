@@ -30,6 +30,13 @@ class HlmsUnlitDatablock;
 }
 
 namespace throne {
+/// Drag-and-drop payload of a node a file holds itself: the view instance it is
+/// shown in, and its ID.
+struct DragNode {
+    int instance;
+    NodeId id;
+};
+
 /// Dear ImGui level editor and project launcher drawn over the OGRE window.
 ///
 /// The editor works on a World: the level's runners plus the scenes it loads.
@@ -140,6 +147,9 @@ private:
 
     /// The scene or prefab of the current context, or nullptr at the level.
     Prefab* content();
+    /// The file whose nodes view instance @p instance shows: content(), or at the
+    /// level that instance's scene; nullptr when there is none.
+    Prefab* fileOf(int instance);
     /// Expands what the current context shows into view_, and rebuilds the render
     /// objects when the node structure changed. Skipped while playing.
     void refreshView();
@@ -195,22 +205,22 @@ private:
     bool isPrefabRoot(NodeId id);
     /// Whether the prefab at @p prefab is a variant; false when it cannot be read.
     bool isVariant(const std::string& prefab);
-    /// Moves node @p id of the edited file into a prefab saved at once, and leaves
+    /// Moves node @p id of the file view instance @p instance shows into a prefab saved at once, and leaves
     /// an instance of it in its place (TDDja/06 7). An instance becomes a variant of
     /// its prefab carrying its overrides. The prefab is @p file, replacing what it
     /// held, or a new file under prefabs/ when @p file is empty.
-    void prefabify(NodeId id, std::string file = {});
-    /// Handles node @p id dropped on prefab @p file: an instance of that prefab
+    void prefabify(int instance, NodeId id, std::string file = {});
+    /// Handles node @p id (of view instance @p instance) dropped on prefab @p file: an instance of that prefab
     /// applies its overrides to it; any other node asks to replace it.
-    void dropOnPrefab(NodeId id, const std::string& file);
-    /// Writes the overrides of instance node @p id into its prefab, saved at once,
+    void dropOnPrefab(int instance, NodeId id, const std::string& file);
+    /// Writes the overrides of instance node @p id (of view instance @p instance) into its prefab, saved at once,
     /// and clears them.
-    void applyOverrides(NodeId id);
-    /// Replaces instance node @p id of the edited file with plain nodes holding what
+    void applyOverrides(int instance, NodeId id);
+    /// Replaces instance node @p id of the file view instance @p instance shows with plain nodes holding what
     /// it shows, nested instances included, and copies its runners into the file
     /// (TDDja/06 7). Nodes keep their IDs unless the file already uses one;
     /// references in the file and the level to a node given a new ID are rewritten.
-    void unpack(NodeId id);
+    void unpack(int instance, NodeId id);
     /// Draws the confirmation requested through replacing_ before a prefab is replaced.
     void replaceDialog();
     /// Copies the selected node (without children) beside itself and selects the copy.
@@ -317,7 +327,12 @@ private:
     /// The drill-down; the first step is always the level.
     std::vector<Context> contexts_{{Context::Kind::Level, {}}};
     /// A node and the prefab it is to replace, waiting for confirmation (replaceDialog()).
-    std::optional<std::pair<NodeId, std::string>> replacing_, pendingReplace_;
+    struct Replace {
+        int instance;
+        NodeId id;
+        std::string file;
+    };
+    std::optional<Replace> replacing_, pendingReplace_;
     /// The drill-down to switch to at the start of the next frame.
     std::optional<std::vector<Context>> navigate_;
     Library library_;

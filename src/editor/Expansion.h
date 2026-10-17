@@ -78,11 +78,9 @@ struct Expansion {
 };
 
 /// Expands @p content; a variant expands its base, the base's root at the empty
-/// path, with its overrides. Overrides apply inner instances first, then outer ones,
-/// then @p outer (the overrides of whatever instantiates @p content, such as a
-/// level's scene instance). @p self is the content's own path, for cycle checks.
-Expansion expand(const Prefab& content, Library& library, const std::string& self = {},
-                 const Overrides* outer = nullptr);
+/// path, with its overrides. Overrides apply inner instances first, then outer
+/// ones. @p self is the content's own path, for cycle checks.
+Expansion expand(const Prefab& content, Library& library, const std::string& self = {});
 
 /// A level with the scene files its instances use: what the editor edits.
 struct World {

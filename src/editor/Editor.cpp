@@ -573,25 +573,26 @@ void Editor::enter(Context context) {
     navigate_->push_back(std::move(context));
 }
 
+Prefab* Editor::fileOf(int instance) {
+    if (auto* edited = content()) return edited;
+    if (instance < 0 || instance >= static_cast<int>(view_.instances.size())) return nullptr;
+    const auto* placed = doc_.world.level.findScene(view_.instances[instance].id);
+    const auto scene = placed ? doc_.world.scenes.find(placed->scene) : doc_.world.scenes.end();
+    return scene == doc_.world.scenes.end() ? nullptr : &scene->second;
+}
+
 Editor::NodeTarget Editor::fileTarget(int instance, const NodePath& path) {
     NodeTarget target;
-    if (path.empty() && !(content() && content()->variant())) return target;
-    if (!content()) {
-        // At the level every node belongs to a scene instance, so edits become its overrides.
-        if (instance < 0 || instance >= static_cast<int>(view_.instances.size())) return target;
-        if (auto* scene = doc_.world.level.findScene(view_.instances[instance].id)) {
-            target.overrides = &scene->overrides;
-            target.relative = path;
-        }
-        return target;
-    }
+    // At the level, a node is edited in its scene's file (TDDja/06 3.1).
+    auto* file = fileOf(instance);
+    if (!file || (path.empty() && !file->variant())) return target;
     // A variant has no nodes of its own: every edit is one of its overrides.
-    if (content()->variant()) {
-        target.overrides = &content()->overrides;
+    if (file->variant()) {
+        target.overrides = &file->overrides;
         target.relative = path;
         return target;
     }
-    auto* own = content()->findNode(path[0]);
+    auto* own = file->findNode(path[0]);
     if (!own) return target;
     if (path.size() == 1) {
         target.node = own;
@@ -627,20 +628,17 @@ Editor::NodeTarget Editor::targetOf(int instance, const NodePath& path) {
 Editor::RunnerTarget Editor::runnerTarget() {
     RunnerTarget target;
     if (selected_.kind != Selection::Kind::Runner) return target;
+    auto* file = fileOf(selected_.instance);
     if (selected_.instance < 0) {
         target.runner = doc_.world.level.findRunner(selected_.runner);
-    } else if (!content()) {
-        if (selected_.instance < static_cast<int>(view_.instances.size()))
-            if (auto* scene = doc_.world.level.findScene(view_.instances[selected_.instance].id)) {
-                target.overrides = &scene->overrides;
-                target.instance = selected_.path;
-            }
-    } else if (content()->variant()) {
-        target.overrides = &content()->overrides;
+    } else if (!file) {
+        return target;
+    } else if (file->variant()) {
+        target.overrides = &file->overrides;
         target.instance = selected_.path;
     } else if (selected_.path.empty()) {
-        target.runner = content()->findRunner(selected_.runner);
-    } else if (auto* own = content()->findNode(selected_.path[0])) {
+        target.runner = file->findRunner(selected_.runner);
+    } else if (auto* own = file->findNode(selected_.path[0])) {
         target.overrides = &own->overrides;
         target.instance.assign(selected_.path.begin() + 1, selected_.path.end());
     }
@@ -847,6 +845,7 @@ void Editor::addInstance() {
 bool Editor::insert(SceneNode node) {
     node.id = newNodeId();
     node.parent = 0;
+    const int instance = std::max(selected_.instance, 0);
     // Into an instance, the new node is kept in the overrides of the instance that
     // holds the selected node: under it, or under the instance itself.
     Overrides* into = nullptr;
@@ -866,18 +865,17 @@ bool Editor::insert(SceneNode node) {
             parent = target.relative;
             prefix.assign(selected_.path.begin(), selected_.path.end() - static_cast<std::ptrdiff_t>(parent.size()));
         }
-    } else if (auto* placed = selectedScene()) {
-        into = &placed->overrides;  // At the level: the top of the selected scene instance.
     } else if (content() && content()->variant()) {
         into = &content()->overrides;  // A variant adds under its base's root.
     }
     if (into) {
         into->added.push_back({parent, node});
-        selected_ = {Selection::Kind::Node, std::max(selected_.instance, 0), prefix};
+        selected_ = {Selection::Kind::Node, instance, prefix};
         selected_.path.push_back(node.id);
         return true;
     }
-    auto* edited = content();
+    // At the level, into the scene of the selected scene instance or node.
+    auto* edited = selectedNode() || selectedScene() ? fileOf(selected_.instance) : content();
     if (!edited) {
         log("Select a scene instance, or a node in one, to add to it");
         return false;
@@ -890,7 +888,7 @@ bool Editor::insert(SceneNode node) {
     node.id = added.id;
     node.parent = added.parent;
     added = std::move(node);
-    selected_ = {Selection::Kind::Node, 0, {added.id}};
+    selected_ = {Selection::Kind::Node, instance, {added.id}};
     return true;
 }
 
@@ -907,8 +905,8 @@ bool Editor::isVariant(const std::string& prefab) {
     }
 }
 
-void Editor::prefabify(NodeId id, std::string file) {
-    auto* edited = content();
+void Editor::prefabify(int instance, NodeId id, std::string file) {
+    auto* edited = fileOf(instance);
     auto* node = edited ? edited->findNode(id) : nullptr;
     if (!node || edited->variant()) return;
     if (isPrefabRoot(id)) {
@@ -964,16 +962,17 @@ void Editor::prefabify(NodeId id, std::string file) {
     node = edited->findNode(id);
     node->prefab = file;
     node->overrides = {};
-    selected_ = {Selection::Kind::Node, 0, {id}};
+    selected_ = {Selection::Kind::Node, instance, {id}};
     commit(std::move(before));
     log("Saved " + file);
 }
 
-void Editor::dropOnPrefab(NodeId id, const std::string& file) {
-    const auto* node = content() ? content()->findNode(id) : nullptr;
+void Editor::dropOnPrefab(int instance, NodeId id, const std::string& file) {
+    auto* edited = fileOf(instance);
+    const auto* node = edited ? edited->findNode(id) : nullptr;
     if (!node) return;
-    if (node->prefab == file) applyOverrides(id);
-    else replacing_ = {id, file};
+    if (node->prefab == file) applyOverrides(instance, id);
+    else replacing_ = Replace{instance, id, file};
 }
 
 namespace {
@@ -999,8 +998,9 @@ void merge(Overrides& into, const Overrides& from) {
 }
 }
 
-void Editor::applyOverrides(NodeId id) {
-    auto* node = content() ? content()->findNode(id) : nullptr;
+void Editor::applyOverrides(int instance, NodeId id) {
+    auto* edited = fileOf(instance);
+    auto* node = edited ? edited->findNode(id) : nullptr;
     if (!node || node->prefab.empty() || node->overrides.empty()) return;
     Prefab prefab;
     try {
@@ -1085,11 +1085,11 @@ void Editor::applyOverrides(NodeId id) {
     log("Applied the overrides to " + node->prefab);
 }
 
-void Editor::unpack(NodeId id) {
-    auto* edited = content();
+void Editor::unpack(int instance, NodeId id) {
+    auto* edited = fileOf(instance);
     auto* node = edited ? edited->findNode(id) : nullptr;
-    if (!node || node->prefab.empty() || view_.instances.empty()) return;
-    const auto expansion = view_.instances[0].expansion;
+    if (!node || node->prefab.empty()) return;
+    const auto expansion = view_.instances[instance].expansion;
     const auto top = expansion.find({id});
     if (top == Expansion::npos) return;
     // The instance's nodes, parents first: the instance itself, then everything below it.
@@ -1147,28 +1147,18 @@ void Editor::unpack(NodeId id) {
     }
     for (auto& runner : edited->runners)
         for (auto& behaviour : runner.behaviours) refs(behaviour.fields, 0, {});
-    // The level's instances of an edited scene hold overrides and references into it.
-    if (contexts_.back().kind == Context::Kind::Scene)
-        for (auto& instance : doc_.world.level.scenes) {
-            if (instance.scene != contexts_.back().path) continue;
-            for (auto& entry : instance.overrides.nodes)
-                if (const auto it = ids.find(expansion.find(entry.path)); it != ids.end()) entry.path = {it->second};
-            for (auto& entry : instance.overrides.runners) {
-                const auto from = expansion.find(entry.instance);
-                refs(entry.fields, 0, entry.instance);
-                if (const auto it = runnerIds.find({from, entry.runner}); it != runnerIds.end() && !entry.instance.empty()) {
-                    entry.instance.clear();
-                    entry.runner = it->second;
-                }
-            }
-            for (auto& runner : doc_.world.level.runners)
-                for (auto& behaviour : runner.behaviours) refs(behaviour.fields, instance.id, {});
-        }
+    // Level runners refer to nodes of the level's instances of this scene.
+    for (const auto& placed : doc_.world.level.scenes) {
+        const auto scene = doc_.world.scenes.find(placed.scene);
+        if (scene == doc_.world.scenes.end() || &scene->second != edited) continue;
+        for (auto& runner : doc_.world.level.runners)
+            for (auto& behaviour : runner.behaviours) refs(behaviour.fields, placed.id, {});
+    }
     // The unpacked nodes take the instance node's place among its siblings.
     const auto at = std::find_if(edited->nodes.begin(), edited->nodes.end(), [id](const SceneNode& each) { return each.id == id; });
     const auto position = edited->nodes.erase(at);
     edited->nodes.insert(position, plain.begin(), plain.end());
-    selected_ = {Selection::Kind::Node, 0, {id}};
+    selected_ = {Selection::Kind::Node, instance, {id}};
     commit(std::move(before));
     if (renamed && contexts_.back().kind == Context::Kind::Prefab)
         log("Some unpacked nodes got new IDs; overrides elsewhere that pointed at them no longer apply");
@@ -1181,11 +1171,11 @@ void Editor::replaceDialog() {
         replacing_.reset();
     }
     if (!ImGui::BeginPopupModal("Replace Prefab", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
-    ImGui::Text("Replace %s with this node?", pendingReplace_ ? pendingReplace_->second.c_str() : "");
+    ImGui::Text("Replace %s with this node?", pendingReplace_ ? pendingReplace_->file.c_str() : "");
     ImGui::TextDisabled("Every instance of it will show the new content.");
     if (ImGui::Button("Replace")) {
         ImGui::CloseCurrentPopup();
-        if (pendingReplace_) prefabify(pendingReplace_->first, pendingReplace_->second);
+        if (pendingReplace_) prefabify(pendingReplace_->instance, pendingReplace_->id, pendingReplace_->file);
     }
     ImGui::SameLine();
     if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
@@ -1218,8 +1208,6 @@ void Editor::addRunner() {
             into = target.overrides;
             prefix.assign(selected_.path.begin(), selected_.path.end() - static_cast<std::ptrdiff_t>(target.relative.size()));
         }
-    } else if (auto* placed = selectedScene()) {
-        into = &placed->overrides;
     } else if (content() && content()->variant()) {
         into = &content()->overrides;
     }
@@ -1233,10 +1221,12 @@ void Editor::addRunner() {
     }
     try {
         auto before = doc_;
-        auto& owner = content() ? static_cast<RunnerSet&>(*content()) : doc_.world.level;
+        // At the level, to the scene of the selection when it lies in one; else to the level.
+        auto* file = selected_.kind != Selection::Kind::None ? fileOf(selected_.instance) : content();
+        auto& owner = file ? static_cast<RunnerSet&>(*file) : doc_.world.level;
         auto& added = owner.addRunner("Runner");
         added.name = "Runner " + std::to_string(added.id);
-        selected_ = {Selection::Kind::Runner, content() ? 0 : -1, {}, added.id};
+        selected_ = {Selection::Kind::Runner, file ? std::max(selected_.instance, 0) : -1, {}, added.id};
         commit(std::move(before));
     } catch (const std::exception& error) {
         log(error.what());
@@ -1273,7 +1263,7 @@ void Editor::duplicate() {
     try {
         auto before = doc_;
         auto copy = *target.node;
-        auto& added = content()->addNode(copy.name, copy.parent);
+        auto& added = fileOf(selected_.instance)->addNode(copy.name, copy.parent);
         copy.id = added.id;
         if (copy.name.size() <= 250) copy.name += " Copy";
         copy.position.x += 1;
@@ -1321,7 +1311,7 @@ void Editor::erase() {
             return;
         }
         checkpoint();
-        content()->removeNode(selected_.path[0]);
+        fileOf(selected_.instance)->removeNode(selected_.path[0]);
     } else if (selected_.kind == Selection::Kind::Runner) {
         // One an instance added leaves its overrides; one it brought is removed by them.
         const auto target = runnerTarget();
@@ -1339,7 +1329,7 @@ void Editor::erase() {
             return;
         }
         checkpoint();
-        (selected_.instance < 0 ? static_cast<RunnerSet&>(doc_.world.level) : *content()).removeRunner(selected_.runner);
+        (selected_.instance < 0 ? static_cast<RunnerSet&>(doc_.world.level) : *fileOf(selected_.instance)).removeRunner(selected_.runner);
     } else {
         return;
     }
@@ -1438,7 +1428,7 @@ void Editor::menu() {
         if (ImGui::MenuItem("Undo", "Ctrl+Z", false, !undo_.empty())) undo();
         if (ImGui::MenuItem("Redo", "Ctrl+Y", false, !redo_.empty())) redo();
         ImGui::Separator();
-        if (ImGui::MenuItem("Add Node", nullptr, false, content() != nullptr)) addNode();
+        if (ImGui::MenuItem("Add Node")) addNode();
         if (ImGui::MenuItem("Add Runner")) addRunner();
         if (ImGui::MenuItem("Duplicate Node", "Ctrl+D", false, targetOf(selected_.instance, selected_.path).node))
             duplicate();
@@ -1597,8 +1587,10 @@ void Editor::browser() {
                     }
                     // A node dropped on a prefab file replaces it, or applies an instance's overrides to it.
                     if (kind == Context::Kind::Prefab && !runtime_ && ImGui::BeginDragDropTarget()) {
-                        if (const auto* payload = ImGui::AcceptDragDropPayload(nodePayload))
-                            dropOnPrefab(*static_cast<const NodeId*>(payload->Data), relative);
+                        if (const auto* payload = ImGui::AcceptDragDropPayload(nodePayload)) {
+                            const auto& dragged = *static_cast<const DragNode*>(payload->Data);
+                            dropOnPrefab(dragged.instance, dragged.id, relative);
+                        }
                         ImGui::EndDragDropTarget();
                     }
                     if (variant) ImGui::PopStyleColor();
@@ -1606,8 +1598,10 @@ void Editor::browser() {
                 // A node dropped anywhere on the Prefabs tab becomes a prefab (TDDja/06 7).
                 if (kind == Context::Kind::Prefab && !runtime_ &&
                     ImGui::BeginDragDropTargetCustom(ImGui::GetCurrentWindow()->InnerRect, ImGui::GetID("prefabify"))) {
-                    if (const auto* payload = ImGui::AcceptDragDropPayload(nodePayload))
-                        prefabify(*static_cast<const NodeId*>(payload->Data));
+                    if (const auto* payload = ImGui::AcceptDragDropPayload(nodePayload)) {
+                        const auto& dragged = *static_cast<const DragNode*>(payload->Data);
+                        prefabify(dragged.instance, dragged.id);
+                    }
                     ImGui::EndDragDropTarget();
                 }
                 ImGui::EndTabItem();
