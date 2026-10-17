@@ -85,6 +85,15 @@ struct Overrides {
     FieldOverride& fieldsOf(const NodePath& instance, std::uint32_t runner, std::size_t behaviour);
 };
 
+/// Placement relative to a parent, as a scene node has it.
+struct Transform {
+    Vec3 position;
+    /// Euler angles in degrees, applied about X, then Y, then Z.
+    Vec3 rotation;
+    /// Per-axis scale; each component is at least 0.001.
+    Vec3 scale{1, 1, 1};
+};
+
 /// One drawable node of a scene hierarchy. Currently every node is a unit cube.
 /// A node naming a prefab is a prefab instance and becomes the prefab's root
 /// (TDDja/06 3): it gives the root its name and transform, everything else comes

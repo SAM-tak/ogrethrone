@@ -87,6 +87,8 @@ struct LevelExpansion {
         /// SceneInstance::id.
         std::uint32_t id;
         Expansion expansion;
+        /// SceneInstance::transform: the scene's roots are relative to it.
+        Transform transform;
     };
     std::vector<Instance> instances;
 

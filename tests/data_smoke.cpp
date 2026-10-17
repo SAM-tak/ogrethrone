@@ -172,13 +172,17 @@ int main() {
     throne::World world;
     world.scenes["scenes/room.scene.lton"] = reloaded;
     world.level.addScene("scenes/room.scene.lton");
-    world.level.addScene("scenes/room.scene.lton").overrides.node({1}).name = "Other Floor";
+    auto& other = world.level.addScene("scenes/room.scene.lton");
+    other.overrides.node({1}).name = "Other Floor";
+    other.transform.position = {10, 0, 0};
+    other.transform.rotation = {0, 90, 0};
     world.level.save(directory / "levels/two.level.lton");
     world.level = throne::Level::load(directory / "levels/two.level.lton");
     auto both = throne::expand(world, library);
     if (both.instances.size() != 2 || both.find(1)->nodes[0].node.name != "Floor" ||
-        both.find(2)->nodes[0].node.name != "Other Floor")
-        return fail("Two instances of one scene did not keep their own overrides");
+        both.find(2)->nodes[0].node.name != "Other Floor" || both.instances[1].transform.position.x != 10 ||
+        both.instances[1].transform.rotation.y != 90 || both.instances[0].transform.position.x != 0)
+        return fail("Two instances of one scene did not keep their own overrides and transforms");
 
     fs::remove_all(directory);
     std::printf("Scene, level, prefab expansion, project and list round-tripped\n");

@@ -78,8 +78,13 @@ void Editor::scenePanel() {
                 const auto* instance = doc_.world.level.findScene(view_.instances[i].id);
                 label = "#" + std::to_string(view_.instances[i].id) + " " + (instance ? instance->scene : "?");
             }
-            const bool open = ImGui::TreeNodeEx("##root", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth,
-                                                "%s", label.c_str());
+            // At the level a scene instance is a row of its own, selected for its transform.
+            auto flags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_OpenOnArrow;
+            if (!content() && selected_.kind == Selection::Kind::Scene && selected_.instance == static_cast<int>(i))
+                flags |= ImGuiTreeNodeFlags_Selected;
+            const bool open = ImGui::TreeNodeEx("##root", flags, "%s", label.c_str());
+            if (!content() && ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
+                selected_ = {Selection::Kind::Scene, static_cast<int>(i)};
             // Double-clicking a scene instance drills into its scene file.
             if (!content() && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !runtime_)
                 if (const auto* instance = doc_.world.level.findScene(view_.instances[i].id))
@@ -193,6 +198,7 @@ void Editor::inspector() {
         ImGui::BeginDisabled(runtime_ != nullptr);
         if (const auto* node = selectedNode()) nodeInspector(*node);
         else if (const auto* runner = selectedRunner()) runnerInspector(*runner);
+        else if (auto* placed = selectedScene()) sceneInspector(*placed);
         else ImGui::TextDisabled("Nothing selected");
         ImGui::EndDisabled();
     }
@@ -259,6 +265,33 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         ImGui::SameLine();
         if (ImGui::Button("Delete")) erase();
     }
+}
+
+void Editor::sceneInspector(SceneInstance& instance) {
+    const auto track = [this] {
+        if (ImGui::IsItemActivated()) editStart_ = doc_;
+        if (ImGui::IsItemDeactivatedAfterEdit()) commit(std::move(editStart_));
+    };
+    ImGui::TextDisabled("Scene instance #%u", instance.id);
+    ImGui::TextUnformatted(instance.scene.c_str());
+    constexpr auto clamp = ImGuiSliderFlags_AlwaysClamp;
+    auto& transform = instance.transform;
+    ImGui::DragFloat3("Position", transform.position.data(), 0.05f, -1.0e6f, 1.0e6f, "%.3f", clamp);
+    track();
+    ImGui::DragFloat3("Rotation", transform.rotation.data(), 0.5f, -1.0e6f, 1.0e6f, "%.1f", clamp);
+    track();
+    ImGui::DragFloat3("Scale", transform.scale.data(), 0.01f, 0.001f, 1.0e6f, "%.3f", clamp);
+    track();
+    ImGui::Separator();
+    ImGui::Text("%zu node and %zu runner overrides", instance.overrides.nodes.size(), instance.overrides.runners.size());
+    if (!instance.overrides.empty() && ImGui::Button("Revert All Overrides")) {
+        checkpoint();
+        instance.overrides = {};
+    }
+    ImGui::Separator();
+    if (ImGui::Button("Open Scene")) enter({Context::Kind::Scene, instance.scene});
+    ImGui::SameLine();
+    if (ImGui::Button("Remove")) removeScene(instance.id);
 }
 
 void Editor::runnerInspector(const Runner& shown) {

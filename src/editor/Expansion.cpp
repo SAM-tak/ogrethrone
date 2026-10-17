@@ -188,10 +188,11 @@ LevelExpansion expand(const World& world, Library& library) {
         if (scene == world.scenes.end()) {
             Expansion missing;
             missing.errors.push_back(instance.scene + " is not loaded");
-            result.instances.push_back({instance.id, std::move(missing)});
+            result.instances.push_back({instance.id, std::move(missing), instance.transform});
             continue;
         }
-        result.instances.push_back({instance.id, expand(scene->second, library, instance.scene, &instance.overrides)});
+        result.instances.push_back(
+            {instance.id, expand(scene->second, library, instance.scene, &instance.overrides), instance.transform});
     }
     return result;
 }

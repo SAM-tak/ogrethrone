@@ -103,9 +103,9 @@ private:
         /// The scene or prefab file; empty for the level.
         std::string path;
     };
-    /// What the inspector shows: a node of view_, or a runner.
+    /// What the inspector shows: a node of view_, a runner, or a scene instance of the level.
     struct Selection {
-        enum class Kind { None, Node, Runner } kind = Kind::None;
+        enum class Kind { None, Node, Runner, Scene } kind = Kind::None;
         /// Index into view_.instances; -1 for a runner of the level itself.
         int instance = -1;
         /// The node's path; for a runner, the prefab instance it came from.
@@ -149,6 +149,8 @@ private:
     const ExpandedNode* selectedNode();
     /// The selected runner of view_ (or of the level), or nullptr.
     const Runner* selectedRunner();
+    /// The selected scene instance of the level, or nullptr.
+    SceneInstance* selectedScene();
     /// Writes @p value into the selected node through targetOf(); @p changed says which properties.
     void writeNode(const SceneNode& value, unsigned changed);
     /// Recreates all render objects from view_.
@@ -230,6 +232,8 @@ private:
     void inspector();
     /// Draws the selected node's properties, marking and reverting overridden ones.
     void nodeInspector(const ExpandedNode& node);
+    /// Draws a scene instance's scene and transform.
+    void sceneInspector(SceneInstance& instance);
     /// Draws the selected runner's behaviours and their fields.
     void runnerInspector(const Runner& runner);
     /// Draws the rendered scene and handles camera and picking input.
@@ -270,6 +274,8 @@ private:
     Ogre::ManualObject* outline_ = nullptr;
     Ogre::SceneNode* outlineNode_ = nullptr;
     std::vector<RenderObject> renderObjects_;
+    /// One OGRE node per view_ instance, placing its scene; the scene's roots are its children.
+    std::vector<Ogre::SceneNode*> sceneRoots_;
     std::optional<Project> project_;
     ProjectList projects_;
     std::filesystem::path projectListFile_;

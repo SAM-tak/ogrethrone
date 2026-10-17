@@ -635,6 +635,13 @@ const ExpandedNode* Editor::selectedNode() {
     return at == Expansion::npos ? nullptr : &expansion.nodes[at];
 }
 
+SceneInstance* Editor::selectedScene() {
+    if (selected_.kind != Selection::Kind::Scene || content() || selected_.instance < 0 ||
+        selected_.instance >= static_cast<int>(view_.instances.size()))
+        return nullptr;
+    return doc_.world.level.findScene(view_.instances[selected_.instance].id);
+}
+
 const Runner* Editor::selectedRunner() {
     if (selected_.kind != Selection::Kind::Runner) return nullptr;
     if (selected_.instance < 0) return doc_.world.level.findRunner(selected_.runner);
@@ -669,10 +676,11 @@ void Editor::rebuildScene() {
     destroyRenderObjects();
     for (std::size_t i = 0; i < view_.instances.size(); ++i) {
         const auto& nodes = view_.instances[i].expansion.nodes;
+        sceneRoots_.push_back(scene_.getRootSceneNode()->createChildSceneNode());
         // Parents come first, so each node's OGRE parent already exists.
         std::vector<Ogre::SceneNode*> created(nodes.size());
         for (std::size_t k = 0; k < nodes.size(); ++k) {
-            auto* parent = nodes[k].parent == Expansion::npos ? scene_.getRootSceneNode() : created[nodes[k].parent];
+            auto* parent = nodes[k].parent == Expansion::npos ? sceneRoots_[i] : created[nodes[k].parent];
             created[k] = parent->createChildSceneNode();
             const auto name = "ThroneEditor/Node/" + std::to_string(i) + "/" + std::to_string(k);
             auto* material = createMaterial(unlit_, name);
@@ -693,9 +701,17 @@ void Editor::destroyRenderObjects() {
         unlit_.destroyDatablock(it->material->getName());
     }
     renderObjects_.clear();
+    for (auto* root : sceneRoots_) scene_.destroySceneNode(root);
+    sceneRoots_.clear();
 }
 
 void Editor::syncTransforms() {
+    for (std::size_t i = 0; i < sceneRoots_.size(); ++i) {
+        const auto& transform = view_.instances[i].transform;
+        sceneRoots_[i]->setPosition(toOgre(transform.position));
+        sceneRoots_[i]->setOrientation(orientation(transform.rotation));
+        sceneRoots_[i]->setScale(toOgre(transform.scale));
+    }
     const RenderObject* outlined = nullptr;
     for (const auto& render : renderObjects_) {
         const auto& expanded = view_.instances[render.instance].expansion.nodes[render.index];
@@ -952,6 +968,10 @@ void Editor::duplicate() {
 }
 
 void Editor::erase() {
+    if (const auto* placed = selectedScene()) {
+        removeScene(placed->id);
+        return;
+    }
     if (selected_.kind == Selection::Kind::Node) {
         if (!targetOf(selected_.instance, selected_.path).node) {
             log("This node comes from an instance: open its prefab or scene to delete it");
@@ -1251,19 +1271,22 @@ void Editor::browser() {
 
 void Editor::gizmo(ImVec2 origin, ImVec2 size) {
     const auto* node = selectedNode();
-    const RenderObject* render = nullptr;
+    auto* placed = selectedScene();
+    Ogre::SceneNode* moved = placed && selected_.instance < static_cast<int>(sceneRoots_.size())
+                                 ? sceneRoots_[selected_.instance]
+                                 : nullptr;
     for (const auto& each : renderObjects_)
         if (node && selected_.instance == static_cast<int>(each.instance) &&
             view_.instances[each.instance].expansion.nodes[each.index].path == selected_.path)
-            render = &each;
-    if (!render || runtime_) {
+            moved = each.node;
+    if (!moved || runtime_) {
         gizmoOver_ = false;
         return;
     }
     float view[16], projection[16], model[16];
     toColumnMajor(camera_.getViewMatrix(), view);
     toColumnMajor(camera_.getProjectionMatrix(), projection);
-    toColumnMajor(render->node->_getFullTransformUpdated(), model);
+    toColumnMajor(moved->_getFullTransformUpdated(), model);
     ImGuizmo::SetDrawlist();
     ImGuizmo::SetRect(origin.x, origin.y, size.x, size.y);
     ImGuizmo::SetOrthographic(orthographic_);
@@ -1281,7 +1304,7 @@ void Editor::gizmo(ImVec2 origin, ImVec2 size) {
     if (!changed) return;
 
     // The gizmo works in world space; the node stores its transform relative to its parent.
-    auto* parent = render->node->getParentSceneNode();
+    auto* parent = moved->getParentSceneNode();
     const auto local = parent->_getFullTransformUpdated().inverseAffine() * fromColumnMajor(model);
     Ogre::Vector3 position, scale;
     Ogre::Quaternion rotation;
@@ -1290,11 +1313,16 @@ void Editor::gizmo(ImVec2 origin, ImVec2 size) {
     rotation.ToRotationMatrix(axes);
     Ogre::Radian z, y, x;
     axes.ToEulerAnglesZYX(z, y, x);
+    Transform result{fromOgre(position), {x.valueDegrees(), y.valueDegrees(), z.valueDegrees()}, fromOgre(scale)};
+    for (float* component : {&result.scale.x, &result.scale.y, &result.scale.z}) *component = std::max(*component, 0.001f);
+    if (placed) {
+        placed->transform = result;
+        return;
+    }
     auto value = node->node;
-    value.position = fromOgre(position);
-    value.rotation = {x.valueDegrees(), y.valueDegrees(), z.valueDegrees()};
-    value.scale = fromOgre(scale);
-    for (float* component : {&value.scale.x, &value.scale.y, &value.scale.z}) *component = std::max(*component, 0.001f);
+    value.position = result.position;
+    value.rotation = result.rotation;
+    value.scale = result.scale;
     writeNode(value, 2 | 4 | 8);
 }
 
@@ -1310,6 +1338,10 @@ void Editor::updateCamera() {
 }
 
 void Editor::focusSelection() {
+    if (selectedScene() && selected_.instance < static_cast<int>(sceneRoots_.size())) {
+        target_ = sceneRoots_[selected_.instance]->_getDerivedPositionUpdated();
+        return;
+    }
     for (const auto& render : renderObjects_) {
         if (selected_.kind != Selection::Kind::Node || selected_.instance != static_cast<int>(render.instance) ||
             view_.instances[render.instance].expansion.nodes[render.index].path != selected_.path)

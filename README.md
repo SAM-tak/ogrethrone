@@ -86,11 +86,13 @@ effect-free data):
   transform; it reaches nodes only through its behaviours' fields. Scenes and
   levels can both hold runners.
 - A **level** (`*.level.lton`) holds scene instances and its own runners. The
-  same scene can be placed more than once; each instance keeps its own overrides.
-  A level holds no nodes and no prefab instances of its own.
+  same scene can be placed more than once; each instance has its own transform,
+  under which all of the scene's nodes lie, and its own overrides. A level holds
+  no nodes and no prefab instances of its own.
 
 The editor drills down: at the Level step the Scene panel lists the scene
-instances; double-clicking one (or a file in the Browser's Scenes tab) edits that
+instances; selecting one shows its transform in the Inspector and the gizmo,
+and double-clicking one (or a file in the Browser's Scenes tab) edits that
 scene, and double-clicking an instance node (or a file in the Prefabs tab) edits
 that prefab. The breadcrumb over the viewport returns to an outer step. Nodes and
 runners that come from an instance are drawn in blue; editing them writes an

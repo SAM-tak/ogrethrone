@@ -15,6 +15,8 @@ struct SceneInstance {
     std::string scene;
     /// What this placement changes in the scene.
     Overrides overrides;
+    /// Where the scene is placed; every node of the scene lies below it.
+    Transform transform;
 };
 
 /// The game-side data of one level (TDDja/04, 05, 06): the scene instances it

@@ -31,6 +31,9 @@ void Level::save(const std::filesystem::path& path) const {
         out.set(item, "id", lhat_integer(instance.id));
         out.set(item, "scene", out.string(instance.scene));
         if (!instance.overrides.empty()) out.set(item, "overrides", writeOverrides(out, instance.overrides));
+        out.set(item, "position", out.vector(instance.transform.position.data()));
+        out.set(item, "rotation", out.vector(instance.transform.rotation.data()));
+        out.set(item, "scale", out.vector(instance.transform.scale.data()));
         out.push(list, item);
     }
     out.set(root, "scenes", list);
@@ -50,6 +53,13 @@ Level Level::load(const std::filesystem::path& path) {
             lton::invalid();
         result.scenes.push_back({static_cast<std::uint32_t>(id), lton::relativePath(lton::field(item, "scene")),
                                  readOverrides(lton::field(item, "overrides"))});
+        // An instance without a transform sits at the level's origin.
+        auto& transform = result.scenes.back().transform;
+        for (const auto& [key, out] : {std::pair{"position", &transform.position}, std::pair{"rotation", &transform.rotation},
+                                       std::pair{"scale", &transform.scale}})
+            if (const auto value = lton::field(item, key); !lhat_is_nil(value)) lton::vector(value, out->data());
+        for (const float component : {transform.scale.x, transform.scale.y, transform.scale.z})
+            if (!(component >= 0.001f)) lton::invalid();
         result.nextSceneId = std::max(result.nextSceneId, result.scenes.back().id + 1);
     }
     result.runners = readRunners(lton::field(document.root(), "runners"), result.nextRunnerId);
