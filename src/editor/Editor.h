@@ -252,6 +252,9 @@ private:
     void leave(Leave action);
     /// Draws the Save / Discard / Cancel prompt requested through confirmClose_.
     void closeDialog();
+    /// The name shown for view instance @p instance: its file's name and kind, and at
+    /// the level the instance's ID when its scene is placed more than once.
+    std::string instanceLabel(std::size_t instance);
     /// Draws the breadcrumb of the drill-down over the viewport.
     void breadcrumb();
     /// Draws the Scene panel: the node hierarchies of view_, with drag and drop

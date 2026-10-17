@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <optional>
+#include <string_view>
 
 namespace throne {
 namespace {
@@ -59,8 +60,29 @@ void fill(char (&buffer)[Size], const std::string& text) {
     std::snprintf(buffer, Size, "%s", text.c_str());
 }
 
+/// The name of the file at @p path: its file name up to the first dot.
+std::string nameOf(std::string_view path) {
+    const auto file = path.substr(path.find_last_of('/') + 1);
+    return std::string(file.substr(0, file.find('.')));
+}
+
 /// Returns @p path without its first @p count IDs.
 NodePath after(const NodePath& path, std::size_t count) { return NodePath(path.begin() + count, path.end()); }
+}
+
+std::string Editor::instanceLabel(std::size_t instance) {
+    if (content()) {
+        const auto kind = contexts_.back().kind == Context::Kind::Scene ? " [Scene]" : " [Prefab]";
+        return nameOf(contexts_.back().path) + kind;
+    }
+    const auto* placed = doc_.world.level.findScene(view_.instances[instance].id);
+    if (!placed) return "? [Scene]";
+    auto label = nameOf(placed->scene) + " [Scene]";
+    // The same scene placed more than once is told apart by the instance's ID.
+    const auto& scenes = doc_.world.level.scenes;
+    if (std::count_if(scenes.begin(), scenes.end(), [&](const SceneInstance& each) { return each.scene == placed->scene; }) > 1)
+        label += " #" + std::to_string(placed->id);
+    return label;
 }
 
 void Editor::breadcrumb() {
@@ -71,7 +93,9 @@ void Editor::breadcrumb() {
             ImGui::TextUnformatted(">");
             ImGui::SameLine();
         }
-        const auto label = i == 0 ? std::string("Level") : contexts_[i].path;
+        const auto label = i == 0 ? (levelPath_[0] ? nameOf(levelPath_) : std::string("untitled")) + " [Level]"
+                                  : nameOf(contexts_[i].path) +
+                                        (contexts_[i].kind == Context::Kind::Scene ? " [Scene]" : " [Prefab]");
         if (ImGui::SmallButton(label.c_str()) && i + 1 < contexts_.size() && !runtime_)
             navigate_.emplace(contexts_.begin(), contexts_.begin() + static_cast<std::ptrdiff_t>(i + 1));
         ImGui::PopID();
@@ -106,11 +130,7 @@ void Editor::scenePanel() {
         std::optional<std::uint32_t> removed;
         for (std::size_t i = 0; i < view_.instances.size(); ++i) {
             ImGui::PushID(static_cast<int>(i));
-            std::string label = contexts_.back().path;
-            if (!content()) {
-                const auto* instance = doc_.world.level.findScene(view_.instances[i].id);
-                label = "#" + std::to_string(view_.instances[i].id) + " " + (instance ? instance->scene : "?");
-            }
+            const auto label = instanceLabel(i);
             // At the level a scene instance is a row of its own, selected for its transform.
             auto flags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_OpenOnArrow;
             if (!content() && selected_.kind == Selection::Kind::Scene && selected_.instance == static_cast<int>(i))
@@ -235,14 +255,14 @@ void Editor::runnersPanel() {
             if (!own) ImGui::PopStyleColor();
             ImGui::PopID();
         };
-        if (!content() && ImGui::TreeNodeEx("Level", ImGuiTreeNodeFlags_DefaultOpen)) {
+        const auto levelName = (levelPath_[0] ? nameOf(levelPath_) : std::string("untitled")) + " [Level]";
+        if (!content() && ImGui::TreeNodeEx("##level", ImGuiTreeNodeFlags_DefaultOpen, "%s", levelName.c_str())) {
             for (const auto& runner : doc_.world.level.runners) item(runner.name.c_str(), -1, {}, runner.id, true);
             ImGui::TreePop();
         }
         for (std::size_t i = 0; i < view_.instances.size(); ++i) {
             ImGui::PushID(static_cast<int>(i));
-            const auto label = content() ? contexts_.back().path : "#" + std::to_string(view_.instances[i].id);
-            if (ImGui::TreeNodeEx("##runners", ImGuiTreeNodeFlags_DefaultOpen, "%s", label.c_str())) {
+            if (ImGui::TreeNodeEx("##runners", ImGuiTreeNodeFlags_DefaultOpen, "%s", instanceLabel(i).c_str())) {
                 for (std::size_t r = 0; r < view_.instances[i].expansion.runners.size(); ++r) {
                     const auto& expanded = view_.instances[i].expansion.runners[r];
                     ImGui::PushID(static_cast<int>(r));
@@ -513,7 +533,7 @@ void Editor::runnerInspector(const Runner& shown) {
                                 if (node.path.size() < prefix.size() || !std::equal(prefix.begin(), prefix.end(), node.path.begin()))
                                     continue;
                                 std::string label = node.node.name;
-                                if (selected_.instance < 0) label = "#" + std::to_string(view_.instances[i].id) + " " + label;
+                                if (selected_.instance < 0) label = instanceLabel(i) + " / " + label;
                                 label += "##" + std::to_string(i);
                                 for (const auto step : node.path) label += "/" + std::to_string(step);
                                 if (!ImGui::Selectable(label.c_str(), static_cast<int>(i) == refInstance && n == refAt))

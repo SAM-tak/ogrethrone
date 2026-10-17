@@ -92,8 +92,9 @@ effect-free data):
   instances and no overrides of its own: editing a scene's content at the Level
   step writes to that scene's file, so every instance of it shows the change.
 
-The editor drills down: at the Level step the Scene panel lists the scene
-instances; selecting one shows its transform in the Inspector and the gizmo,
+Levels, scenes and prefabs are named after their files (`main.scene.lton` shows
+as `main [Scene]`; a scene placed twice adds its instance ID). The editor drills
+down: at the Level step the Scene panel lists the scene instances; selecting one shows its transform in the Inspector and the gizmo,
 and double-clicking one (or a file in the Browser's Scenes tab) edits that
 scene, and double-clicking an instance node (or a file in the Prefabs tab) edits
 that prefab. The breadcrumb over the viewport returns to an outer step. Nodes and
