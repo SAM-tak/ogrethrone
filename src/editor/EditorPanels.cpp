@@ -312,6 +312,11 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         ImGui::Separator();
         ImGui::Text("Instance of %s", expanded.node.prefab.c_str());
         if (ImGui::Button("Open Prefab")) enter({Context::Kind::Prefab, expanded.node.prefab});
+        // Only an instance the edited file holds itself can be unpacked into it.
+        if (target.node && !target.addedTo) {
+            ImGui::SameLine();
+            if (ImGui::Button("Unpack")) unpack(target.node->id);
+        }
     }
     if (target.node) {
         ImGui::Separator();

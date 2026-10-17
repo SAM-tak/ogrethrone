@@ -102,6 +102,8 @@ override, shown in orange with a Revert button. With a node inside an instance
 the new node as an override of that instance, also shown in orange. Inside a scene or prefab, Add
 Instance places the prefab named next to it, creating one with a root node when
 the file does not exist yet; double-click the new instance node to fill the prefab.
+Unpack in the Inspector replaces an instance with plain nodes holding what it
+shows, nested instances included, and copies its runners into the file.
 Dragging a node onto the Browser's Prefabs tab saves it as
 `prefabs/<name>.prefab.lton` and leaves an instance in its place; dragging an
 instance makes a variant of its prefab. Dropping a node on an existing prefab

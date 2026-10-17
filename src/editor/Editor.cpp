@@ -1040,6 +1040,95 @@ void Editor::applyOverrides(NodeId id) {
     log("Applied the overrides to " + node->prefab);
 }
 
+void Editor::unpack(NodeId id) {
+    auto* edited = content();
+    auto* node = edited ? edited->findNode(id) : nullptr;
+    if (!node || node->prefab.empty() || view_.instances.empty()) return;
+    const auto expansion = view_.instances[0].expansion;
+    const auto top = expansion.find({id});
+    if (top == Expansion::npos) return;
+    // The instance's nodes, parents first: the instance itself, then everything below it.
+    std::vector<std::size_t> inside{top};
+    for (auto i = top + 1; i < expansion.nodes.size(); ++i)
+        for (auto up = expansion.nodes[i].parent; up != Expansion::npos; up = expansion.nodes[up].parent)
+            if (up == top) {
+                inside.push_back(i);
+                break;
+            }
+    // Each keeps its ID unless the file, or an earlier copy of the same prefab, already uses it.
+    std::set<NodeId> used;
+    for (const auto& each : edited->nodes) used.insert(each.id);
+    std::map<std::size_t, NodeId> ids{{top, id}};
+    bool renamed = false;
+    for (const auto i : inside) {
+        if (i == top) continue;
+        auto wanted = expansion.nodes[i].node.id;
+        for (; !used.insert(wanted).second; renamed = true) wanted = newNodeId();
+        ids[i] = wanted;
+    }
+    std::vector<SceneNode> plain;
+    for (const auto i : inside) {
+        auto each = expansion.nodes[i].node;
+        each.id = ids[i];
+        each.parent = i == top ? node->parent : ids.at(expansion.nodes[i].parent);
+        each.prefab.clear();
+        each.overrides = {};
+        plain.push_back(std::move(each));
+    }
+    auto before = doc_;
+    // A reference into the instance (relative to @p base) now names its node directly.
+    const auto direct = [&](NodeRef& ref, const NodePath& base) {
+        if (!ref.node) return;
+        auto path = base;
+        path.push_back(ref.node);
+        path.insert(path.end(), ref.inner.begin(), ref.inner.end());
+        if (const auto it = ids.find(expansion.find(path)); it != ids.end()) ref = {ref.scene, it->second, {}};
+    };
+    const auto refs = [&](std::map<std::string, FieldValue>& fields, std::uint32_t scene, const NodePath& base) {
+        for (auto& [name, value] : fields)
+            if (auto* ref = std::get_if<NodeRef>(&value); ref && ref->scene == scene) direct(*ref, base);
+    };
+    // The instance's runners become the file's, by the instance they came from and their ID.
+    std::map<std::pair<std::size_t, std::uint32_t>, std::uint32_t> runnerIds;
+    for (const auto& expanded : expansion.runners) {
+        const auto from = expansion.find(expanded.instance);
+        if (expanded.instance.empty() || !ids.count(from)) continue;
+        auto& made = edited->addRunner(expanded.runner.name);
+        const auto madeId = made.id;
+        made = expanded.runner;
+        made.id = madeId;
+        for (auto& behaviour : made.behaviours) refs(behaviour.fields, 0, expanded.instance);
+        runnerIds[{from, expanded.runner.id}] = madeId;
+    }
+    for (auto& runner : edited->runners)
+        for (auto& behaviour : runner.behaviours) refs(behaviour.fields, 0, {});
+    // The level's instances of an edited scene hold overrides and references into it.
+    if (contexts_.back().kind == Context::Kind::Scene)
+        for (auto& instance : doc_.world.level.scenes) {
+            if (instance.scene != contexts_.back().path) continue;
+            for (auto& entry : instance.overrides.nodes)
+                if (const auto it = ids.find(expansion.find(entry.path)); it != ids.end()) entry.path = {it->second};
+            for (auto& entry : instance.overrides.runners) {
+                const auto from = expansion.find(entry.instance);
+                refs(entry.fields, 0, entry.instance);
+                if (const auto it = runnerIds.find({from, entry.runner}); it != runnerIds.end() && !entry.instance.empty()) {
+                    entry.instance.clear();
+                    entry.runner = it->second;
+                }
+            }
+            for (auto& runner : doc_.world.level.runners)
+                for (auto& behaviour : runner.behaviours) refs(behaviour.fields, instance.id, {});
+        }
+    // The unpacked nodes take the instance node's place among its siblings.
+    const auto at = std::find_if(edited->nodes.begin(), edited->nodes.end(), [id](const SceneNode& each) { return each.id == id; });
+    const auto position = edited->nodes.erase(at);
+    edited->nodes.insert(position, plain.begin(), plain.end());
+    selected_ = {Selection::Kind::Node, 0, {id}};
+    commit(std::move(before));
+    if (renamed && contexts_.back().kind == Context::Kind::Prefab)
+        log("Some unpacked nodes got new IDs; overrides elsewhere that pointed at them no longer apply");
+}
+
 void Editor::replaceDialog() {
     if (replacing_) {
         ImGui::OpenPopup("Replace Prefab");

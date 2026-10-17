@@ -204,6 +204,11 @@ private:
     /// Writes the overrides of instance node @p id into its prefab, saved at once,
     /// and clears them.
     void applyOverrides(NodeId id);
+    /// Replaces instance node @p id of the edited file with plain nodes holding what
+    /// it shows, nested instances included, and copies its runners into the file
+    /// (TDDja/06 7). Nodes keep their IDs unless the file already uses one;
+    /// references in the file and the level to a node given a new ID are rewritten.
+    void unpack(NodeId id);
     /// Draws the confirmation requested through replacing_ before a prefab is replaced.
     void replaceDialog();
     /// Copies the selected node (without children) beside itself and selects the copy.
