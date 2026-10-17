@@ -2,15 +2,17 @@
 // (TDDja/05 6, 06 6).
 #include "editor/Editor.h"
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <algorithm>
 #include <cstdio>
 #include <optional>
 
 namespace throne {
 namespace {
-/// A pending reparent, applied after the tree has been drawn.
+/// A pending reparent, applied after the tree has been drawn: @p id goes under
+/// @p parent, before its child @p before (0: last).
 struct Move {
-    NodeId id, parent;
+    NodeId id, parent, before = 0;
 };
 std::optional<Move> pendingMove;
 
@@ -19,6 +21,28 @@ void dropTarget(const char* type, NodeId parent) {
     if (!ImGui::BeginDragDropTarget()) return;
     if (const auto* payload = ImGui::AcceptDragDropPayload(type))
         pendingMove = Move{*static_cast<const NodeId*>(payload->Data), parent};
+    ImGui::EndDragDropTarget();
+}
+
+/// Where a node dropped between rows goes: under @p parent before @p before,
+/// shown by a line starting at @p x (the level's indentation).
+struct Slot {
+    NodeId parent, before;
+    float x;
+};
+
+/// Accepts a node dropped on @p rect into one of @p slots, deepest first: the
+/// mouse picks the deepest one whose indentation it is right of (else the last).
+/// While hovering, draws a line at @p y where it would go.
+void siblingTarget(const char* type, const ImRect& rect, const char* id, const std::vector<Slot>& slots, float y) {
+    if (!ImGui::BeginDragDropTargetCustom(rect, ImGui::GetID(id))) return;
+    if (const auto* payload = ImGui::AcceptDragDropPayload(
+            type, ImGuiDragDropFlags_AcceptBeforeDelivery | ImGuiDragDropFlags_AcceptNoDrawDefaultRect)) {
+        const float mouse = ImGui::GetIO().MousePos.x, half = ImGui::GetStyle().IndentSpacing * 0.5f;
+        const auto slot = std::find_if(slots.begin(), slots.end() - 1, [&](const Slot& each) { return mouse >= each.x - half; });
+        ImGui::GetWindowDrawList()->AddLine({slot->x, y}, {rect.Max.x, y}, ImGui::GetColorU32(ImGuiCol_DragDropTarget), 2);
+        if (payload->IsDelivery()) pendingMove = Move{*static_cast<const NodeId*>(payload->Data), slot->parent, slot->before};
+    }
     ImGui::EndDragDropTarget();
 }
 
@@ -104,7 +128,7 @@ void Editor::scenePanel() {
         }
         if (pendingMove && !runtime_ && content()) {
             auto before = doc_;
-            if (content()->reparent(pendingMove->id, pendingMove->parent)) commit(std::move(before));
+            if (content()->reparent(pendingMove->id, pendingMove->parent, pendingMove->before)) commit(std::move(before));
         }
         pendingMove.reset();
         if (removed) removeScene(*removed);
@@ -139,6 +163,32 @@ void Editor::nodeTree(std::size_t instance, std::size_t parent) {
             ImGui::SetDragDropPayload(nodePayload, &expanded.path[0], sizeof expanded.path[0]);
             ImGui::TextUnformatted(expanded.node.name.c_str());
             ImGui::EndDragDropSource();
+        }
+        // The top and bottom quarters of a row put a dropped node beside it, the rest
+        // inside it (smaller drop targets win). A prefab keeps its single root.
+        const auto movable = [&](std::size_t at) {
+            const auto& each = nodes[at];
+            return content() && each.path.size() == 1 && content()->findNode(each.path[0]) &&
+                   !(contexts_.back().kind == Context::Kind::Prefab && each.node.parent == 0);
+        };
+        if (movable(k)) {
+            const ImRect row(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+            const float edge = row.GetHeight() * 0.25f, indent = ImGui::GetStyle().IndentSpacing;
+            // Below the last child, moving left goes out a level: after the parent, and so on.
+            std::vector<Slot> below;
+            for (auto at = k;;) {
+                auto next = at + 1;
+                while (next < nodes.size() && nodes[next].parent != nodes[at].parent) ++next;
+                below.push_back({nodes[at].node.parent, next < nodes.size() ? nodes[next].node.id : 0,
+                                 row.Min.x - indent * static_cast<float>(below.size())});
+                if (next < nodes.size() || nodes[at].parent == Expansion::npos || !movable(nodes[at].parent)) break;
+                at = nodes[at].parent;
+            }
+            const float left = ImGui::GetCurrentWindow()->WorkRect.Min.x;
+            siblingTarget(nodePayload, ImRect({left, row.Min.y}, {row.Max.x, row.Min.y + edge}),
+                          ("above" + std::to_string(k)).c_str(), {{expanded.node.parent, expanded.node.id, row.Min.x}}, row.Min.y);
+            siblingTarget(nodePayload, ImRect({left, row.Max.y - edge}, row.Max), ("below" + std::to_string(k)).c_str(), below,
+                          row.Max.y);
         }
         if (own && expanded.node.prefab.empty()) dropTarget(nodePayload, expanded.path[0]);
         // An instance names its prefab after it, coloured by whether that is a variant.

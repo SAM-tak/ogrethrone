@@ -40,6 +40,14 @@ int main() {
     if (!original.reparent(child, parent) || original.reparent(parent, grandchildId) ||
         original.nodes[0].id != parent || original.nodes[2].id != grandchildId || !original.isWithin(grandchildId, parent))
         return fail("Reparenting broke the order or accepted a cycle");
+    // Placing before a sibling reorders; the subtree moves along, and a non-sibling is refused.
+    {
+        auto reordered = original;
+        if (!reordered.reparent(child, 0, parent) || reordered.nodes[0].id != child ||
+            reordered.nodes[1].id != grandchildId || reordered.nodes[2].id != parent ||
+            reordered.reparent(parent, 0, grandchildId))
+            return fail("Reordering siblings broke the order or accepted a non-sibling");
+    }
     auto& runner = original.addRunner("Spinner");
     runner.behaviours.push_back({"scripts/spin.lh", {{"target", throne::NodeRef{0, parent, {}}},
                                                      {"degreesPerSecond", 45.0},

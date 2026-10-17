@@ -75,7 +75,8 @@ effect-free data):
 - A **scene** (`*.scene.lton`) is a hierarchy of drawable nodes. Each node has a
   local position, rotation (degrees, applied about X, then Y, then Z), scale and
   colour; nodes are unit cubes for now. Drag nodes in the Scene panel to reparent
-  them. A scene is a prefab (`*.prefab.lton`) extended with scene-wide data.
+  them, or drop one on the top or bottom edge of another to place it before or
+  after it; sibling order is kept. A scene is a prefab (`*.prefab.lton`) extended with scene-wide data.
 - A **prefab** (`*.prefab.lton`) is a reusable node hierarchy with a single root
   and its own runners. A node of a scene or prefab can be an *instance* of a
   prefab: it becomes the prefab's root, giving it a name and transform, and

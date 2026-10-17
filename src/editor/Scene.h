@@ -160,9 +160,11 @@ struct Prefab : RunnerSet {
     void removeNode(NodeId id);
     /// Whether @p id is @p ancestor or lies below it.
     bool isWithin(NodeId id, NodeId ancestor) const;
-    /// Moves @p id (with its subtree) under @p parent, as the last child.
-    /// @return false when that would make a node its own ancestor.
-    bool reparent(NodeId id, NodeId parent);
+    /// Moves @p id (with its subtree) under @p parent, just before its child
+    /// @p before, or as the last child when @p before is 0.
+    /// @return false when that would make a node its own ancestor, or @p before
+    ///         is @p id or not a child of @p parent.
+    bool reparent(NodeId id, NodeId parent, NodeId before = 0);
 
     /// Whether this is a variant of another prefab.
     bool variant() const { return !base.empty(); }

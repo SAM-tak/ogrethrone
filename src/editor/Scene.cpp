@@ -237,15 +237,18 @@ void RunnerSet::removeRunner(std::uint32_t id) {
 
 bool Prefab::isWithin(NodeId id, NodeId ancestor) const { return within(nodes, id, ancestor); }
 
-bool Prefab::reparent(NodeId id, NodeId parent) {
+bool Prefab::reparent(NodeId id, NodeId parent, NodeId before) {
     if (!findNode(id) || (parent && (!findNode(parent) || isWithin(parent, id)))) return false;
-    // Keep parents before children: lift the subtree out, then put it after the
-    // new parent's last descendant (or at the end for the root).
+    if (before && (before == id || !findNode(before) || findNode(before)->parent != parent)) return false;
+    // Keep parents before children: lift the subtree out, then put it before the
+    // sibling, or after the new parent's last descendant (at the end for the root).
     std::vector<SceneNode> moved, kept;
     for (const auto& node : nodes) (isWithin(node.id, id) ? moved : kept).push_back(node);
     moved.front().parent = parent;
     auto at = kept.end();
-    if (parent) {
+    if (before) {
+        at = std::find_if(kept.begin(), kept.end(), [before](const SceneNode& node) { return node.id == before; });
+    } else if (parent) {
         for (auto it = kept.begin(); it != kept.end(); ++it)
             if (within(kept, it->id, parent)) at = it + 1;
     }
