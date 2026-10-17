@@ -106,6 +106,7 @@ instance's runner or a node inside it selected adds one to that instance, and
 Delete on an instance's runner records its removal. Inside a scene or prefab, Add
 Instance places the prefab named next to it, creating one with a root node when
 the file does not exist yet; double-click the new instance node to fill the prefab.
+Apply in the Inspector writes all of an instance's overrides into its prefab.
 Unpack in the Inspector replaces an instance with plain nodes holding what it
 shows, nested instances included, and copies its runners into the file.
 Dragging a node onto the Browser's Prefabs tab saves it as

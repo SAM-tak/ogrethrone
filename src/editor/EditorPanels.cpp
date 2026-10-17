@@ -319,6 +319,11 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         if (target.node && !target.addedTo) {
             ImGui::SameLine();
             if (ImGui::Button("Unpack")) unpack(target.node->id);
+            // Writes every override of this instance into the prefab (as dropping it on the file does).
+            ImGui::SameLine();
+            ImGui::BeginDisabled(target.node->overrides.empty());
+            if (ImGui::Button("Apply")) applyOverrides(target.node->id);
+            ImGui::EndDisabled();
         }
         if (target.node && target.overrides)
             removedList(*target.overrides, view_.instances[selected_.instance].expansion, selected_.path);
