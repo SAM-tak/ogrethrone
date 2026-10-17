@@ -86,7 +86,7 @@ std::size_t Expander::prefab(const std::string& file, const SceneNode* placed, c
     const auto at = out.nodes.size();
     out.nodes.push_back({prefix, parent, merged, root.id});
     stack.push_back(file);
-    std::map<std::uint32_t, std::size_t> index{{root.id, at}};
+    std::map<NodeId, std::size_t> index{{root.id, at}};
     for (const auto& node : content->nodes)
         if (node.id != root.id) index[node.id] = place(node, join(prefix, {node.id}), index.at(node.parent));
     stack.pop_back();
@@ -107,7 +107,13 @@ void apply(Expansion& out, const NodePath& prefix, const Overrides& overrides) {
         if (entry.colour) node.colour = *entry.colour;
     }
     for (const auto& entry : overrides.runners) {
-        const auto instance = join(prefix, entry.instance);
+        // The instance is found like a node, so it may have moved deeper since.
+        auto instance = join(prefix, entry.instance);
+        if (!instance.empty()) {
+            const auto at = out.find(instance);
+            if (at == Expansion::npos) continue;
+            instance = out.nodes[at].path;
+        }
         for (auto& expanded : out.runners) {
             if (expanded.instance != instance || expanded.runner.id != entry.runner) continue;
             if (entry.behaviour >= expanded.runner.behaviours.size()) continue;
@@ -136,23 +142,23 @@ void Library::put(const std::string& path, Prefab prefab) { entries_[path] = {st
 void Library::forget(const std::string& path) { entries_.erase(path); }
 
 std::size_t Expansion::find(const NodePath& path) const {
-    const auto exact = [this](const NodePath& wanted) {
-        for (std::size_t i = 0; i < nodes.size(); ++i)
-            if (nodes[i].path == wanted) return i;
-        return npos;
+    // Whether node i lies below node at (npos: the top).
+    const auto below = [this](std::size_t i, std::size_t at) {
+        while ((i = nodes[i].parent) != npos)
+            if (i == at) return true;
+        return at == npos;
     };
     // The empty path is a variant's root when the variant itself is expanded.
-    auto at = exact({});
-    NodePath canonical;
+    auto at = npos;
+    for (std::size_t i = 0; i < nodes.size(); ++i)
+        if (nodes[i].path.empty()) at = i;
     for (const auto id : path) {
-        canonical.push_back(id);
-        if (const auto next = exact(canonical); next != npos) {
-            at = next;
-        } else if (at != npos && nodes[at].root == id) {
-            canonical.pop_back();  // The merged root named by its own ID.
-        } else {
-            return npos;
-        }
+        if (at != npos && nodes[at].root == id) continue;  // The merged root named by its own ID.
+        auto next = npos;
+        for (std::size_t i = at == npos ? 0 : at + 1; i < nodes.size() && next == npos; ++i)
+            if (nodes[i].node.id == id && below(i, at)) next = i;
+        if (next == npos) return npos;
+        at = next;
     }
     return at;
 }
@@ -165,7 +171,7 @@ Expansion expand(const Prefab& content, Library& library, const std::string& sel
         expander.prefab(content.base, nullptr, {}, Expansion::npos);
         expander.pending.push_back({{}, content.overrides});
     } else {
-        std::map<std::uint32_t, std::size_t> index;
+        std::map<NodeId, std::size_t> index;
         for (const auto& node : content.nodes)
             index[node.id] = expander.place(node, {node.id}, node.parent ? index.at(node.parent) : Expansion::npos);
         for (const auto& runner : content.runners) out.runners.push_back({{}, runner});

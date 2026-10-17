@@ -12,19 +12,25 @@
 #include <vector>
 
 namespace throne {
+/// A scene node's ID: a random integer from 0xFFFFFFFF to 0x7FFFFFFFFFFFFFFF, so
+/// IDs from different files do not meet (TDDja/06 3). 0 means no node; files may
+/// hold any positive ID.
+using NodeId = std::uint64_t;
+
 /// Node IDs from a scene or prefab's own node down through prefab instances,
-/// outermost first (TDDja/06 3). IDs are unique only within one file, so a
-/// node inside nested instances needs the whole path. An instance node and its
-/// prefab's root are one node, named by the instance's ID alone; the root's own
-/// ID after it is accepted too, as the prefab itself names its root.
-using NodePath = std::vector<std::uint32_t>;
+/// outermost first (TDDja/06 3). Each ID is looked for anywhere below the node
+/// before it, so a path stays valid when a subtree is moved into a new prefab.
+/// The instances along it tell apart the copies of a prefab placed more than
+/// once. An instance node and its prefab's root are one node, which either's
+/// ID names.
+using NodePath = std::vector<NodeId>;
 
 /// A reference to a scene node (TDDja/05 4, 06 3.1).
 struct NodeRef {
     /// ID of the level's scene instance, or 0 for the scene (or prefab) holding the reference.
     std::uint32_t scene = 0;
     /// The node's ID in that scene; 0 means no node.
-    std::uint32_t node = 0;
+    NodeId node = 0;
     /// Path below `node` when it is a prefab instance; empty for the node itself.
     NodePath inner;
     bool operator==(const NodeRef& other) const {
@@ -99,12 +105,12 @@ struct Transform {
 /// (TDDja/06 3): it gives the root its name and transform, everything else comes
 /// from the prefab, and it has no children of its own.
 struct SceneNode {
-    /// Unique nonzero ID within its scene.
-    std::uint32_t id = 0;
+    /// Unique nonzero ID; see NodeId.
+    NodeId id = 0;
     /// Display name; 1 to 255 bytes.
     std::string name;
     /// ID of the parent node, or 0 for the scene root.
-    std::uint32_t parent = 0;
+    NodeId parent = 0;
     /// Position relative to the parent.
     Vec3 position;
     /// Euler angles in degrees relative to the parent, applied about X, then Y, then Z.
@@ -139,25 +145,24 @@ struct RunnerSet {
 struct Prefab : RunnerSet {
     /// Nodes with every parent before its children; siblings keep this order.
     std::vector<SceneNode> nodes;
-    std::uint32_t nextNodeId = 1;
     /// For a variant, the project-relative path of the prefab it is based on.
     std::string base;
     /// For a variant, what it changes in its base.
     Overrides overrides;
 
     /// Returns the node with @p id, or nullptr.
-    SceneNode* findNode(std::uint32_t id);
+    SceneNode* findNode(NodeId id);
     /// @copydoc findNode
-    const SceneNode* findNode(std::uint32_t id) const;
-    /// Appends a cube node named @p name under @p parent and returns it.
-    SceneNode& addNode(const std::string& name, std::uint32_t parent = 0);
+    const SceneNode* findNode(NodeId id) const;
+    /// Appends a cube node named @p name under @p parent, with a new random ID, and returns it.
+    SceneNode& addNode(const std::string& name, NodeId parent = 0);
     /// Removes the node and all its descendants.
-    void removeNode(std::uint32_t id);
+    void removeNode(NodeId id);
     /// Whether @p id is @p ancestor or lies below it.
-    bool isWithin(std::uint32_t id, std::uint32_t ancestor) const;
+    bool isWithin(NodeId id, NodeId ancestor) const;
     /// Moves @p id (with its subtree) under @p parent, as the last child.
     /// @return false when that would make a node its own ancestor.
-    bool reparent(std::uint32_t id, std::uint32_t parent);
+    bool reparent(NodeId id, NodeId parent);
 
     /// Whether this is a variant of another prefab.
     bool variant() const { return !base.empty(); }
@@ -185,6 +190,8 @@ struct Scene : Prefab {
     static Scene example();
 };
 
+/// Returns a new random NodeId.
+NodeId newNodeId();
 /// Writes @p overrides as an LTON table; shared by prefab instances and scene instances.
 LhatValue writeOverrides(lton::Writer& out, const Overrides& overrides);
 /// Reads what writeOverrides wrote (nil^ reads as no overrides). @throws lton::Invalid on malformed data.

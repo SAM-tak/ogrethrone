@@ -255,7 +255,7 @@ THRONE_HOST(vecNormalized, {
 /// SceneNode.id().
 THRONE_HOST(nodeId, {
     if (const auto* node = s.target(machine, arguments[0])) {
-        answers[0] = lhat_integer(node->id);
+        answers[0] = lhat_integer(static_cast<LhatInteger>(node->id));
         *count = 1;
     }
 })

@@ -771,8 +771,15 @@ void Editor::addNode() {
     }
     try {
         auto before = doc_;
-        auto& added = edited->addNode("Cube", parentForNew());
-        added.name = "Cube " + std::to_string(added.id);
+        // "Cube <n>" with the smallest n no node of the file uses.
+        std::string name;
+        for (int number = 1;; ++number) {
+            name = "Cube " + std::to_string(number);
+            if (std::none_of(edited->nodes.begin(), edited->nodes.end(),
+                             [&](const SceneNode& node) { return node.name == name; }))
+                break;
+        }
+        auto& added = edited->addNode(name, parentForNew());
         selected_ = {Selection::Kind::Node, 0, {added.id}};
         commit(std::move(before));
     } catch (const std::exception& error) {
@@ -817,7 +824,7 @@ void Editor::addInstance() {
     }
 }
 
-std::uint32_t Editor::parentForNew() {
+NodeId Editor::parentForNew() {
     // A node of the edited file can take a child; an instance cannot (yet).
     const auto* chosen = selectedNode();
     if (chosen && chosen->path.size() == 1 && chosen->node.prefab.empty()) return chosen->path[0];
@@ -826,7 +833,7 @@ std::uint32_t Editor::parentForNew() {
     return 0;
 }
 
-bool Editor::isPrefabRoot(std::uint32_t id) {
+bool Editor::isPrefabRoot(NodeId id) {
     const auto* node = content() ? content()->findNode(id) : nullptr;
     return node && node->parent == 0 && contexts_.back().kind == Context::Kind::Prefab;
 }
@@ -839,7 +846,7 @@ bool Editor::isVariant(const std::string& prefab) {
     }
 }
 
-void Editor::prefabify(std::uint32_t id, std::string file) {
+void Editor::prefabify(NodeId id, std::string file) {
     auto* edited = content();
     auto* node = edited ? edited->findNode(id) : nullptr;
     if (!node || edited->variant()) return;
@@ -864,7 +871,7 @@ void Editor::prefabify(std::uint32_t id, std::string file) {
     }
     // An instance becomes a variant of its prefab with its overrides; a plain node takes its subtree along.
     Prefab made;
-    std::set<std::uint32_t> moved;
+    std::set<NodeId> moved;
     if (!node->prefab.empty()) {
         made.base = node->prefab;
         made.overrides = node->overrides;
@@ -872,7 +879,6 @@ void Editor::prefabify(std::uint32_t id, std::string file) {
         for (const auto& each : edited->nodes)
             if (edited->isWithin(each.id, id)) made.nodes.push_back(each);
         made.nodes.front().parent = 0;
-        made.nextNodeId = edited->nextNodeId;
         for (const auto& each : made.nodes)
             if (each.id != id) moved.insert(each.id);
     }
@@ -891,31 +897,7 @@ void Editor::prefabify(std::uint32_t id, std::string file) {
     // A copy opened for editing would write the old content back on save.
     doc_.prefabs.erase(file);
     library_.forget(file);
-    // Paths into the moved nodes now pass through the new instance.
-    const auto through = [&](NodePath& path) {
-        if (!path.empty() && moved.count(path[0])) path.insert(path.begin(), id);
-    };
-    const auto refs = [&](std::map<std::string, FieldValue>& fields, std::uint32_t scene) {
-        for (auto& [name, value] : fields)
-            if (auto* ref = std::get_if<NodeRef>(&value); ref && ref->scene == scene && moved.count(ref->node)) {
-                ref->inner.insert(ref->inner.begin(), ref->node);
-                ref->node = id;
-            }
-    };
-    for (auto& runner : edited->runners)
-        for (auto& behaviour : runner.behaviours) refs(behaviour.fields, 0);
-    // The level's instances of an edited scene hold overrides and references into it.
-    if (contexts_.back().kind == Context::Kind::Scene)
-        for (auto& instance : doc_.world.level.scenes) {
-            if (instance.scene != contexts_.back().path) continue;
-            for (auto& entry : instance.overrides.nodes) through(entry.path);
-            for (auto& entry : instance.overrides.runners) {
-                if (entry.instance.empty()) refs(entry.fields, 0);
-                through(entry.instance);
-            }
-            for (auto& runner : doc_.world.level.runners)
-                for (auto& behaviour : runner.behaviours) refs(behaviour.fields, instance.id);
-        }
+    // Paths and references into the moved nodes still find them inside the new instance (see NodePath).
     for (const auto child : moved)
         if (auto* each = edited->findNode(child); each && each->parent == id) edited->removeNode(child);
     node = edited->findNode(id);
@@ -926,7 +908,7 @@ void Editor::prefabify(std::uint32_t id, std::string file) {
     log("Saved " + file);
 }
 
-void Editor::dropOnPrefab(std::uint32_t id, const std::string& file) {
+void Editor::dropOnPrefab(NodeId id, const std::string& file) {
     const auto* node = content() ? content()->findNode(id) : nullptr;
     if (!node) return;
     if (node->prefab == file) applyOverrides(id);
@@ -952,7 +934,7 @@ void merge(Overrides& into, const Overrides& from) {
 }
 }
 
-void Editor::applyOverrides(std::uint32_t id) {
+void Editor::applyOverrides(NodeId id) {
     auto* node = content() ? content()->findNode(id) : nullptr;
     if (!node || node->prefab.empty() || node->overrides.empty()) return;
     Prefab prefab;
@@ -1358,7 +1340,7 @@ void Editor::browser() {
                     // A node dropped on a prefab file replaces it, or applies an instance's overrides to it.
                     if (kind == Context::Kind::Prefab && !runtime_ && ImGui::BeginDragDropTarget()) {
                         if (const auto* payload = ImGui::AcceptDragDropPayload(nodePayload))
-                            dropOnPrefab(*static_cast<const std::uint32_t*>(payload->Data), relative);
+                            dropOnPrefab(*static_cast<const NodeId*>(payload->Data), relative);
                         ImGui::EndDragDropTarget();
                     }
                     if (variant) ImGui::PopStyleColor();
@@ -1367,7 +1349,7 @@ void Editor::browser() {
                 if (kind == Context::Kind::Prefab && !runtime_ &&
                     ImGui::BeginDragDropTargetCustom(ImGui::GetCurrentWindow()->InnerRect, ImGui::GetID("prefabify"))) {
                     if (const auto* payload = ImGui::AcceptDragDropPayload(nodePayload))
-                        prefabify(*static_cast<const std::uint32_t*>(payload->Data));
+                        prefabify(*static_cast<const NodeId*>(payload->Data));
                     ImGui::EndDragDropTarget();
                 }
                 ImGui::EndTabItem();

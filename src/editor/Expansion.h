@@ -43,7 +43,7 @@ struct ExpandedNode {
     /// The resolved values. An instance node keeps its prefab and overrides.
     SceneNode node;
     /// For an instance node, the ID of the prefab root it became; otherwise 0.
-    std::uint32_t root = 0;
+    NodeId root = 0;
 };
 
 /// One runner of an expanded hierarchy, with field overrides applied.
@@ -62,8 +62,8 @@ struct Expansion {
     /// Instances that could not be expanded (missing prefab, cycle); the rest is still expanded.
     std::vector<std::string> errors;
 
-    /// Index of the node at @p path, or npos. A merged prefab root may also be
-    /// named by its own ID after the instance's (see NodePath).
+    /// Index of the node at @p path (see NodePath), or npos. Each ID is looked for
+    /// below the node found for the one before it; the first match in order wins.
     std::size_t find(const NodePath& path) const;
 };
 

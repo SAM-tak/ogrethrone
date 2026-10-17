@@ -37,7 +37,8 @@ Session world(const fs::path& root, const char* script) {
     result.world.scenes["scenes/main.scene.lton"] = throne::Scene::example();
     const auto scene = result.world.level.addScene("scenes/main.scene.lton").id;
     auto& runner = result.world.level.addRunner("Spinner");
-    runner.behaviours.push_back({script, {{"target", throne::NodeRef{scene, 1, {}}}}});
+    const auto cube = result.world.scenes["scenes/main.scene.lton"].nodes[0].id;
+    runner.behaviours.push_back({script, {{"target", throne::NodeRef{scene, cube, {}}}}});
     throne::Library library(root);
     result.expanded = throne::expand(result.world, library);
     return result;
@@ -144,13 +145,13 @@ int main(int argc, char** argv) {
 
     // A prefab's runner runs once per instance, each on the node inside its own instance.
     throne::Prefab spinner;
-    spinner.addNode("Wheel");
-    spinner.addRunner("Spin").behaviours.push_back({"scripts/spin.lh", {{"target", throne::NodeRef{0, 1, {}}}}});
+    const auto wheel = spinner.addNode("Wheel").id;
+    spinner.addRunner("Spin").behaviours.push_back({"scripts/spin.lh", {{"target", throne::NodeRef{0, wheel, {}}}}});
     spinner.save(root / "prefabs/spinner.prefab.lton");
     Session prefabs;
     auto& placed = prefabs.world.scenes["scenes/two.scene.lton"];
-    placed.addNode("A").prefab = "prefabs/spinner.prefab.lton";
-    placed.addNode("B").prefab = "prefabs/spinner.prefab.lton";
+    const auto a = placed.addNode("A").id, b = placed.addNode("B").id;
+    for (const auto id : {a, b}) placed.findNode(id)->prefab = "prefabs/spinner.prefab.lton";
     placed.nodes[1].overrides.fieldsOf({}, 1, 0).fields["degreesPerSecond"] = 45.0;
     prefabs.world.level.addScene("scenes/two.scene.lton");
     throne::Library library(root);
@@ -163,8 +164,8 @@ int main(int argc, char** argv) {
         return fail(std::string("Prefab runners failed:\n") + e.what());
     }
     const auto& expansion = prefabs.expanded.instances[0].expansion;
-    const auto& wheelA = expansion.nodes[expansion.find({1, 1})].node;
-    const auto& wheelB = expansion.nodes[expansion.find({2, 1})].node;
+    const auto& wheelA = expansion.nodes[expansion.find({a, wheel})].node;
+    const auto& wheelB = expansion.nodes[expansion.find({b, wheel})].node;
     if (std::abs(wheelA.rotation.y - 90) > 0.01f || std::abs(wheelB.rotation.y - 45) > 0.01f)
         return fail("Prefab runners did not turn their own instance's wheel at their own speed");
 

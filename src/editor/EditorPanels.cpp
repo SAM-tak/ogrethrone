@@ -10,15 +10,15 @@ namespace throne {
 namespace {
 /// A pending reparent, applied after the tree has been drawn.
 struct Move {
-    std::uint32_t id, parent;
+    NodeId id, parent;
 };
 std::optional<Move> pendingMove;
 
 /// Accepts a node of the edited file (payload @p type) dropped on the last item, to go under @p parent.
-void dropTarget(const char* type, std::uint32_t parent) {
+void dropTarget(const char* type, NodeId parent) {
     if (!ImGui::BeginDragDropTarget()) return;
     if (const auto* payload = ImGui::AcceptDragDropPayload(type))
-        pendingMove = Move{*static_cast<const std::uint32_t*>(payload->Data), parent};
+        pendingMove = Move{*static_cast<const NodeId*>(payload->Data), parent};
     ImGui::EndDragDropTarget();
 }
 

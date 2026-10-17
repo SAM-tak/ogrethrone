@@ -1,6 +1,7 @@
 #include "editor/Scene.h"
 #include <algorithm>
 #include <limits>
+#include <random>
 #include <set>
 
 namespace throne {
@@ -15,6 +16,13 @@ std::string name(LhatValue value) {
     return result;
 }
 
+/// Reads a node ID: a positive integer.
+NodeId nodeId(LhatValue value) {
+    const auto id = lton::integer(value);
+    if (id <= 0) lton::invalid();
+    return static_cast<NodeId>(id);
+}
+
 /// Reads an ID: a positive integer below UINT32_MAX.
 std::uint32_t id(LhatValue value) {
     const auto id = lton::integer(value);
@@ -23,7 +31,7 @@ std::uint32_t id(LhatValue value) {
 }
 
 /// Whether @p id is @p ancestor or lies below it, looking parents up in @p nodes.
-bool within(const std::vector<SceneNode>& nodes, std::uint32_t id, std::uint32_t ancestor) {
+bool within(const std::vector<SceneNode>& nodes, NodeId id, NodeId ancestor) {
     while (id != 0) {
         if (id == ancestor) return true;
         const auto it = std::find_if(nodes.begin(), nodes.end(), [id](const SceneNode& node) { return node.id == id; });
@@ -36,7 +44,7 @@ bool within(const std::vector<SceneNode>& nodes, std::uint32_t id, std::uint32_t
 /// Writes a path as a sequence of IDs.
 LhatValue writePath(lton::Writer& out, const NodePath& path) {
     const auto list = out.table();
-    for (const auto step : path) out.push(list, lhat_integer(step));
+    for (const auto step : path) out.push(list, lhat_integer(static_cast<LhatInteger>(step)));
     return list;
 }
 
@@ -45,7 +53,7 @@ NodePath readPath(LhatValue value) {
     NodePath path;
     if (lhat_is_nil(value)) return path;
     const auto& list = lton::table(value);
-    for (std::size_t i = 0, count = lton::sequence(list); i < count; ++i) path.push_back(id(lton::at(list, i)));
+    for (std::size_t i = 0, count = lton::sequence(list); i < count; ++i) path.push_back(nodeId(lton::at(list, i)));
     return path;
 }
 
@@ -57,7 +65,7 @@ LhatValue writeField(lton::Writer& out, const FieldValue& value) {
     const auto& ref = std::get<NodeRef>(value);
     const auto table = out.table();
     if (ref.scene) out.set(table, "scene", lhat_integer(ref.scene));
-    out.set(table, "node", lhat_integer(ref.node));
+    out.set(table, "node", lhat_integer(static_cast<LhatInteger>(ref.node)));
     if (!ref.inner.empty()) out.set(table, "inner", writePath(out, ref.inner));
     return table;
 }
@@ -70,7 +78,7 @@ FieldValue readField(LhatValue value) {
     const auto& table = lton::table(value);
     NodeRef ref;
     if (const auto scene = lton::field(table, "scene"); !lhat_is_nil(scene)) ref.scene = id(scene);
-    ref.node = id(lton::field(table, "node"));
+    ref.node = nodeId(lton::field(table, "node"));
     ref.inner = readPath(lton::field(table, "inner"));
     return ref;
 }
@@ -178,22 +186,31 @@ Overrides readOverrides(LhatValue value) {
     return overrides;
 }
 
-SceneNode* Prefab::findNode(std::uint32_t id) {
+NodeId newNodeId() {
+    static std::mt19937_64 generator(std::random_device{}());
+    // Never below 32 bits, so a generated ID cannot pass for a small counter value.
+    NodeId id;
+    do id = generator() >> 1;
+    while (id < 0xFFFFFFFFu);
+    return id;
+}
+
+SceneNode* Prefab::findNode(NodeId id) {
     const auto it = std::find_if(nodes.begin(), nodes.end(), [id](const SceneNode& node) { return node.id == id; });
     return it == nodes.end() ? nullptr : &*it;
 }
 
-const SceneNode* Prefab::findNode(std::uint32_t id) const { return const_cast<Prefab*>(this)->findNode(id); }
+const SceneNode* Prefab::findNode(NodeId id) const { return const_cast<Prefab*>(this)->findNode(id); }
 
 Runner* RunnerSet::findRunner(std::uint32_t id) {
     const auto it = std::find_if(runners.begin(), runners.end(), [id](const Runner& runner) { return runner.id == id; });
     return it == runners.end() ? nullptr : &*it;
 }
 
-SceneNode& Prefab::addNode(const std::string& name, std::uint32_t parent) {
-    if (nextNodeId == std::numeric_limits<std::uint32_t>::max()) throw std::runtime_error("Node ID limit reached");
+SceneNode& Prefab::addNode(const std::string& name, NodeId parent) {
     SceneNode node;
-    node.id = nextNodeId++;
+    do node.id = newNodeId();
+    while (findNode(node.id));
     node.name = name;
     node.position = {0, 0.5f, 0};
     nodes.push_back(node);
@@ -207,7 +224,7 @@ Runner& RunnerSet::addRunner(const std::string& name) {
     return runners.back();
 }
 
-void Prefab::removeNode(std::uint32_t id) {
+void Prefab::removeNode(NodeId id) {
     const auto all = nodes;
     nodes.erase(std::remove_if(nodes.begin(), nodes.end(), [&](const SceneNode& node) { return within(all, node.id, id); }),
                 nodes.end());
@@ -218,9 +235,9 @@ void RunnerSet::removeRunner(std::uint32_t id) {
                   runners.end());
 }
 
-bool Prefab::isWithin(std::uint32_t id, std::uint32_t ancestor) const { return within(nodes, id, ancestor); }
+bool Prefab::isWithin(NodeId id, NodeId ancestor) const { return within(nodes, id, ancestor); }
 
-bool Prefab::reparent(std::uint32_t id, std::uint32_t parent) {
+bool Prefab::reparent(NodeId id, NodeId parent) {
     if (!findNode(id) || (parent && (!findNode(parent) || isWithin(parent, id)))) return false;
     // Keep parents before children: lift the subtree out, then put it after the
     // new parent's last descendant (or at the end for the root).
@@ -239,13 +256,14 @@ bool Prefab::reparent(std::uint32_t id, std::uint32_t parent) {
 
 void Prefab::read(const LhatTable& root) {
     const auto& list = lton::table(lton::field(root, "nodes"));
-    std::set<std::uint32_t> seen;
+    std::set<NodeId> seen;
     for (std::size_t i = 0, count = lton::sequence(list); i < count; ++i) {
         const auto& entry = lton::table(lton::at(list, i));
         SceneNode node;
-        node.id = id(lton::field(entry, "id"));
+        node.id = nodeId(lton::field(entry, "id"));
         node.name = name(lton::field(entry, "name"));
-        node.parent = static_cast<std::uint32_t>(lton::integer(lton::field(entry, "parent")));
+        const auto parent = lton::field(entry, "parent");
+        node.parent = lton::integer(parent) == 0 ? 0 : nodeId(parent);
         // A parent written earlier is what keeps the order and rules out cycles.
         if ((node.parent && !seen.count(node.parent)) || !seen.insert(node.id).second) lton::invalid();
         lton::vector(lton::field(entry, "position"), node.position.data());
@@ -258,7 +276,6 @@ void Prefab::read(const LhatTable& root) {
             node.prefab = lton::relativePath(prefab);
             node.overrides = readOverrides(lton::field(entry, "overrides"));
         }
-        nextNodeId = std::max(nextNodeId, node.id + 1);
         nodes.push_back(std::move(node));
     }
     runners = readRunners(lton::field(root, "runners"), nextRunnerId);
@@ -268,9 +285,9 @@ void Prefab::write(lton::Writer& out, LhatValue root) const {
     const auto list = out.table();
     for (const auto& node : nodes) {
         const auto entry = out.table();
-        out.set(entry, "id", lhat_integer(node.id));
+        out.set(entry, "id", lhat_integer(static_cast<LhatInteger>(node.id)));
         out.set(entry, "name", out.string(node.name));
-        out.set(entry, "parent", lhat_integer(node.parent));
+        out.set(entry, "parent", lhat_integer(static_cast<LhatInteger>(node.parent)));
         out.set(entry, "position", out.vector(node.position.data()));
         out.set(entry, "rotation", out.vector(node.rotation.data()));
         out.set(entry, "scale", out.vector(node.scale.data()));
