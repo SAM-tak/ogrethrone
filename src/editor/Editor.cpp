@@ -34,6 +34,7 @@
 #include <iterator>
 #include <filesystem>
 #include <limits>
+#include <set>
 #include <stdexcept>
 #include <string_view>
 
@@ -573,7 +574,7 @@ void Editor::enter(Context context) {
 
 Editor::NodeTarget Editor::targetOf(int instance, const NodePath& path) {
     NodeTarget target;
-    if (path.empty()) return target;
+    if (path.empty() && !(content() && content()->variant())) return target;
     if (!content()) {
         // At the level every node belongs to a scene instance, so edits become its overrides.
         if (instance < 0 || instance >= static_cast<int>(view_.instances.size())) return target;
@@ -583,10 +584,18 @@ Editor::NodeTarget Editor::targetOf(int instance, const NodePath& path) {
         }
         return target;
     }
+    // A variant has no nodes of its own: every edit is one of its overrides.
+    if (content()->variant()) {
+        target.overrides = &content()->overrides;
+        target.relative = path;
+        return target;
+    }
     auto* own = content()->findNode(path[0]);
     if (!own) return target;
     if (path.size() == 1) {
         target.node = own;
+        // An instance gives its root only a name and transform; the rest are overrides.
+        if (!own->prefab.empty()) target.overrides = &own->overrides;
     } else {
         target.overrides = &own->overrides;
         target.relative.assign(path.begin() + 1, path.end());
@@ -605,6 +614,9 @@ Editor::RunnerTarget Editor::runnerTarget() {
                 target.overrides = &scene->overrides;
                 target.instance = selected_.path;
             }
+    } else if (content()->variant()) {
+        target.overrides = &content()->overrides;
+        target.instance = selected_.path;
     } else if (selected_.path.empty()) {
         target.runner = content()->findRunner(selected_.runner);
     } else if (auto* own = content()->findNode(selected_.path[0])) {
@@ -639,7 +651,10 @@ void Editor::writeNode(const SceneNode& value, unsigned changed) {
         if (changed & 2) target.node->position = value.position;
         if (changed & 4) target.node->rotation = value.rotation;
         if (changed & 8) target.node->scale = value.scale;
-        if (changed & 16) target.node->colour = value.colour;
+        if (changed & 16) {
+            if (target.overrides) target.overrides->node({}).colour = value.colour;
+            else target.node->colour = value.colour;
+        }
     } else if (target.overrides) {
         auto& entry = target.overrides->node(target.relative);
         if (changed & 1) entry.name = value.name;
@@ -659,16 +674,11 @@ void Editor::rebuildScene() {
         for (std::size_t k = 0; k < nodes.size(); ++k) {
             auto* parent = nodes[k].parent == Expansion::npos ? scene_.getRootSceneNode() : created[nodes[k].parent];
             created[k] = parent->createChildSceneNode();
-            // An instance node only places its prefab; its content draws itself.
-            Ogre::ManualObject* mesh = nullptr;
-            Ogre::HlmsUnlitDatablock* material = nullptr;
-            if (nodes[k].node.prefab.empty()) {
-                const auto name = "ThroneEditor/Node/" + std::to_string(i) + "/" + std::to_string(k);
-                material = createMaterial(unlit_, name);
-                mesh = scene_.createManualObject();
-                addCubeGeometry(*mesh, name);
-                created[k]->attachObject(mesh);
-            }
+            const auto name = "ThroneEditor/Node/" + std::to_string(i) + "/" + std::to_string(k);
+            auto* material = createMaterial(unlit_, name);
+            auto* mesh = scene_.createManualObject();
+            addCubeGeometry(*mesh, name);
+            created[k]->attachObject(mesh);
             renderObjects_.push_back({i, k, created[k], mesh, material});
         }
     }
@@ -678,9 +688,9 @@ void Editor::rebuildScene() {
 void Editor::destroyRenderObjects() {
     // Children before parents, so no node is destroyed while it still has children.
     for (auto it = renderObjects_.rbegin(); it != renderObjects_.rend(); ++it) {
-        if (it->mesh) scene_.destroyManualObject(it->mesh);
+        scene_.destroyManualObject(it->mesh);
         scene_.destroySceneNode(it->node);
-        if (it->material) unlit_.destroyDatablock(it->material->getName());
+        unlit_.destroyDatablock(it->material->getName());
     }
     renderObjects_.clear();
 }
@@ -693,8 +703,7 @@ void Editor::syncTransforms() {
         render.node->setPosition(toOgre(node.position));
         render.node->setOrientation(orientation(node.rotation));
         render.node->setScale(toOgre(node.scale));
-        if (render.material)
-            render.material->setColour(Ogre::ColourValue(node.colour[0], node.colour[1], node.colour[2]));
+        render.material->setColour(Ogre::ColourValue(node.colour[0], node.colour[1], node.colour[2]));
         if (selected_.kind == Selection::Kind::Node && selected_.instance == static_cast<int>(render.instance) &&
             selected_.path == expanded.path)
             outlined = &render;
@@ -739,12 +748,13 @@ void Editor::addNode() {
         log("Nodes live in scenes: double-click a scene to edit it");
         return;
     }
-    // A node of the edited file can take a child; one inside an instance cannot (yet).
-    const auto* chosen = selectedNode();
-    const std::uint32_t parent = chosen && chosen->path.size() == 1 && chosen->node.prefab.empty() ? chosen->path[0] : 0;
+    if (edited->variant()) {
+        log("A variant only overrides its base; open the base to add nodes");
+        return;
+    }
     try {
         auto before = doc_;
-        auto& added = edited->addNode("Cube", parent);
+        auto& added = edited->addNode("Cube", parentForNew());
         added.name = "Cube " + std::to_string(added.id);
         selected_ = {Selection::Kind::Node, 0, {added.id}};
         commit(std::move(before));
@@ -757,11 +767,17 @@ void Editor::addInstance() {
     auto* edited = content();
     const std::string prefab = newPrefabPath_;
     if (!edited || prefab.empty()) return;
+    if (edited->variant()) {
+        log("A variant only overrides its base; open the base to add instances");
+        return;
+    }
     auto before = doc_;
-    // A prefab file that does not exist yet starts empty and is written by save().
+    // A prefab file that does not exist yet starts with a root node and is written by save().
     if (!doc_.prefabs.count(prefab) && !std::filesystem::exists(project_->resolve(prefab))) {
-        doc_.prefabs[prefab] = Prefab();
-        library_.put(prefab, Prefab());
+        Prefab made;
+        made.addNode(std::filesystem::u8path(prefab).stem().stem().u8string());
+        doc_.prefabs[prefab] = made;
+        library_.put(prefab, made);
     }
     // Expanding a probe in the edited file's place reports a broken prefab or a cycle.
     Prefab probe;
@@ -774,7 +790,7 @@ void Editor::addInstance() {
         return;
     }
     try {
-        auto& added = edited->addNode(std::filesystem::u8path(prefab).stem().stem().u8string());
+        auto& added = edited->addNode(std::filesystem::u8path(prefab).stem().stem().u8string(), parentForNew());
         added.prefab = prefab;
         added.position = {};
         selected_ = {Selection::Kind::Node, 0, {added.id}};
@@ -782,6 +798,102 @@ void Editor::addInstance() {
     } catch (const std::exception& error) {
         log(error.what());
     }
+}
+
+std::uint32_t Editor::parentForNew() {
+    // A node of the edited file can take a child; an instance cannot (yet).
+    const auto* chosen = selectedNode();
+    if (chosen && chosen->path.size() == 1 && chosen->node.prefab.empty()) return chosen->path[0];
+    // A prefab keeps its single root.
+    if (contexts_.back().kind == Context::Kind::Prefab && !content()->nodes.empty()) return content()->nodes.front().id;
+    return 0;
+}
+
+bool Editor::isPrefabRoot(std::uint32_t id) {
+    const auto* node = content() ? content()->findNode(id) : nullptr;
+    return node && node->parent == 0 && contexts_.back().kind == Context::Kind::Prefab;
+}
+
+bool Editor::isVariant(const std::string& prefab) {
+    try {
+        return library_.prefab(prefab).variant();
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+void Editor::prefabify(std::uint32_t id) {
+    auto* edited = content();
+    auto* node = edited ? edited->findNode(id) : nullptr;
+    if (!node || edited->variant()) return;
+    if (isPrefabRoot(id)) {
+        log("The root of a prefab cannot become a prefab; make a variant of the prefab instead");
+        return;
+    }
+    // prefabs/<name>.prefab.lton, numbered when taken; characters a path cannot hold become '_'.
+    std::string stem = node->name;
+    for (auto& character : stem)
+        if (std::string_view("<>:\"/\\|?*").find(character) != std::string_view::npos || character < 32) character = '_';
+    std::string file;
+    for (int number = 1;; ++number) {
+        file = "prefabs/" + stem + (number > 1 ? " " + std::to_string(number) : "") + ".prefab.lton";
+        if (!doc_.prefabs.count(file) && !std::filesystem::exists(project_->resolve(file))) break;
+    }
+    // An instance becomes a variant of its prefab with its overrides; a plain node takes its subtree along.
+    Prefab made;
+    std::set<std::uint32_t> moved;
+    if (!node->prefab.empty()) {
+        made.base = node->prefab;
+        made.overrides = node->overrides;
+    } else {
+        for (const auto& each : edited->nodes)
+            if (edited->isWithin(each.id, id)) made.nodes.push_back(each);
+        made.nodes.front().parent = 0;
+        made.nextNodeId = edited->nextNodeId;
+        for (const auto& each : made.nodes)
+            if (each.id != id) moved.insert(each.id);
+    }
+    try {
+        made.save(project_->resolve(file));
+    } catch (const std::exception& error) {
+        log("Could not write " + file + ": " + error.what());
+        return;
+    }
+    library_.forget(file);
+    auto before = doc_;
+    // Paths into the moved nodes now pass through the new instance.
+    const auto through = [&](NodePath& path) {
+        if (!path.empty() && moved.count(path[0])) path.insert(path.begin(), id);
+    };
+    const auto refs = [&](std::map<std::string, FieldValue>& fields, std::uint32_t scene) {
+        for (auto& [name, value] : fields)
+            if (auto* ref = std::get_if<NodeRef>(&value); ref && ref->scene == scene && moved.count(ref->node)) {
+                ref->inner.insert(ref->inner.begin(), ref->node);
+                ref->node = id;
+            }
+    };
+    for (auto& runner : edited->runners)
+        for (auto& behaviour : runner.behaviours) refs(behaviour.fields, 0);
+    // The level's instances of an edited scene hold overrides and references into it.
+    if (contexts_.back().kind == Context::Kind::Scene)
+        for (auto& instance : doc_.world.level.scenes) {
+            if (instance.scene != contexts_.back().path) continue;
+            for (auto& entry : instance.overrides.nodes) through(entry.path);
+            for (auto& entry : instance.overrides.runners) {
+                if (entry.instance.empty()) refs(entry.fields, 0);
+                through(entry.instance);
+            }
+            for (auto& runner : doc_.world.level.runners)
+                for (auto& behaviour : runner.behaviours) refs(behaviour.fields, instance.id);
+        }
+    for (const auto child : moved)
+        if (auto* each = edited->findNode(child); each && each->parent == id) edited->removeNode(child);
+    node = edited->findNode(id);
+    node->prefab = file;
+    node->overrides = {};
+    selected_ = {Selection::Kind::Node, 0, {id}};
+    commit(std::move(before));
+    log("Created " + file);
 }
 
 void Editor::addRunner() {
@@ -823,7 +935,7 @@ void Editor::removeScene(std::uint32_t id) {
 
 void Editor::duplicate() {
     const auto target = targetOf(selected_.instance, selected_.path);
-    if (!target.node) return;
+    if (!target.node || isPrefabRoot(target.node->id)) return;
     try {
         auto before = doc_;
         auto copy = *target.node;
@@ -843,6 +955,10 @@ void Editor::erase() {
     if (selected_.kind == Selection::Kind::Node) {
         if (!targetOf(selected_.instance, selected_.path).node) {
             log("This node comes from an instance: open its prefab or scene to delete it");
+            return;
+        }
+        if (isPrefabRoot(selected_.path[0])) {
+            log("A prefab keeps its root node");
             return;
         }
         checkpoint();
@@ -1097,11 +1213,21 @@ void Editor::browser() {
                         file.compare(file.size() - suffix.size(), suffix.size(), suffix) != 0)
                         continue;
                     const auto relative = std::string(folder) + "/" + file;
+                    const bool variant = kind == Context::Kind::Prefab && isVariant(relative);
+                    if (variant) ImGui::PushStyleColor(ImGuiCol_Text, variantColour);
                     if (ImGui::Selectable(file.c_str(), relative == pick, ImGuiSelectableFlags_AllowDoubleClick) &&
                         relative.size() < capacity) {
                         std::memcpy(pick, relative.c_str(), relative.size() + 1);
                         if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !runtime_) enter({kind, relative});
                     }
+                    if (variant) ImGui::PopStyleColor();
+                }
+                // A node dropped anywhere on the Prefabs tab becomes a prefab (TDDja/06 7).
+                if (kind == Context::Kind::Prefab && !runtime_ &&
+                    ImGui::BeginDragDropTargetCustom(ImGui::GetCurrentWindow()->InnerRect, ImGui::GetID("prefabify"))) {
+                    if (const auto* payload = ImGui::AcceptDragDropPayload(nodePayload))
+                        prefabify(*static_cast<const std::uint32_t*>(payload->Data));
+                    ImGui::EndDragDropTarget();
                 }
                 ImGui::EndTabItem();
             };
@@ -1193,7 +1319,6 @@ void Editor::pick(float x, float y) {
     auto nearest = std::numeric_limits<Ogre::Real>::max();
     selected_ = {};
     for (const auto& render : renderObjects_) {
-        if (!render.mesh) continue;
         // Test in node space; the unnormalized direction keeps distances comparable.
         const auto inverse = render.node->_getFullTransformUpdated().inverseAffine();
         const Ogre::Ray local(inverse.transformAffine(ray.getOrigin()),

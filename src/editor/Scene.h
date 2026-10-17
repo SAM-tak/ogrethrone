@@ -14,7 +14,9 @@
 namespace throne {
 /// Node IDs from a scene or prefab's own node down through prefab instances,
 /// outermost first (TDDja/06 3). IDs are unique only within one file, so a
-/// node inside nested instances needs the whole path.
+/// node inside nested instances needs the whole path. An instance node and its
+/// prefab's root are one node, named by the instance's ID alone; the root's own
+/// ID after it is accepted too, as the prefab itself names its root.
 using NodePath = std::vector<std::uint32_t>;
 
 /// A reference to a scene node (TDDja/05 4, 06 3.1).
@@ -53,7 +55,7 @@ struct Runner {
 
 /// Property values an instance gives one node of its prefab (TDDja/06 4); unset ones keep the prefab's.
 struct NodeOverride {
-    /// The node, relative to the instance.
+    /// The node, relative to the instance; empty for the instance node itself (the root).
     NodePath path;
     std::optional<std::string> name;
     std::optional<Vec3> position, rotation, scale;
@@ -84,8 +86,9 @@ struct Overrides {
 };
 
 /// One drawable node of a scene hierarchy. Currently every node is a unit cube.
-/// A node naming a prefab is a prefab instance: its transform places the
-/// prefab, whose root nodes become its children (TDDja/06 3).
+/// A node naming a prefab is a prefab instance and becomes the prefab's root
+/// (TDDja/06 3): it gives the root its name and transform, everything else comes
+/// from the prefab, and it has no children of its own.
 struct SceneNode {
     /// Unique nonzero ID within its scene.
     std::uint32_t id = 0;
@@ -99,7 +102,8 @@ struct SceneNode {
     Vec3 rotation;
     /// Per-axis scale relative to the parent; each component is at least 0.001.
     Vec3 scale{1, 1, 1};
-    /// Linear RGB colour with components in [0, 1].
+    /// Linear RGB colour with components in [0, 1]; unused by an instance, whose
+    /// colour comes from the prefab or its overrides.
     std::array<float, 3> colour{0.32f, 0.62f, 0.82f};
     /// Project-relative path of the prefab this node instantiates; empty for a plain node.
     std::string prefab;
@@ -120,11 +124,17 @@ struct RunnerSet {
     void removeRunner(std::uint32_t id);
 };
 
-/// Nodes and runners: what prefabs and scenes share (TDDja/05 2, 3).
+/// Nodes and runners: what prefabs and scenes share (TDDja/05 2, 3). A prefab
+/// file has exactly one root node, or is a variant (TDDja/06 3.2): no nodes, only
+/// a base prefab and overrides of it.
 struct Prefab : RunnerSet {
     /// Nodes with every parent before its children; siblings keep this order.
     std::vector<SceneNode> nodes;
     std::uint32_t nextNodeId = 1;
+    /// For a variant, the project-relative path of the prefab it is based on.
+    std::string base;
+    /// For a variant, what it changes in its base.
+    Overrides overrides;
 
     /// Returns the node with @p id, or nullptr.
     SceneNode* findNode(std::uint32_t id);
@@ -140,6 +150,8 @@ struct Prefab : RunnerSet {
     /// @return false when that would make a node its own ancestor.
     bool reparent(std::uint32_t id, std::uint32_t parent);
 
+    /// Whether this is a variant of another prefab.
+    bool variant() const { return !base.empty(); }
     /// Reads `ogrethrone-prefab` LTON.
     static Prefab load(const std::filesystem::path& path);
     /// Writes `ogrethrone-prefab` LTON.

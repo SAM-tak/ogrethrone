@@ -177,6 +177,17 @@ private:
     void addScene();
     /// Removes scene instance @p id from the level.
     void removeScene(std::uint32_t id);
+    /// The parent for an added node: the selected node when the edited file owns it
+    /// and it is not an instance, else a prefab's root, else none.
+    std::uint32_t parentForNew();
+    /// Whether node @p id is the root of the prefab being edited.
+    bool isPrefabRoot(std::uint32_t id);
+    /// Whether the prefab at @p prefab is a variant; false when it cannot be read.
+    bool isVariant(const std::string& prefab);
+    /// Moves node @p id of the edited file into a new prefab under prefabs/, saved
+    /// at once, and leaves an instance of it in its place (TDDja/06 7). An instance
+    /// becomes a variant of its prefab carrying its overrides.
+    void prefabify(std::uint32_t id);
     /// Copies the selected node (without children) beside itself and selects the copy.
     void duplicate();
     /// Deletes the selected node (with its children) or runner, when the edited file owns it.
@@ -284,6 +295,12 @@ private:
     std::unique_ptr<ScriptRuntime> runtime_;
     Selection selected_;
     std::map<std::string, CachedFields> fieldCache_;
+    /// Drag-and-drop payload naming a node of the edited file by its ID.
+    static constexpr const char* nodePayload = "THRONE_NODE";
+    /// Text colours of nodes and runners that come from instances, of variants,
+    /// and of overridden properties.
+    static inline const ImVec4 instanceColour{0.55f, 0.75f, 1.0f, 1.0f}, variantColour{0.8f, 0.65f, 1.0f, 1.0f},
+                               overriddenColour{1.0f, 0.75f, 0.3f, 1.0f};
     char newScenePath_[256] = "scenes/new.scene.lton";
     char newPrefabPath_[256] = "prefabs/new.prefab.lton";
     Ogre::Vector3 target_{0, 0.5f, 0};

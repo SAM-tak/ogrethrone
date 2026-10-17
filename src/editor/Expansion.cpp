@@ -3,10 +3,10 @@
 
 namespace throne {
 namespace {
-/// An instance node whose overrides wait to be applied, by index in Expansion::nodes.
+/// Overrides waiting to be applied at @p prefix, innermost first.
 struct Pending {
     NodePath prefix;
-    std::size_t node;
+    Overrides overrides;
 };
 
 /// Returns @p prefix followed by @p rest.
@@ -16,33 +16,82 @@ NodePath join(const NodePath& prefix, const NodePath& rest) {
     return result;
 }
 
-/// Appends @p content's nodes and runners under @p prefix, expanding nested instances.
-void expandInto(const Prefab& content, const NodePath& prefix, std::size_t parent, Library& library,
-                std::vector<std::string>& stack, Expansion& out, std::vector<Pending>& pending) {
-    std::map<std::uint32_t, std::size_t> index;
-    for (const auto& node : content.nodes) {
-        const auto path = join(prefix, {node.id});
-        const auto at = out.nodes.size();
-        out.nodes.push_back({path, node.parent ? index.at(node.parent) : parent, node});
-        index[node.id] = at;
-        if (node.prefab.empty()) continue;
-        if (std::find(stack.begin(), stack.end(), node.prefab) != stack.end()) {
-            out.errors.push_back(node.name + ": " + node.prefab + " instantiates itself");
-            continue;
-        }
-        try {
-            const auto& prefab = library.prefab(node.prefab);
-            stack.push_back(node.prefab);
-            expandInto(prefab, path, at, library, stack, out, pending);
-            stack.pop_back();
-        } catch (const std::exception& error) {
-            out.errors.push_back(node.name + ": " + error.what());
-            continue;
-        }
-        // Pushed after its nested instances, so inner overrides apply first.
-        pending.push_back({path, at});
+/// State of one expand() call.
+struct Expander {
+    Library& library;
+    /// Prefabs being expanded, outermost first, for cycle checks.
+    std::vector<std::string> stack;
+    Expansion& out;
+    std::vector<Pending> pending;
+
+    /// Appends @p node at @p path; an instance becomes its prefab's root. Returns its index.
+    std::size_t place(const SceneNode& node, const NodePath& path, std::size_t parent);
+    /// Expands prefab @p file at @p prefix. Its root takes @p placed's name and
+    /// transform, or keeps its own when @p placed is null. Returns the root's
+    /// index, or npos when nothing could be placed.
+    std::size_t prefab(const std::string& file, const SceneNode* placed, const NodePath& prefix, std::size_t parent);
+};
+
+std::size_t Expander::place(const SceneNode& node, const NodePath& path, std::size_t parent) {
+    if (node.prefab.empty()) {
+        out.nodes.push_back({path, parent, node});
+        return out.nodes.size() - 1;
     }
-    for (const auto& runner : content.runners) out.runners.push_back({prefix, runner});
+    const auto at = prefab(node.prefab, &node, path, parent);
+    auto& merged = out.nodes[at].node;
+    merged.id = node.id;
+    merged.parent = node.parent;
+    merged.prefab = node.prefab;
+    merged.overrides = node.overrides;
+    // Pushed after the prefab's own instances and variant layers, so those apply first.
+    pending.push_back({path, node.overrides});
+    return at;
+}
+
+std::size_t Expander::prefab(const std::string& file, const SceneNode* placed, const NodePath& prefix,
+                             std::size_t parent) {
+    // What cannot be expanded stays in the hierarchy as a plain node, with an error.
+    const auto broken = [&](const std::string& error) {
+        out.errors.push_back((placed ? placed->name : file) + ": " + error);
+        if (!placed) return Expansion::npos;
+        out.nodes.push_back({prefix, parent, *placed});
+        return out.nodes.size() - 1;
+    };
+    if (std::find(stack.begin(), stack.end(), file) != stack.end()) return broken(file + " instantiates itself");
+    const Prefab* content;
+    try {
+        content = &library.prefab(file);
+    } catch (const std::exception& error) {
+        return broken(error.what());
+    }
+    if (content->variant()) {
+        stack.push_back(file);
+        const auto at = prefab(content->base, placed, prefix, parent);
+        stack.pop_back();
+        pending.push_back({prefix, content->overrides});
+        return at;
+    }
+    const auto roots = std::count_if(content->nodes.begin(), content->nodes.end(),
+                                     [](const SceneNode& node) { return node.parent == 0; });
+    if (roots != 1) return broken(file + " must have exactly one root node");
+    const auto& root = content->nodes.front();
+    if (!root.prefab.empty()) return broken(file + ": its root cannot be an instance; make a variant instead");
+    auto merged = root;
+    if (placed) {
+        merged.name = placed->name;
+        merged.position = placed->position;
+        merged.rotation = placed->rotation;
+        merged.scale = placed->scale;
+    }
+    const auto at = out.nodes.size();
+    out.nodes.push_back({prefix, parent, merged, root.id});
+    stack.push_back(file);
+    std::map<std::uint32_t, std::size_t> index{{root.id, at}};
+    for (const auto& node : content->nodes)
+        if (node.id != root.id) index[node.id] = place(node, join(prefix, {node.id}), index.at(node.parent));
+    stack.pop_back();
+    for (const auto& runner : content->runners) out.runners.push_back({prefix, runner});
+    return at;
 }
 
 /// Applies one override list to an expansion.
@@ -87,19 +136,41 @@ void Library::put(const std::string& path, Prefab prefab) { entries_[path] = {st
 void Library::forget(const std::string& path) { entries_.erase(path); }
 
 std::size_t Expansion::find(const NodePath& path) const {
-    for (std::size_t i = 0; i < nodes.size(); ++i)
-        if (nodes[i].path == path) return i;
-    return npos;
+    const auto exact = [this](const NodePath& wanted) {
+        for (std::size_t i = 0; i < nodes.size(); ++i)
+            if (nodes[i].path == wanted) return i;
+        return npos;
+    };
+    // The empty path is a variant's root when the variant itself is expanded.
+    auto at = exact({});
+    NodePath canonical;
+    for (const auto id : path) {
+        canonical.push_back(id);
+        if (const auto next = exact(canonical); next != npos) {
+            at = next;
+        } else if (at != npos && nodes[at].root == id) {
+            canonical.pop_back();  // The merged root named by its own ID.
+        } else {
+            return npos;
+        }
+    }
+    return at;
 }
 
 Expansion expand(const Prefab& content, Library& library, const std::string& self, const Overrides* outer) {
     Expansion out;
-    std::vector<std::string> stack;
-    if (!self.empty()) stack.push_back(self);
-    std::vector<Pending> pending;
-    expandInto(content, {}, Expansion::npos, library, stack, out, pending);
-    // apply() changes node values but never an instance's overrides, so they can be read in place.
-    for (const auto& entry : pending) apply(out, entry.prefix, out.nodes[entry.node].node.overrides);
+    Expander expander{library, {}, out, {}};
+    if (!self.empty()) expander.stack.push_back(self);
+    if (content.variant()) {
+        expander.prefab(content.base, nullptr, {}, Expansion::npos);
+        expander.pending.push_back({{}, content.overrides});
+    } else {
+        std::map<std::uint32_t, std::size_t> index;
+        for (const auto& node : content.nodes)
+            index[node.id] = expander.place(node, {node.id}, node.parent ? index.at(node.parent) : Expansion::npos);
+        for (const auto& runner : content.runners) out.runners.push_back({{}, runner});
+    }
+    for (const auto& entry : expander.pending) apply(out, entry.prefix, entry.overrides);
     if (outer) apply(out, {}, *outer);
     return out;
 }

@@ -6,7 +6,7 @@
 namespace throne {
 namespace {
 constexpr std::string_view prefabFormat = "ogrethrone-prefab", sceneFormat = "ogrethrone-scene";
-constexpr LhatInteger prefabVersion = 1, sceneVersion = 1;
+constexpr LhatInteger prefabVersion = 2, sceneVersion = 1;
 
 /// Reads a name: 1 to 255 bytes without NUL.
 std::string name(LhatValue value) {
@@ -153,7 +153,6 @@ Overrides readOverrides(LhatValue value) {
             const auto& item = lton::table(lton::at(list, i));
             NodeOverride entry;
             entry.path = readPath(lton::field(item, "path"));
-            if (entry.path.empty()) lton::invalid();
             if (const auto text = lton::field(item, "name"); !lhat_is_nil(text)) entry.name = name(text);
             readOptional(item, "position", entry.position);
             readOptional(item, "rotation", entry.rotation);
@@ -291,6 +290,10 @@ Prefab Prefab::load(const std::filesystem::path& path) {
     document.expect(prefabFormat, prefabVersion);
     Prefab result;
     result.read(document.root());
+    if (const auto base = lton::field(document.root(), "base"); !lhat_is_nil(base)) {
+        result.base = lton::relativePath(base);
+        result.overrides = readOverrides(lton::field(document.root(), "overrides"));
+    }
     return result;
 }
 
@@ -300,6 +303,10 @@ void Prefab::save(const std::filesystem::path& path) const {
     out.set(root, "format", out.string(prefabFormat));
     out.set(root, "version", lhat_integer(prefabVersion));
     write(out, root);
+    if (variant()) {
+        out.set(root, "base", out.string(base));
+        out.set(root, "overrides", writeOverrides(out, overrides));
+    }
     out.save(root, path);
 }
 

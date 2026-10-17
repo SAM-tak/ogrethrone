@@ -76,10 +76,12 @@ effect-free data):
   local position, rotation (degrees, applied about X, then Y, then Z), scale and
   colour; nodes are unit cubes for now. Drag nodes in the Scene panel to reparent
   them. A scene is a prefab (`*.prefab.lton`) extended with scene-wide data.
-- A **prefab** (`*.prefab.lton`) is a reusable node hierarchy with its own
-  runners. A node of a scene or prefab can be an *instance* of a prefab: it shows
-  the prefab's nodes under it and stores only its overrides of their properties
-  and runner field values. Prefabs nest; a prefab that contains itself is reported.
+- A **prefab** (`*.prefab.lton`) is a reusable node hierarchy with a single root
+  and its own runners. A node of a scene or prefab can be an *instance* of a
+  prefab: it becomes the prefab's root, giving it a name and transform, and
+  stores only its overrides of the prefab's properties and runner field values.
+  Prefabs nest; a prefab that contains itself is reported. A **variant** is a
+  prefab file with no nodes, only a `base` prefab and overrides of it.
 - A **runner** runs behaviours. It is not part of the scene hierarchy and has no
   transform; it reaches nodes only through its behaviours' fields. Scenes and
   levels can both hold runners.
@@ -93,8 +95,11 @@ scene, and double-clicking an instance node (or a file in the Prefabs tab) edits
 that prefab. The breadcrumb over the viewport returns to an outer step. Nodes and
 runners that come from an instance are drawn in blue; editing them writes an
 override, shown in orange with a Revert button. Inside a scene or prefab, Add
-Instance places the prefab named next to it, creating an empty one when the file
-does not exist yet; double-click the new instance node to fill the prefab.
+Instance places the prefab named next to it, creating one with a root node when
+the file does not exist yet; double-click the new instance node to fill the prefab.
+Dragging a node onto the Browser's Prefabs tab saves it as
+`prefabs/<name>.prefab.lton` and leaves an instance in its place; dragging an
+instance makes a variant of its prefab. Variants are shown in violet.
 Ctrl+S saves the level, its scenes and every opened prefab.
 
 Right-drag orbits, middle-drag pans, the wheel zooms, left-click selects a node

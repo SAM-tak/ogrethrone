@@ -8,21 +8,16 @@
 
 namespace throne {
 namespace {
-/// Drag-and-drop payload naming a node of the edited file by its ID.
-constexpr const char* nodePayload = "THRONE_NODE";
-/// Text colour of overridden properties and of nodes that come from instances.
-const ImVec4 overriddenColour(1.0f, 0.75f, 0.3f, 1.0f), instanceColour(0.55f, 0.75f, 1.0f, 1.0f);
-
 /// A pending reparent, applied after the tree has been drawn.
 struct Move {
     std::uint32_t id, parent;
 };
 std::optional<Move> pendingMove;
 
-/// Accepts a node of the edited file dropped on the last item, to go under @p parent.
-void dropTarget(std::uint32_t parent) {
+/// Accepts a node of the edited file (payload @p type) dropped on the last item, to go under @p parent.
+void dropTarget(const char* type, std::uint32_t parent) {
     if (!ImGui::BeginDragDropTarget()) return;
-    if (const auto* payload = ImGui::AcceptDragDropPayload(nodePayload))
+    if (const auto* payload = ImGui::AcceptDragDropPayload(type))
         pendingMove = Move{*static_cast<const std::uint32_t*>(payload->Data), parent};
     ImGui::EndDragDropTarget();
 }
@@ -60,6 +55,10 @@ void Editor::scenePanel() {
             ImGui::SameLine();
             ImGui::SetNextItemWidth(-1);
             ImGui::InputText("##ScenePath", newScenePath_, sizeof newScenePath_);
+        } else if (content()->variant()) {
+            ImGui::TextColored(variantColour, "Variant of %s", content()->base.c_str());
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Open Base")) enter({Context::Kind::Prefab, content()->base});
         } else {
             if (ImGui::Button("Add Node")) addNode();
             ImGui::SameLine();
@@ -85,7 +84,7 @@ void Editor::scenePanel() {
             if (!content() && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !runtime_)
                 if (const auto* instance = doc_.world.level.findScene(view_.instances[i].id))
                     enter({Context::Kind::Scene, instance->scene});
-            if (content()) dropTarget(0);
+            if (contexts_.back().kind == Context::Kind::Scene) dropTarget(nodePayload, 0);
             if (!content() && !runtime_) {
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Remove")) removed = view_.instances[i].id;
@@ -117,14 +116,13 @@ void Editor::nodeTree(std::size_t instance, std::size_t parent) {
         const bool chosen = selected_.kind == Selection::Kind::Node && selected_.instance == static_cast<int>(instance) &&
                             selected_.path == expanded.path;
         // Only the edited file's own nodes can be dragged or take children.
-        const bool own = content() && expanded.path.size() == 1;
+        const bool own = content() && expanded.path.size() == 1 && content()->findNode(expanded.path[0]);
         auto flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_DefaultOpen;
         if (leaf) flags |= ImGuiTreeNodeFlags_Leaf;
         if (chosen) flags |= ImGuiTreeNodeFlags_Selected;
-        const auto label = expanded.node.prefab.empty() ? expanded.node.name
-                                                         : expanded.node.name + "  [" + expanded.node.prefab + "]";
         if (!own) ImGui::PushStyleColor(ImGuiCol_Text, instanceColour);
-        const bool open = ImGui::TreeNodeEx(reinterpret_cast<void*>(static_cast<std::uintptr_t>(k)), flags, "%s", label.c_str());
+        const bool open = ImGui::TreeNodeEx(reinterpret_cast<void*>(static_cast<std::uintptr_t>(k)), flags, "%s",
+                                            expanded.node.name.c_str());
         if (!own) ImGui::PopStyleColor();
         if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
             selected_ = {Selection::Kind::Node, static_cast<int>(instance), expanded.path};
@@ -137,7 +135,13 @@ void Editor::nodeTree(std::size_t instance, std::size_t parent) {
             ImGui::TextUnformatted(expanded.node.name.c_str());
             ImGui::EndDragDropSource();
         }
-        if (own && expanded.node.prefab.empty()) dropTarget(expanded.path[0]);
+        if (own && expanded.node.prefab.empty()) dropTarget(nodePayload, expanded.path[0]);
+        // An instance names its prefab after it, coloured by whether that is a variant.
+        if (!expanded.node.prefab.empty()) {
+            ImGui::SameLine();
+            ImGui::TextColored(isVariant(expanded.node.prefab) ? variantColour : instanceColour, "[%s]",
+                               expanded.node.prefab.c_str());
+        }
         if (open) {
             nodeTree(instance, k);
             ImGui::TreePop();
@@ -173,7 +177,7 @@ void Editor::runnersPanel() {
                     const auto& expanded = view_.instances[i].expansion.runners[r];
                     ImGui::PushID(static_cast<int>(r));
                     item(expanded.runner.name.c_str(), static_cast<int>(i), expanded.instance, expanded.runner.id,
-                         content() && expanded.instance.empty());
+                         content() && !content()->variant() && expanded.instance.empty());
                     ImGui::PopID();
                 }
                 ImGui::TreePop();
@@ -347,9 +351,10 @@ void Editor::runnerInspector(const Runner& shown) {
                     refPath.push_back(ref.node);
                     refPath.insert(refPath.end(), ref.inner.begin(), ref.inner.end());
                     std::string current = "(none)";
+                    auto refAt = Expansion::npos;
                     if (ref.node && refInstance >= 0)
-                        if (const auto at = view_.instances[refInstance].expansion.find(refPath); at != Expansion::npos)
-                            current = view_.instances[refInstance].expansion.nodes[at].node.name;
+                        if (refAt = view_.instances[refInstance].expansion.find(refPath); refAt != Expansion::npos)
+                            current = view_.instances[refInstance].expansion.nodes[refAt].node.name;
                     if (ImGui::BeginCombo(info.name.c_str(), current.c_str())) {
                         if (ImGui::Selectable("(none)", ref.node == 0)) {
                             checkpoint();
@@ -359,17 +364,21 @@ void Editor::runnerInspector(const Runner& shown) {
                         const auto& prefix = selected_.instance >= 0 ? selected_.path : NodePath{};
                         for (std::size_t i = 0; i < view_.instances.size(); ++i) {
                             if (selected_.instance >= 0 && static_cast<int>(i) != selected_.instance) continue;
-                            for (const auto& node : view_.instances[i].expansion.nodes) {
-                                if (node.path.size() <= prefix.size() || !std::equal(prefix.begin(), prefix.end(), node.path.begin()))
+                            const auto& nodes = view_.instances[i].expansion.nodes;
+                            for (std::size_t n = 0; n < nodes.size(); ++n) {
+                                const auto& node = nodes[n];
+                                if (node.path.size() < prefix.size() || !std::equal(prefix.begin(), prefix.end(), node.path.begin()))
                                     continue;
                                 std::string label = node.node.name;
                                 if (selected_.instance < 0) label = "#" + std::to_string(view_.instances[i].id) + " " + label;
                                 label += "##" + std::to_string(i);
                                 for (const auto step : node.path) label += "/" + std::to_string(step);
-                                if (!ImGui::Selectable(label.c_str(), static_cast<int>(i) == refInstance && node.path == refPath))
+                                if (!ImGui::Selectable(label.c_str(), static_cast<int>(i) == refInstance && n == refAt))
                                     continue;
                                 checkpoint();
-                                const auto relative = after(node.path, prefix.size());
+                                // The instance's own root is named by the root's ID inside the prefab.
+                                auto relative = after(node.path, prefix.size());
+                                if (relative.empty()) relative = {node.root};
                                 NodeRef picked{selected_.instance < 0 ? view_.instances[i].id : 0, relative[0], after(relative, 1)};
                                 if (auto* fields = layer(k)) (*fields)[info.name] = picked;
                             }

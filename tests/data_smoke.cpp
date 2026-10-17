@@ -98,42 +98,76 @@ int main() {
 
     // Nested prefabs: a stack of two crates; the scene places the stack and
     // overrides one lid, and so does the level's second instance of the scene.
+    // An instance node is its prefab's root, so the stack's crates are its children.
     throne::Prefab crate;
     crate.addNode("Body");
     crate.addNode("Lid", 1);
     crate.addRunner("Spinner").behaviours.push_back({"scripts/spin.lh", {{"target", throne::NodeRef{0, 2, {}}}}});
     crate.save(directory / "prefabs/crate.prefab.lton");
     throne::Prefab stack;
-    for (const char* name : {"Bottom", "Top"}) stack.addNode(name).prefab = "prefabs/crate.prefab.lton";
-    stack.nodes[0].overrides.node({2}).colour = std::array<float, 3>{1, 0, 0};
+    stack.addNode("Stack");
+    for (const char* name : {"Bottom", "Top"}) stack.addNode(name, 1).prefab = "prefabs/crate.prefab.lton";
+    stack.nodes[1].overrides.node({2}).colour = std::array<float, 3>{1, 0, 0};
     stack.save(directory / "prefabs/stack.prefab.lton");
     throne::Scene room;
     room.addNode("Floor");
-    auto& placed = room.addNode("Stack");
+    auto& placed = room.addNode("Pile");
     placed.prefab = "prefabs/stack.prefab.lton";
-    placed.overrides.node({1, 2}).position = throne::Vec3{0, 5, 0};
-    placed.overrides.fieldsOf({1}, 1, 0).fields["degreesPerSecond"] = 10.0;
+    placed.position = {3, 0, 0};
+    placed.overrides.node({2, 2}).position = throne::Vec3{0, 5, 0};
+    placed.overrides.fieldsOf({2}, 1, 0).fields["degreesPerSecond"] = 10.0;
     room.save(directory / "scenes/room.scene.lton");
 
     throne::Library library(directory);
     const auto reloaded = throne::Scene::load(directory / "scenes/room.scene.lton");
     const auto expanded = throne::expand(reloaded, library, "scenes/room.scene.lton");
-    const auto lid = expanded.find({2, 1, 2});
-    if (!expanded.errors.empty() || expanded.nodes.size() != 8 || lid == throne::Expansion::npos)
-        return fail("Nested prefab instances did not expand to eight nodes");
+    const auto pile = expanded.find({2}), lid = expanded.find({2, 2, 2});
+    if (!expanded.errors.empty() || expanded.nodes.size() != 6 || lid == throne::Expansion::npos)
+        return fail("Nested prefab instances did not expand to six nodes");
+    if (expanded.nodes[pile].node.name != "Pile" || expanded.nodes[pile].node.position.x != 3 ||
+        expanded.find({2, 1}) != pile || expanded.find({2, 1, 2, 1, 2}) != lid)
+        return fail("An instance did not become its prefab's root, named by either ID");
     if (expanded.nodes[lid].node.colour[0] != 1 || expanded.nodes[lid].node.position.y != 5 ||
-        expanded.nodes[expanded.nodes[lid].parent].path != throne::NodePath{2, 1, 1})
+        expanded.nodes[expanded.nodes[lid].parent].path != throne::NodePath{2, 2})
         return fail("Inner and outer overrides were not both applied to the nested lid");
-    if (expanded.runners.size() != 2 || expanded.runners[0].instance != throne::NodePath{2, 1} ||
+    if (expanded.runners.size() != 2 || expanded.runners[0].instance != throne::NodePath{2, 2} ||
         std::get<double>(expanded.runners[0].runner.behaviours[0].fields.at("degreesPerSecond")) != 10 ||
         expanded.runners[1].runner.behaviours[0].fields.count("degreesPerSecond"))
         return fail("Prefab runners were not copied per instance with their field overrides");
 
-    throne::Prefab loop;
-    loop.addNode("Self").prefab = "prefabs/loop.prefab.lton";
+    // A variant is its base with overrides, both where it is placed and on its own.
+    throne::Prefab green;
+    green.base = "prefabs/crate.prefab.lton";
+    green.overrides.node({}).colour = std::array<float, 3>{0, 1, 0};
+    green.overrides.node({2}).name = "Green Lid";
+    green.save(directory / "prefabs/green.prefab.lton");
+    throne::Scene yard;
+    yard.addNode("Box").prefab = "prefabs/green.prefab.lton";
+    yard.nodes[0].overrides.node({2}).scale = throne::Vec3{2, 2, 2};
+    const auto inYard = throne::expand(yard, library);
+    const auto alone = throne::expand(throne::Prefab::load(directory / "prefabs/green.prefab.lton"), library,
+                                      "prefabs/green.prefab.lton");
+    if (!inYard.errors.empty() || inYard.nodes.size() != 2 || inYard.nodes[0].node.name != "Box" ||
+        inYard.nodes[0].node.colour[1] != 1 || inYard.nodes[1].node.name != "Green Lid" ||
+        inYard.nodes[1].node.scale.x != 2 || alone.nodes.size() != 2 || alone.find({}) != 0 ||
+        alone.nodes[0].node.name != "Body" || alone.find({1, 2}) != 1 || alone.nodes[1].node.name != "Green Lid")
+        return fail("A variant did not expand to its base with its overrides");
+
+    throne::Prefab loop, twoRoots, rootInstance;
+    loop.addNode("Root");
+    loop.addNode("Self", 1).prefab = "prefabs/loop.prefab.lton";
     loop.save(directory / "prefabs/loop.prefab.lton");
-    if (throne::expand(loop, library, "prefabs/loop.prefab.lton").errors.empty())
-        return fail("A prefab that instantiates itself was accepted");
+    twoRoots.addNode("A");
+    twoRoots.addNode("B");
+    twoRoots.save(directory / "prefabs/two.prefab.lton");
+    rootInstance.addNode("Crate").prefab = "prefabs/crate.prefab.lton";
+    rootInstance.save(directory / "prefabs/rooted.prefab.lton");
+    for (const char* file : {"prefabs/loop.prefab.lton", "prefabs/two.prefab.lton", "prefabs/rooted.prefab.lton"}) {
+        throne::Scene user;
+        user.addNode("Use").prefab = file;
+        if (throne::expand(user, library).errors.empty())
+            return fail((std::string("A broken prefab was accepted: ") + file).c_str());
+    }
 
     throne::World world;
     world.scenes["scenes/room.scene.lton"] = reloaded;
