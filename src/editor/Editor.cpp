@@ -1145,8 +1145,11 @@ void Editor::viewport() {
             const ImVec2 origin = ImGui::GetCursorScreenPos();
             ImGui::Image(texture_, size);
             // ImGuizmo will not start a drag while another item was hovered in the previous
-            // frame, so the camera/picking input steps aside while the gizmo is under the mouse.
-            if (!gizmoOver_ && !ImGuizmo::IsUsing()) {
+            // frame, so the camera/picking input steps aside while the gizmo is under the mouse,
+            // except during an orbit or pan, which disables the gizmo instead.
+            const bool orbiting = viewDragging_;
+            viewDragging_ = false;
+            if (orbiting || (!gizmoOver_ && !ImGuizmo::IsUsing())) {
                 ImGui::SetCursorScreenPos(origin);
                 ImGui::SetNextItemAllowOverlap();
                 ImGui::InvisibleButton("ViewportInput", size, ImGuiButtonFlags_MouseButtonLeft |
@@ -1164,6 +1167,8 @@ void Editor::viewport() {
                 if (ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Middle))
                     target_ += (camera_.getUp() * io.MouseDelta.y - camera_.getRight() * io.MouseDelta.x) *
                                (distance_ * 0.0015f);
+                viewDragging_ = ImGui::IsItemActive() && (ImGui::IsMouseDown(ImGuiMouseButton_Right) ||
+                                                          ImGui::IsMouseDown(ImGuiMouseButton_Middle));
             }
             gizmo(origin, size);
             ImGui::SetCursorScreenPos(ImVec2(origin.x + 6, origin.y + 6));
@@ -1262,6 +1267,8 @@ void Editor::gizmo(ImVec2 origin, ImVec2 size) {
     ImGuizmo::SetDrawlist();
     ImGuizmo::SetRect(origin.x, origin.y, size.x, size.y);
     ImGuizmo::SetOrthographic(orthographic_);
+    // During an orbit or pan the gizmo is drawn but neither highlights nor takes the mouse.
+    ImGuizmo::Enable(!viewDragging_);
     const bool changed =
         ImGuizmo::Manipulate(view, projection, static_cast<ImGuizmo::OPERATION>(gizmoOperation_),
                              gizmoLocal_ ? ImGuizmo::LOCAL : ImGuizmo::WORLD, model);

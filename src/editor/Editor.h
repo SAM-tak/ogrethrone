@@ -309,6 +309,8 @@ private:
     /// ImGuizmo::OPERATION of the gizmo (translate initially).
     int gizmoOperation_ = 7;
     bool gizmoLocal_ = true, gizmoOver_ = false, gizmoUsing_ = false;
+    /// Whether the viewport is being orbited or panned; the gizmo is disabled meanwhile.
+    bool viewDragging_ = false;
     bool showGrid_ = true, orthographic_ = false, close_ = false;
     bool dirty_ = false, showFiles_ = false, saving_ = true, confirmClose_ = false;
     /// Project-relative path of the open level.
