@@ -7,8 +7,8 @@ namespace throne {
 ///
 /// On Windows this initializes the ImGui Win32 backend and subclasses the OGRE
 /// window so its messages reach ImGui and closing the window becomes a request
-/// (see takeCloseRequest()), gives the window the executable's icon and a title
-/// bar that follows Windows' light or dark app mode. While the window is dragged
+/// (see takeCloseRequest()), and gives the window a title bar that follows
+/// Windows' light or dark app mode. While the window is dragged
 /// or resized, Windows runs its own message loop; modalFrame is then called about
 /// 60 times a second so the window keeps being drawn. Elsewhere only the display
 /// size is set.

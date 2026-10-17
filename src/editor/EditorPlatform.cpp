@@ -71,13 +71,6 @@ EditorPlatform::EditorPlatform(Ogre::Window& window) : window_(window) {
         throw std::runtime_error("Editor window input hook failed");
     }
     followTheme(static_cast<HWND>(handle_));
-    // OGRE registers its window class with the stock icon; use the executable's own.
-    const auto instance = GetModuleHandleW(nullptr);
-    for (const auto [kind, metric] : {std::pair{ICON_SMALL, SM_CXSMICON}, std::pair{ICON_BIG, SM_CXICON}}) {
-        const auto size = GetSystemMetrics(metric);
-        if (const auto icon = LoadImageW(instance, MAKEINTRESOURCEW(1), IMAGE_ICON, size, size, LR_SHARED))
-            SendMessageW(static_cast<HWND>(handle_), WM_SETICON, kind, reinterpret_cast<LPARAM>(icon));
-    }
 #endif
 }
 EditorPlatform::~EditorPlatform() {
