@@ -289,6 +289,7 @@ void Editor::openProject(const std::filesystem::path& path) {
         library_ = Library(project_->root);
         doc_ = Document();
         contexts_.resize(1);
+        navigate_.reset();
         if (std::filesystem::exists(project_->resolve(level)) && !open()) throw std::runtime_error(fileError_);
         undo_.clear();
         redo_.clear();
@@ -307,6 +308,7 @@ void Editor::closeProject() {
     project_.reset();
     doc_ = Document();
     contexts_.resize(1);
+    navigate_.reset();
     undo_.clear();
     redo_.clear();
     dirty_ = false;
@@ -432,6 +434,7 @@ void Editor::launcher() {
 void Editor::play() {
     // Play always runs the level (TDDja/06 6), on its expansion only.
     contexts_.resize(1);
+    navigate_.reset();
     selected_ = {};
     refreshView();
     try {
@@ -484,6 +487,12 @@ void Editor::frame(float deltaSeconds) {
             log(error.what());
             stop();
         }
+    }
+    // Drill-down steps change between frames, so no panel sees view_ change under it.
+    if (navigate_) {
+        contexts_ = std::move(*navigate_);
+        navigate_.reset();
+        selected_ = {};
     }
     refreshView();
     shortcuts();
@@ -545,9 +554,8 @@ void Editor::enter(Context context) {
             return;
         }
     }
-    contexts_.push_back(std::move(context));
-    selected_ = {};
-    refreshView();
+    navigate_ = contexts_;
+    navigate_->push_back(std::move(context));
 }
 
 Editor::NodeTarget Editor::targetOf(int instance, const NodePath& path) {
@@ -736,16 +744,23 @@ void Editor::addInstance() {
     auto* edited = content();
     const std::string prefab = newPrefabPath_;
     if (!edited || prefab.empty()) return;
-    // Expanding a probe in the edited file's place reports a missing prefab or a cycle.
+    auto before = doc_;
+    // A prefab file that does not exist yet starts empty and is written by save().
+    if (!doc_.prefabs.count(prefab) && !std::filesystem::exists(project_->resolve(prefab))) {
+        doc_.prefabs[prefab] = Prefab();
+        library_.put(prefab, Prefab());
+    }
+    // Expanding a probe in the edited file's place reports a broken prefab or a cycle.
     Prefab probe;
     probe.addNode("probe").prefab = prefab;
     const auto check = expand(probe, library_, contexts_.back().kind == Context::Kind::Prefab ? contexts_.back().path : "");
     if (!check.errors.empty()) {
         log("Cannot place " + prefab + ": " + check.errors.front());
+        if (!before.prefabs.count(prefab)) library_.forget(prefab);
+        doc_ = std::move(before);
         return;
     }
     try {
-        auto before = doc_;
         auto& added = edited->addNode(std::filesystem::u8path(prefab).stem().stem().u8string());
         added.prefab = prefab;
         added.position = {};
@@ -849,6 +864,7 @@ bool Editor::open() {
         checkpoint();
         doc_ = std::move(loaded);
         contexts_.resize(1);
+        navigate_.reset();
         dirty_ = false;
         selected_ = {};
         refreshView();
@@ -907,6 +923,7 @@ void Editor::menu() {
             checkpoint();
             doc_ = Document();
             contexts_.resize(1);
+            navigate_.reset();
             selected_ = {};
             std::snprintf(levelPath_, sizeof levelPath_, "levels/untitled.level.lton");
         }

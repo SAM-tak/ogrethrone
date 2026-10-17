@@ -137,7 +137,7 @@ private:
     /// Expands what the current context shows into view_, and rebuilds the render
     /// objects when the node structure changed. Skipped while playing.
     void refreshView();
-    /// Enters the drill-down step @p context.
+    /// Enters the drill-down step @p context at the start of the next frame.
     void enter(Context context);
     /// Where an edit of node @p path of view instance @p instance goes.
     NodeTarget targetOf(int instance, const NodePath& path);
@@ -166,7 +166,8 @@ private:
     /// Adds a cube to the edited scene or prefab, under the selected node when it is
     /// one of its own, and selects it.
     void addNode();
-    /// Adds an instance of the prefab at newPrefabPath_ to the edited scene or prefab.
+    /// Adds an instance of the prefab at newPrefabPath_ to the edited scene or prefab,
+    /// creating an empty prefab when the file is absent.
     void addInstance();
     /// Adds a runner to the level (at the Level step) or to the edited scene or prefab.
     void addRunner();
@@ -270,6 +271,8 @@ private:
     std::vector<Document> undo_, redo_;
     /// The drill-down; the first step is always the level.
     std::vector<Context> contexts_{{Context::Kind::Level, {}}};
+    /// The drill-down to switch to at the start of the next frame.
+    std::optional<std::vector<Context>> navigate_;
     Library library_;
     /// What the current step shows, expanded; the runtime moves its nodes while playing.
     LevelExpansion view_;

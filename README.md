@@ -87,8 +87,10 @@ instances; double-clicking one (or a file in the Browser's Scenes tab) edits tha
 scene, and double-clicking an instance node (or a file in the Prefabs tab) edits
 that prefab. The breadcrumb over the viewport returns to an outer step. Nodes and
 runners that come from an instance are drawn in blue; editing them writes an
-override, shown in orange with a Revert button. Add Instance places the prefab
-named next to it. Ctrl+S saves the level, its scenes and every opened prefab.
+override, shown in orange with a Revert button. Inside a scene or prefab, Add
+Instance places the prefab named next to it, creating an empty one when the file
+does not exist yet; double-click the new instance node to fill the prefab.
+Ctrl+S saves the level, its scenes and every opened prefab.
 
 Right-drag orbits, middle-drag pans, the wheel zooms, left-click selects a node
 and `F` frames it. The selected node shows an ImGuizmo gizmo: W, E and R (or the

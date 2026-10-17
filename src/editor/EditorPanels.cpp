@@ -46,10 +46,8 @@ void Editor::breadcrumb() {
             ImGui::SameLine();
         }
         const auto label = i == 0 ? std::string("Level") : contexts_[i].path;
-        if (ImGui::SmallButton(label.c_str()) && i + 1 < contexts_.size() && !runtime_) {
-            contexts_.resize(i + 1);
-            selected_ = {};
-        }
+        if (ImGui::SmallButton(label.c_str()) && i + 1 < contexts_.size() && !runtime_)
+            navigate_.emplace(contexts_.begin(), contexts_.begin() + static_cast<std::ptrdiff_t>(i + 1));
         ImGui::PopID();
     }
 }
