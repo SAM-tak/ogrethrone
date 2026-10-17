@@ -147,7 +147,7 @@ void readOptional(const LhatTable& table, std::string_view key, std::optional<T>
 }
 }
 
-bool Overrides::empty() const { return nodes.empty() && runners.empty() && added.empty(); }
+bool Overrides::empty() const { return nodes.empty() && runners.empty() && added.empty() && removed.empty(); }
 
 NodeOverride& Overrides::node(const NodePath& path) {
     for (auto& entry : nodes)
@@ -197,6 +197,11 @@ LhatValue writeOverrides(lton::Writer& out, const Overrides& overrides) {
         }
         out.set(root, "added", added);
     }
+    if (!overrides.removed.empty()) {
+        const auto removed = out.table();
+        for (const auto& path : overrides.removed) out.push(removed, writePath(out, path));
+        out.set(root, "removed", removed);
+    }
     return root;
 }
 
@@ -239,6 +244,13 @@ Overrides readOverrides(LhatValue value) {
             AddedNode entry{readPath(lton::field(item, "parent")), readNode(lton::table(lton::field(item, "node")))};
             entry.node.parent = 0;
             overrides.added.push_back(std::move(entry));
+        }
+    }
+    if (const auto removed = lton::field(root, "removed"); !lhat_is_nil(removed)) {
+        const auto& list = lton::table(removed);
+        for (std::size_t i = 0, count = lton::sequence(list); i < count; ++i) {
+            overrides.removed.push_back(readPath(lton::at(list, i)));
+            if (overrides.removed.back().empty()) lton::invalid();
         }
     }
     return overrides;

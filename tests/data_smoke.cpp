@@ -189,6 +189,15 @@ int main() {
         furnished.nodes[furnished.nodes[boxLid].parent].node.name != "Box")
         return fail("Nodes an instance added were not placed where it added them");
 
+    // Removing a node takes what lies below it along, nodes added there too.
+    study.findNode(placedShelf)->overrides.removed = {{board}};
+    const auto emptied = throne::expand(study, fresh);
+    if (!emptied.errors.empty() || emptied.nodes.size() != 3 || emptied.find({placedShelf, book}) != throne::Expansion::npos ||
+        emptied.find({placedShelf, lamp.id}) != throne::Expansion::npos ||
+        emptied.find({placedShelf, box.id, lid}) == throne::Expansion::npos ||
+        emptied.removed.at({placedShelf, board}) != "Board")
+        return fail("A removed node did not leave with everything below it");
+
     // A variant is its base with overrides, both where it is placed and on its own.
     throne::Prefab green;
     green.base = "prefabs/crate.prefab.lton";

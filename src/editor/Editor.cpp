@@ -973,6 +973,7 @@ void merge(Overrides& into, const Overrides& from) {
     for (const auto& entry : from.runners)
         for (const auto& [name, value] : entry.fields) into.fieldsOf(entry.instance, entry.runner, entry.behaviour).fields[name] = value;
     into.added.insert(into.added.end(), from.added.begin(), from.added.end());
+    into.removed.insert(into.removed.end(), from.removed.begin(), from.removed.end());
 }
 }
 
@@ -1014,6 +1015,14 @@ void Editor::applyOverrides(NodeId id) {
             }
             entry.node.parent = entry.parent.empty() ? prefab.nodes.front().id : entry.parent[0];
             if (prefab.findNode(entry.node.parent)) prefab.nodes.push_back(std::move(entry.node));
+        }
+        // Removed nodes leave the prefab, or join the removals of its instance they lie in.
+        for (const auto& path : node->overrides.removed) {
+            if (path.size() == 1) {
+                prefab.removeNode(path[0]);
+            } else if (auto* target = prefab.findNode(path[0])) {
+                target->overrides.removed.emplace_back(path.begin() + 1, path.end());
+            }
         }
         for (const auto& entry : node->overrides.runners) {
             if (entry.instance.empty()) {
@@ -1225,8 +1234,12 @@ void Editor::erase() {
             selected_ = {};
             return;
         }
+        // A node that comes from an instance is removed by that instance's overrides.
         if (!target.node) {
-            log("This node comes from an instance: open its prefab or scene to delete it");
+            if (!target.overrides || target.relative.empty()) return;
+            checkpoint();
+            target.overrides->removed.push_back(target.relative);
+            selected_ = {};
             return;
         }
         if (isPrefabRoot(selected_.path[0])) {

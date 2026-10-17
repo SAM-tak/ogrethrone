@@ -99,7 +99,9 @@ that prefab. The breadcrumb over the viewport returns to an outer step. Nodes an
 runners that come from an instance are drawn in blue; editing them writes an
 override, shown in orange with a Revert button. With a node inside an instance
 (or a scene instance at the Level step) selected, Add Node and Add Instance add
-the new node as an override of that instance, also shown in orange. Inside a scene or prefab, Add
+the new node as an override of that instance, also shown in orange; Delete on a
+node inside an instance records its removal, which the instance's Inspector
+lists with a Restore button. Inside a scene or prefab, Add
 Instance places the prefab named next to it, creating one with a root node when
 the file does not exist yet; double-click the new instance node to fill the prefab.
 Unpack in the Inspector replaces an instance with plain nodes holding what it

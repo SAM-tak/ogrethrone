@@ -1,5 +1,6 @@
 #include "editor/Expansion.h"
 #include <algorithm>
+#include <set>
 
 namespace throne {
 namespace {
@@ -110,8 +111,15 @@ std::size_t Expander::prefab(const std::string& file, const SceneNode* placed, c
     return at;
 }
 
-/// Applies one override list to an expansion.
-void apply(Expansion& out, const NodePath& prefix, const Overrides& overrides) {
+/// Applies one override list to an expansion; the nodes it removes join @p gone.
+void apply(Expansion& out, const NodePath& prefix, const Overrides& overrides, std::set<std::size_t>& gone) {
+    for (const auto& path : overrides.removed) {
+        const auto where = join(prefix, path);
+        if (const auto at = out.find(where); at != Expansion::npos) {
+            gone.insert(at);
+            out.removed[where] = out.nodes[at].node.name;
+        }
+    }
     for (const auto& entry : overrides.nodes) {
         const auto at = out.find(join(prefix, entry.path));
         if (at == Expansion::npos) continue;  // The prefab no longer has that node.
@@ -194,8 +202,31 @@ Expansion expand(const Prefab& content, Library& library, const std::string& sel
         for (const auto& runner : content.runners) out.runners.push_back({{}, runner});
     }
     if (outer) expander.add(*outer, {});
-    for (const auto& entry : expander.pending) apply(out, entry.prefix, entry.overrides);
-    if (outer) apply(out, {}, *outer);
+    std::set<std::size_t> gone;
+    for (const auto& entry : expander.pending) apply(out, entry.prefix, entry.overrides, gone);
+    if (outer) apply(out, {}, *outer, gone);
+    if (gone.empty()) return out;
+    // Removed nodes go with everything below them, and the runners of instances among them.
+    std::vector<std::size_t> kept(out.nodes.size(), Expansion::npos);
+    std::size_t count = 0;
+    for (std::size_t i = 0; i < out.nodes.size(); ++i) {
+        const auto parent = out.nodes[i].parent;
+        if (!gone.count(i) && (parent == Expansion::npos || kept[parent] != Expansion::npos)) kept[i] = count++;
+    }
+    std::vector<ExpandedRunner> runners;
+    for (auto& runner : out.runners) {
+        const auto at = runner.instance.empty() ? Expansion::npos : out.find(runner.instance);
+        if (runner.instance.empty() || (at != Expansion::npos && kept[at] != Expansion::npos)) runners.push_back(std::move(runner));
+    }
+    std::vector<ExpandedNode> nodes;
+    for (std::size_t i = 0; i < out.nodes.size(); ++i) {
+        if (kept[i] == Expansion::npos) continue;
+        auto& node = out.nodes[i];
+        if (node.parent != Expansion::npos) node.parent = kept[node.parent];
+        nodes.push_back(std::move(node));
+    }
+    out.nodes = std::move(nodes);
+    out.runners = std::move(runners);
     return out;
 }
 

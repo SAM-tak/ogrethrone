@@ -83,6 +83,7 @@ void Editor::scenePanel() {
             ImGui::TextColored(variantColour, "Variant of %s", content()->base.c_str());
             ImGui::SameLine();
             if (ImGui::SmallButton("Open Base")) enter({Context::Kind::Prefab, content()->base});
+            if (!view_.instances.empty()) removedList(content()->overrides, view_.instances[0].expansion, {});
         }
         // Into an instance (at the level, a selected scene instance or a node in one)
         // these add overrides; see insert().
@@ -317,6 +318,8 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
             ImGui::SameLine();
             if (ImGui::Button("Unpack")) unpack(target.node->id);
         }
+        if (target.node && target.overrides)
+            removedList(*target.overrides, view_.instances[selected_.instance].expansion, selected_.path);
     }
     if (target.node) {
         ImGui::Separator();
@@ -343,6 +346,7 @@ void Editor::sceneInspector(SceneInstance& instance) {
     track();
     ImGui::Separator();
     ImGui::Text("%zu node and %zu runner overrides", instance.overrides.nodes.size(), instance.overrides.runners.size());
+    removedList(instance.overrides, view_.instances[selected_.instance].expansion, {});
     if (!instance.overrides.empty() && ImGui::Button("Revert All Overrides")) {
         checkpoint();
         instance.overrides = {};
@@ -351,6 +355,23 @@ void Editor::sceneInspector(SceneInstance& instance) {
     if (ImGui::Button("Open Scene")) enter({Context::Kind::Scene, instance.scene});
     ImGui::SameLine();
     if (ImGui::Button("Remove")) removeScene(instance.id);
+}
+
+void Editor::removedList(Overrides& overrides, const Expansion& expansion, const NodePath& prefix) {
+    std::optional<std::size_t> restored;
+    for (std::size_t i = 0; i < overrides.removed.size(); ++i) {
+        auto where = prefix;
+        where.insert(where.end(), overrides.removed[i].begin(), overrides.removed[i].end());
+        const auto name = expansion.removed.find(where);
+        ImGui::PushID(static_cast<int>(i));
+        ImGui::TextColored(overriddenColour, "Removed %s", name != expansion.removed.end() ? name->second.c_str() : "(gone)");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Restore")) restored = i;
+        ImGui::PopID();
+    }
+    if (!restored) return;
+    checkpoint();
+    overrides.removed.erase(overrides.removed.begin() + static_cast<std::ptrdiff_t>(*restored));
 }
 
 void Editor::runnerInspector(const Runner& shown) {

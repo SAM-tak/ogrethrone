@@ -86,6 +86,9 @@ struct Overrides {
     std::vector<FieldOverride> runners;
     /// Nodes the instance adds, parents before children.
     std::vector<AddedNode> added;
+    /// Nodes the instance removes, each with all below it; relative to the
+    /// instance and never empty (the instance node itself stays).
+    std::vector<NodePath> removed;
 
     /// Whether nothing is overridden.
     bool empty() const;

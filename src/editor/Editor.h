@@ -255,6 +255,9 @@ private:
     void nodeInspector(const ExpandedNode& node);
     /// Draws a scene instance's scene and transform.
     void sceneInspector(SceneInstance& instance);
+    /// Lists the nodes @p overrides removes, named from @p expansion where the
+    /// overrides' instance is at @p prefix, each with a Restore button.
+    void removedList(Overrides& overrides, const Expansion& expansion, const NodePath& prefix);
     /// Draws the selected runner's behaviours and their fields.
     void runnerInspector(const Runner& runner);
     /// Draws the rendered scene and handles camera and picking input.

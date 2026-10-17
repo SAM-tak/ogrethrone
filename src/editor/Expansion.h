@@ -63,6 +63,9 @@ struct Expansion {
     std::vector<ExpandedRunner> runners;
     /// Instances that could not be expanded (missing prefab, cycle); the rest is still expanded.
     std::vector<std::string> errors;
+    /// Names of the nodes overrides removed, by the instance's path followed by the
+    /// override's; they and all below them are not in `nodes`.
+    std::map<NodePath, std::string> removed;
 
     /// Index of the node at @p path (see NodePath), or npos. Each ID is looked for
     /// below the node found for the one before it; the first match in order wins.
