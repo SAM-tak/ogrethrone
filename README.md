@@ -33,6 +33,11 @@ ctest --preset windows-debug
 ./out/build/windows-clang-ninja/bin/Debug/ogrethrone.exe
 ```
 
+The executable embeds a manifest (visual styles, per-monitor DPI awareness, UTF-8)
+and the application icon `media/ogrethrone.ico`; after editing the
+`media/ogrethrone<size>.png` images, run `tools/make-icon.ps1` to repack it. The
+title bar follows Windows' light or dark app mode.
+
 `VULKAN_SDK` can also locate the SDK. A terminal opened before SDK installation
 may need restarting, or use the explicit CMake option above.
 The pinned glslang submodule is built from source for each configuration, using

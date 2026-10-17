@@ -1,6 +1,7 @@
 #include "editor/EditorPlatform.h"
 #include <OgreWindow.h>
 #include <imgui.h>
+#include <cwchar>
 #include <stdexcept>
 #include <utility>
 #ifdef _WIN32
@@ -8,9 +9,22 @@
 #define NOMINMAX
 #include <windows.h>
 #include <commctrl.h>
+#include <dwmapi.h>
 #include <backends/imgui_impl_win32.h>
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
+namespace {
+/// Gives @p hwnd a dark title bar when Windows' app mode is dark.
+void followTheme(HWND hwnd) {
+    DWORD light = 1, size = sizeof light;
+    RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+                 L"AppsUseLightTheme", RRF_RT_REG_DWORD, nullptr, &light, &size);
+    const BOOL dark = light == 0;
+    // DWMWA_USE_IMMERSIVE_DARK_MODE; older SDKs lack the name.
+    DwmSetWindowAttribute(hwnd, 20, &dark, sizeof dark);
+}
+}
+
 namespace throne {
 /// The window procedure hook of EditorPlatform.
 struct WindowHook {
@@ -30,6 +44,10 @@ struct WindowHook {
             break;
         case WM_EXITSIZEMOVE:
             KillTimer(hwnd, timer);
+            break;
+        case WM_SETTINGCHANGE:
+            if (lparam && std::wcscmp(reinterpret_cast<const wchar_t*>(lparam), L"ImmersiveColorSet") == 0)
+                followTheme(hwnd);
             break;
         case WM_TIMER:
             if (wparam != timer) break;
@@ -51,6 +69,14 @@ EditorPlatform::EditorPlatform(Ogre::Window& window) : window_(window) {
     if (!SetWindowSubclass(static_cast<HWND>(handle_), WindowHook::proc, 1, reinterpret_cast<DWORD_PTR>(this))) {
         ImGui_ImplWin32_Shutdown();
         throw std::runtime_error("Editor window input hook failed");
+    }
+    followTheme(static_cast<HWND>(handle_));
+    // OGRE registers its window class with the stock icon; use the executable's own.
+    const auto instance = GetModuleHandleW(nullptr);
+    for (const auto [kind, metric] : {std::pair{ICON_SMALL, SM_CXSMICON}, std::pair{ICON_BIG, SM_CXICON}}) {
+        const auto size = GetSystemMetrics(metric);
+        if (const auto icon = LoadImageW(instance, MAKEINTRESOURCEW(1), IMAGE_ICON, size, size, LR_SHARED))
+            SendMessageW(static_cast<HWND>(handle_), WM_SETICON, kind, reinterpret_cast<LPARAM>(icon));
     }
 #endif
 }
