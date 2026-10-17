@@ -347,7 +347,8 @@ X11/XCB development packages. Linux builds have not yet been verified.
   graphics backend; threaded shader/PSO compilation is enabled with mode `2`.
 - OGRE's ImGui integration builds the pinned ImGui sources. Do not build a second
   ImGui copy. `ImTextureID` is configured as `void*` for the OGRE renderer.
-  ImGui is the `v1.91.5-docking` tag, so editor panels can dock.
+  ImGui is the `v1.91.6-docking` tag, so editor panels can dock; 1.91.5's Win32
+  backend crashed when the cursor was over another Dear ImGui application's window.
 - ImGuizmo (`third_party/imguizmo`) is pinned to `22a6c90`, the last commit before
   it followed ImGui 1.92.8's `AddPolyline`/`AddRect` argument changes, and is
   compiled into the editor against the same ImGui. Its `SetRect` miscomputes the
