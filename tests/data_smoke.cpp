@@ -171,6 +171,24 @@ int main() {
         inStudy.nodes[bookAt].path != throne::NodePath{placedShelf, board, book} || inStudy.nodes[bookAt].node.colour[1] != 1)
         return fail("An override did not follow its node into a new prefab");
 
+    // An instance can add nodes, plain or instances themselves, anywhere inside it.
+    throne::SceneNode lamp;
+    lamp.id = throne::newNodeId();
+    lamp.name = "Lamp";
+    throne::SceneNode box = lamp;
+    box.id = throne::newNodeId();
+    box.name = "Box";
+    box.prefab = "prefabs/crate.prefab.lton";
+    study.findNode(placedShelf)->overrides.added = {{{book}, lamp}, {{}, box}};
+    study.save(directory / "scenes/study.scene.lton");
+    const auto furnished = throne::expand(throne::Scene::load(directory / "scenes/study.scene.lton"), fresh);
+    const auto lampAt = furnished.find({placedShelf, lamp.id}), boxLid = furnished.find({placedShelf, box.id, lid});
+    if (!furnished.errors.empty() || lampAt == throne::Expansion::npos || boxLid == throne::Expansion::npos ||
+        !furnished.nodes[lampAt].added || furnished.nodes[furnished.nodes[lampAt].parent].path !=
+                                              throne::NodePath{placedShelf, board, book} ||
+        furnished.nodes[furnished.nodes[boxLid].parent].node.name != "Box")
+        return fail("Nodes an instance added were not placed where it added them");
+
     // A variant is its base with overrides, both where it is placed and on its own.
     throne::Prefab green;
     green.base = "prefabs/crate.prefab.lton";

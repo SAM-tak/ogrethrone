@@ -44,6 +44,8 @@ struct ExpandedNode {
     SceneNode node;
     /// For an instance node, the ID of the prefab root it became; otherwise 0.
     NodeId root = 0;
+    /// Whether an instance's overrides added the node.
+    bool added = false;
 };
 
 /// One runner of an expanded hierarchy, with field overrides applied.

@@ -100,6 +100,43 @@ std::map<std::string, FieldValue> readFields(LhatValue value) {
     return fields;
 }
 
+/// Reads one node table (its `parent` too); an instance's overrides come along.
+SceneNode readNode(const LhatTable& entry) {
+    SceneNode node;
+    node.id = nodeId(lton::field(entry, "id"));
+    node.name = name(lton::field(entry, "name"));
+    const auto parent = lton::field(entry, "parent");
+    node.parent = lton::integer(parent) == 0 ? 0 : nodeId(parent);
+    lton::vector(lton::field(entry, "position"), node.position.data());
+    lton::vector(lton::field(entry, "rotation"), node.rotation.data());
+    lton::vector(lton::field(entry, "scale"), node.scale.data());
+    lton::vector(lton::field(entry, "colour"), node.colour.data());
+    for (unsigned axis = 0; axis < 3; ++axis)
+        if (node.scale.data()[axis] < 0.001f || node.colour[axis] < 0 || node.colour[axis] > 1) lton::invalid();
+    if (const auto prefab = lton::field(entry, "prefab"); !lhat_is_nil(prefab)) {
+        node.prefab = lton::relativePath(prefab);
+        node.overrides = readOverrides(lton::field(entry, "overrides"));
+    }
+    return node;
+}
+
+/// Writes what readNode reads.
+LhatValue writeNode(lton::Writer& out, const SceneNode& node) {
+    const auto entry = out.table();
+    out.set(entry, "id", lhat_integer(static_cast<LhatInteger>(node.id)));
+    out.set(entry, "name", out.string(node.name));
+    out.set(entry, "parent", lhat_integer(static_cast<LhatInteger>(node.parent)));
+    out.set(entry, "position", out.vector(node.position.data()));
+    out.set(entry, "rotation", out.vector(node.rotation.data()));
+    out.set(entry, "scale", out.vector(node.scale.data()));
+    out.set(entry, "colour", out.vector(node.colour.data()));
+    if (!node.prefab.empty()) {
+        out.set(entry, "prefab", out.string(node.prefab));
+        if (!node.overrides.empty()) out.set(entry, "overrides", writeOverrides(out, node.overrides));
+    }
+    return entry;
+}
+
 /// Reads an optional three-component vector field into @p out.
 template <typename T>
 void readOptional(const LhatTable& table, std::string_view key, std::optional<T>& out) {
@@ -109,6 +146,8 @@ void readOptional(const LhatTable& table, std::string_view key, std::optional<T>
     }
 }
 }
+
+bool Overrides::empty() const { return nodes.empty() && runners.empty() && added.empty(); }
 
 NodeOverride& Overrides::node(const NodePath& path) {
     for (auto& entry : nodes)
@@ -148,6 +187,16 @@ LhatValue writeOverrides(lton::Writer& out, const Overrides& overrides) {
         out.push(runners, item);
     }
     out.set(root, "runners", runners);
+    if (!overrides.added.empty()) {
+        const auto added = out.table();
+        for (const auto& entry : overrides.added) {
+            const auto item = out.table();
+            out.set(item, "parent", writePath(out, entry.parent));
+            out.set(item, "node", writeNode(out, entry.node));
+            out.push(added, item);
+        }
+        out.set(root, "added", added);
+    }
     return root;
 }
 
@@ -181,6 +230,15 @@ Overrides readOverrides(LhatValue value) {
             entry.behaviour = static_cast<std::size_t>(behaviour);
             entry.fields = readFields(lton::field(item, "fields"));
             overrides.runners.push_back(std::move(entry));
+        }
+    }
+    if (const auto added = lton::field(root, "added"); !lhat_is_nil(added)) {
+        const auto& list = lton::table(added);
+        for (std::size_t i = 0, count = lton::sequence(list); i < count; ++i) {
+            const auto& item = lton::table(lton::at(list, i));
+            AddedNode entry{readPath(lton::field(item, "parent")), readNode(lton::table(lton::field(item, "node")))};
+            entry.node.parent = 0;
+            overrides.added.push_back(std::move(entry));
         }
     }
     return overrides;
@@ -261,24 +319,9 @@ void Prefab::read(const LhatTable& root) {
     const auto& list = lton::table(lton::field(root, "nodes"));
     std::set<NodeId> seen;
     for (std::size_t i = 0, count = lton::sequence(list); i < count; ++i) {
-        const auto& entry = lton::table(lton::at(list, i));
-        SceneNode node;
-        node.id = nodeId(lton::field(entry, "id"));
-        node.name = name(lton::field(entry, "name"));
-        const auto parent = lton::field(entry, "parent");
-        node.parent = lton::integer(parent) == 0 ? 0 : nodeId(parent);
+        auto node = readNode(lton::table(lton::at(list, i)));
         // A parent written earlier is what keeps the order and rules out cycles.
         if ((node.parent && !seen.count(node.parent)) || !seen.insert(node.id).second) lton::invalid();
-        lton::vector(lton::field(entry, "position"), node.position.data());
-        lton::vector(lton::field(entry, "rotation"), node.rotation.data());
-        lton::vector(lton::field(entry, "scale"), node.scale.data());
-        lton::vector(lton::field(entry, "colour"), node.colour.data());
-        for (unsigned axis = 0; axis < 3; ++axis)
-            if (node.scale.data()[axis] < 0.001f || node.colour[axis] < 0 || node.colour[axis] > 1) lton::invalid();
-        if (const auto prefab = lton::field(entry, "prefab"); !lhat_is_nil(prefab)) {
-            node.prefab = lton::relativePath(prefab);
-            node.overrides = readOverrides(lton::field(entry, "overrides"));
-        }
         nodes.push_back(std::move(node));
     }
     runners = readRunners(lton::field(root, "runners"), nextRunnerId);
@@ -286,21 +329,7 @@ void Prefab::read(const LhatTable& root) {
 
 void Prefab::write(lton::Writer& out, LhatValue root) const {
     const auto list = out.table();
-    for (const auto& node : nodes) {
-        const auto entry = out.table();
-        out.set(entry, "id", lhat_integer(static_cast<LhatInteger>(node.id)));
-        out.set(entry, "name", out.string(node.name));
-        out.set(entry, "parent", lhat_integer(static_cast<LhatInteger>(node.parent)));
-        out.set(entry, "position", out.vector(node.position.data()));
-        out.set(entry, "rotation", out.vector(node.rotation.data()));
-        out.set(entry, "scale", out.vector(node.scale.data()));
-        out.set(entry, "colour", out.vector(node.colour.data()));
-        if (!node.prefab.empty()) {
-            out.set(entry, "prefab", out.string(node.prefab));
-            if (!node.overrides.empty()) out.set(entry, "overrides", writeOverrides(out, node.overrides));
-        }
-        out.push(list, entry);
-    }
+    for (const auto& node : nodes) out.push(list, writeNode(out, node));
     out.set(root, "nodes", list);
     out.set(root, "runners", writeRunners(out, runners));
 }

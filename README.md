@@ -97,7 +97,9 @@ and double-clicking one (or a file in the Browser's Scenes tab) edits that
 scene, and double-clicking an instance node (or a file in the Prefabs tab) edits
 that prefab. The breadcrumb over the viewport returns to an outer step. Nodes and
 runners that come from an instance are drawn in blue; editing them writes an
-override, shown in orange with a Revert button. Inside a scene or prefab, Add
+override, shown in orange with a Revert button. With a node inside an instance
+(or a scene instance at the Level step) selected, Add Node and Add Instance add
+the new node as an override of that instance, also shown in orange. Inside a scene or prefab, Add
 Instance places the prefab named next to it, creating one with a root node when
 the file does not exist yet; double-click the new instance node to fill the prefab.
 Dragging a node onto the Browser's Prefabs tab saves it as

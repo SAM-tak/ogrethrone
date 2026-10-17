@@ -83,14 +83,15 @@ void Editor::scenePanel() {
             ImGui::TextColored(variantColour, "Variant of %s", content()->base.c_str());
             ImGui::SameLine();
             if (ImGui::SmallButton("Open Base")) enter({Context::Kind::Prefab, content()->base});
-        } else {
-            if (ImGui::Button("Add Node")) addNode();
-            ImGui::SameLine();
-            if (ImGui::Button("Add Instance")) addInstance();
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(-1);
-            ImGui::InputText("##PrefabPath", newPrefabPath_, sizeof newPrefabPath_);
         }
+        // Into an instance (at the level, a selected scene instance or a node in one)
+        // these add overrides; see insert().
+        if (ImGui::Button("Add Node")) addNode();
+        ImGui::SameLine();
+        if (ImGui::Button("Add Instance")) addInstance();
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputText("##PrefabPath", newPrefabPath_, sizeof newPrefabPath_);
         ImGui::EndDisabled();
         ImGui::Separator();
         if (view_.instances.empty()) ImGui::TextDisabled("No scenes. Add one above.");
@@ -149,7 +150,8 @@ void Editor::nodeTree(std::size_t instance, std::size_t parent) {
         auto flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_DefaultOpen;
         if (leaf) flags |= ImGuiTreeNodeFlags_Leaf;
         if (chosen) flags |= ImGuiTreeNodeFlags_Selected;
-        if (!own) ImGui::PushStyleColor(ImGuiCol_Text, instanceColour);
+        // Nodes from instances are blue; those an instance added are overrides.
+        if (!own) ImGui::PushStyleColor(ImGuiCol_Text, expanded.added ? overriddenColour : instanceColour);
         const bool open = ImGui::TreeNodeEx(reinterpret_cast<void*>(static_cast<std::uintptr_t>(k)), flags, "%s",
                                             expanded.node.name.c_str());
         if (!own) ImGui::PopStyleColor();
@@ -266,7 +268,9 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
     if (target.overrides)
         for (auto& entry : target.overrides->nodes)
             if (entry.path == target.relative) layer = &entry;
-    ImGui::TextDisabled(target.node ? "Scene node" : "Node of an instance: edits are overrides");
+    ImGui::TextDisabled(target.addedTo ? "Added by an instance: kept in its overrides"
+                        : target.node  ? "Scene node"
+                                       : "Node of an instance: edits are overrides");
 
     auto value = expanded.node;
     unsigned changed = 0;
@@ -311,8 +315,8 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
     }
     if (target.node) {
         ImGui::Separator();
-        if (ImGui::Button("Duplicate")) duplicate();
-        ImGui::SameLine();
+        if (!target.addedTo && ImGui::Button("Duplicate")) duplicate();
+        if (!target.addedTo) ImGui::SameLine();
         if (ImGui::Button("Delete")) erase();
     }
 }

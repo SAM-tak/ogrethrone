@@ -119,6 +119,8 @@ private:
         SceneNode* node = nullptr;
         Overrides* overrides = nullptr;
         NodePath relative;
+        /// When @p node was added by an instance, the overrides holding it.
+        Overrides* addedTo = nullptr;
     };
     /// Where an edit of one runner is written: the runner itself, or field overrides.
     struct RunnerTarget {
@@ -143,6 +145,8 @@ private:
     void enter(Context context);
     /// Where an edit of node @p path of view instance @p instance goes.
     NodeTarget targetOf(int instance, const NodePath& path);
+    /// targetOf() without looking into the nodes instances added.
+    NodeTarget fileTarget(int instance, const NodePath& path);
     /// Where an edit of the selected runner goes.
     RunnerTarget runnerTarget();
     /// The selected node of view_, or nullptr.
@@ -179,9 +183,12 @@ private:
     void addScene();
     /// Removes scene instance @p id from the level.
     void removeScene(std::uint32_t id);
-    /// The parent for an added node: the selected node when the edited file owns it
-    /// and it is not an instance, else a prefab's root, else none.
-    NodeId parentForNew();
+    /// Adds @p node, with a new ID, where the selection says, and selects it: into the
+    /// overrides of the instance holding the selected node (or of the selected scene
+    /// instance, or of an edited variant), else into the edited file under the
+    /// selected plain node or a prefab's root. Returns false, with a log line, when
+    /// there is nowhere to add it.
+    bool insert(SceneNode node);
     /// Whether node @p id is the root of the prefab being edited.
     bool isPrefabRoot(NodeId id);
     /// Whether the prefab at @p prefab is a variant; false when it cannot be read.

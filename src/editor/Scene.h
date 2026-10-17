@@ -78,13 +78,17 @@ struct FieldOverride {
     std::map<std::string, FieldValue> fields;
 };
 
+struct AddedNode;
+
 /// What one instance changes in what it instantiates (TDDja/06 4).
 struct Overrides {
     std::vector<NodeOverride> nodes;
     std::vector<FieldOverride> runners;
+    /// Nodes the instance adds, parents before children.
+    std::vector<AddedNode> added;
 
     /// Whether nothing is overridden.
-    bool empty() const { return nodes.empty() && runners.empty(); }
+    bool empty() const;
     /// Returns the override for @p path, adding an empty one when there is none.
     NodeOverride& node(const NodePath& path);
     /// Returns the field override for that behaviour, adding an empty one when there is none.
@@ -124,6 +128,15 @@ struct SceneNode {
     std::string prefab;
     /// What this instance changes in the prefab.
     Overrides overrides;
+};
+
+/// A node an instance adds to what it instantiates (TDDja/06 4). Its path is the
+/// instance's followed by its ID, wherever its parent is.
+struct AddedNode {
+    /// The parent, relative to the instance; empty for the instance node itself.
+    NodePath parent;
+    /// The node; its `parent` is unused. It may be an instance itself.
+    SceneNode node;
 };
 
 /// The runners of one file (a prefab, scene or level), in run order.

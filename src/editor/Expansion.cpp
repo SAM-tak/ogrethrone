@@ -30,7 +30,21 @@ struct Expander {
     /// transform, or keeps its own when @p placed is null. Returns the root's
     /// index, or npos when nothing could be placed.
     std::size_t prefab(const std::string& file, const SceneNode* placed, const NodePath& prefix, std::size_t parent);
+    /// Appends the nodes @p overrides adds to the instance at @p prefix.
+    void add(const Overrides& overrides, const NodePath& prefix);
 };
+
+void Expander::add(const Overrides& overrides, const NodePath& prefix) {
+    for (const auto& entry : overrides.added) {
+        const auto where = join(prefix, entry.parent);
+        const auto parent = out.find(where);
+        if (parent == Expansion::npos && !where.empty()) {
+            out.errors.push_back(entry.node.name + ": the node it was added to is gone");
+            continue;
+        }
+        out.nodes[place(entry.node, join(prefix, {entry.node.id}), parent)].added = true;
+    }
+}
 
 std::size_t Expander::place(const SceneNode& node, const NodePath& path, std::size_t parent) {
     if (node.prefab.empty()) {
@@ -43,6 +57,7 @@ std::size_t Expander::place(const SceneNode& node, const NodePath& path, std::si
     merged.parent = node.parent;
     merged.prefab = node.prefab;
     merged.overrides = node.overrides;
+    add(node.overrides, path);
     // Pushed after the prefab's own instances and variant layers, so those apply first.
     pending.push_back({path, node.overrides});
     return at;
@@ -67,6 +82,7 @@ std::size_t Expander::prefab(const std::string& file, const SceneNode* placed, c
     if (content->variant()) {
         stack.push_back(file);
         const auto at = prefab(content->base, placed, prefix, parent);
+        add(content->overrides, prefix);  // Still on the stack: an added node may not instantiate the variant.
         stack.pop_back();
         pending.push_back({prefix, content->overrides});
         return at;
@@ -169,6 +185,7 @@ Expansion expand(const Prefab& content, Library& library, const std::string& sel
     if (!self.empty()) expander.stack.push_back(self);
     if (content.variant()) {
         expander.prefab(content.base, nullptr, {}, Expansion::npos);
+        expander.add(content.overrides, {});
         expander.pending.push_back({{}, content.overrides});
     } else {
         std::map<NodeId, std::size_t> index;
@@ -176,6 +193,7 @@ Expansion expand(const Prefab& content, Library& library, const std::string& sel
             index[node.id] = expander.place(node, {node.id}, node.parent ? index.at(node.parent) : Expansion::npos);
         for (const auto& runner : content.runners) out.runners.push_back({{}, runner});
     }
+    if (outer) expander.add(*outer, {});
     for (const auto& entry : expander.pending) apply(out, entry.prefix, entry.overrides);
     if (outer) apply(out, {}, *outer);
     return out;
