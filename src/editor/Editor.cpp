@@ -519,6 +519,7 @@ void Editor::frame(float deltaSeconds) {
     browser();
     fileDialog();
     closeDialog();
+    replaceDialog();
     syncTransforms();
     updateCamera();
     gui_->prepareForRender(&scene_);
@@ -838,7 +839,7 @@ bool Editor::isVariant(const std::string& prefab) {
     }
 }
 
-void Editor::prefabify(std::uint32_t id) {
+void Editor::prefabify(std::uint32_t id, std::string file) {
     auto* edited = content();
     auto* node = edited ? edited->findNode(id) : nullptr;
     if (!node || edited->variant()) return;
@@ -846,14 +847,20 @@ void Editor::prefabify(std::uint32_t id) {
         log("The root of a prefab cannot become a prefab; make a variant of the prefab instead");
         return;
     }
+    if (file == contexts_.back().path) {
+        log("A prefab cannot be replaced by one of its own nodes");
+        return;
+    }
     // prefabs/<name>.prefab.lton, numbered when taken; characters a path cannot hold become '_'.
-    std::string stem = node->name;
-    for (auto& character : stem)
-        if (std::string_view("<>:\"/\\|?*").find(character) != std::string_view::npos || character < 32) character = '_';
-    std::string file;
-    for (int number = 1;; ++number) {
-        file = "prefabs/" + stem + (number > 1 ? " " + std::to_string(number) : "") + ".prefab.lton";
-        if (!doc_.prefabs.count(file) && !std::filesystem::exists(project_->resolve(file))) break;
+    if (file.empty()) {
+        std::string stem = node->name;
+        for (auto& character : stem)
+            if (std::string_view("<>:\"/\\|?*").find(character) != std::string_view::npos || character < 32)
+                character = '_';
+        for (int number = 1;; ++number) {
+            file = "prefabs/" + stem + (number > 1 ? " " + std::to_string(number) : "") + ".prefab.lton";
+            if (!doc_.prefabs.count(file) && !std::filesystem::exists(project_->resolve(file))) break;
+        }
     }
     // An instance becomes a variant of its prefab with its overrides; a plain node takes its subtree along.
     Prefab made;
@@ -869,14 +876,21 @@ void Editor::prefabify(std::uint32_t id) {
         for (const auto& each : made.nodes)
             if (each.id != id) moved.insert(each.id);
     }
+    // Replacing a prefab with a node that contains an instance of it would make a cycle.
+    if (const auto check = expand(made, library_, file); !check.errors.empty()) {
+        log("Cannot save " + file + ": " + check.errors.front());
+        return;
+    }
     try {
         made.save(project_->resolve(file));
     } catch (const std::exception& error) {
         log("Could not write " + file + ": " + error.what());
         return;
     }
-    library_.forget(file);
     auto before = doc_;
+    // A copy opened for editing would write the old content back on save.
+    doc_.prefabs.erase(file);
+    library_.forget(file);
     // Paths into the moved nodes now pass through the new instance.
     const auto through = [&](NodePath& path) {
         if (!path.empty() && moved.count(path[0])) path.insert(path.begin(), id);
@@ -909,7 +923,103 @@ void Editor::prefabify(std::uint32_t id) {
     node->overrides = {};
     selected_ = {Selection::Kind::Node, 0, {id}};
     commit(std::move(before));
-    log("Created " + file);
+    log("Saved " + file);
+}
+
+void Editor::dropOnPrefab(std::uint32_t id, const std::string& file) {
+    const auto* node = content() ? content()->findNode(id) : nullptr;
+    if (!node) return;
+    if (node->prefab == file) applyOverrides(id);
+    else replacing_ = {id, file};
+}
+
+namespace {
+/// Copies the properties @p from sets into @p into.
+template <typename Target>
+void assign(Target& into, const NodeOverride& from) {
+    if (from.name) into.name = *from.name;
+    if (from.position) into.position = *from.position;
+    if (from.rotation) into.rotation = *from.rotation;
+    if (from.scale) into.scale = *from.scale;
+    if (from.colour) into.colour = *from.colour;
+}
+
+/// Adds @p from on top of the overrides @p into already has.
+void merge(Overrides& into, const Overrides& from) {
+    for (const auto& entry : from.nodes) assign(into.node(entry.path), entry);
+    for (const auto& entry : from.runners)
+        for (const auto& [name, value] : entry.fields) into.fieldsOf(entry.instance, entry.runner, entry.behaviour).fields[name] = value;
+}
+}
+
+void Editor::applyOverrides(std::uint32_t id) {
+    auto* node = content() ? content()->findNode(id) : nullptr;
+    if (!node || node->prefab.empty() || node->overrides.empty()) return;
+    Prefab prefab;
+    try {
+        prefab = doc_.prefabs.count(node->prefab) ? doc_.prefabs[node->prefab] : library_.prefab(node->prefab);
+    } catch (const std::exception& error) {
+        log(error.what());
+        return;
+    }
+    // A variant keeps them as its own overrides; a prefab writes them into its nodes,
+    // or into the overrides of its own instances for what lies deeper.
+    if (prefab.variant()) {
+        merge(prefab.overrides, node->overrides);
+    } else {
+        Overrides deeper;
+        for (const auto& entry : node->overrides.nodes) {
+            auto* target = entry.path.empty() ? &prefab.nodes.front() : prefab.findNode(entry.path[0]);
+            if (!target) continue;
+            if (entry.path.size() <= 1) {
+                assign(*target, entry);
+            } else {
+                auto inner = entry;
+                inner.path.erase(inner.path.begin());
+                assign(target->overrides.node(inner.path), inner);
+            }
+        }
+        for (const auto& entry : node->overrides.runners) {
+            if (entry.instance.empty()) {
+                if (auto* runner = prefab.findRunner(entry.runner); runner && entry.behaviour < runner->behaviours.size())
+                    for (const auto& [name, value] : entry.fields) runner->behaviours[entry.behaviour].fields[name] = value;
+            } else if (auto* target = prefab.findNode(entry.instance[0])) {
+                const NodePath rest(entry.instance.begin() + 1, entry.instance.end());
+                for (const auto& [name, value] : entry.fields)
+                    target->overrides.fieldsOf(rest, entry.runner, entry.behaviour).fields[name] = value;
+            }
+        }
+    }
+    try {
+        prefab.save(project_->resolve(node->prefab));
+    } catch (const std::exception& error) {
+        log("Could not write " + node->prefab + ": " + error.what());
+        return;
+    }
+    auto before = doc_;
+    if (doc_.prefabs.count(node->prefab)) doc_.prefabs[node->prefab] = prefab;
+    library_.forget(node->prefab);
+    node->overrides = {};
+    commit(std::move(before));
+    log("Applied the overrides to " + node->prefab);
+}
+
+void Editor::replaceDialog() {
+    if (replacing_) {
+        ImGui::OpenPopup("Replace Prefab");
+        pendingReplace_ = std::move(replacing_);
+        replacing_.reset();
+    }
+    if (!ImGui::BeginPopupModal("Replace Prefab", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    ImGui::Text("Replace %s with this node?", pendingReplace_ ? pendingReplace_->second.c_str() : "");
+    ImGui::TextDisabled("Every instance of it will show the new content.");
+    if (ImGui::Button("Replace")) {
+        ImGui::CloseCurrentPopup();
+        if (pendingReplace_) prefabify(pendingReplace_->first, pendingReplace_->second);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
 }
 
 void Editor::addRunner() {
@@ -1244,6 +1354,12 @@ void Editor::browser() {
                         relative.size() < capacity) {
                         std::memcpy(pick, relative.c_str(), relative.size() + 1);
                         if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !runtime_) enter({kind, relative});
+                    }
+                    // A node dropped on a prefab file replaces it, or applies an instance's overrides to it.
+                    if (kind == Context::Kind::Prefab && !runtime_ && ImGui::BeginDragDropTarget()) {
+                        if (const auto* payload = ImGui::AcceptDragDropPayload(nodePayload))
+                            dropOnPrefab(*static_cast<const std::uint32_t*>(payload->Data), relative);
+                        ImGui::EndDragDropTarget();
                     }
                     if (variant) ImGui::PopStyleColor();
                 }

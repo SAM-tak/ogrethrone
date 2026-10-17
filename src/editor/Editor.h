@@ -186,10 +186,19 @@ private:
     bool isPrefabRoot(std::uint32_t id);
     /// Whether the prefab at @p prefab is a variant; false when it cannot be read.
     bool isVariant(const std::string& prefab);
-    /// Moves node @p id of the edited file into a new prefab under prefabs/, saved
-    /// at once, and leaves an instance of it in its place (TDDja/06 7). An instance
-    /// becomes a variant of its prefab carrying its overrides.
-    void prefabify(std::uint32_t id);
+    /// Moves node @p id of the edited file into a prefab saved at once, and leaves
+    /// an instance of it in its place (TDDja/06 7). An instance becomes a variant of
+    /// its prefab carrying its overrides. The prefab is @p file, replacing what it
+    /// held, or a new file under prefabs/ when @p file is empty.
+    void prefabify(std::uint32_t id, std::string file = {});
+    /// Handles node @p id dropped on prefab @p file: an instance of that prefab
+    /// applies its overrides to it; any other node asks to replace it.
+    void dropOnPrefab(std::uint32_t id, const std::string& file);
+    /// Writes the overrides of instance node @p id into its prefab, saved at once,
+    /// and clears them.
+    void applyOverrides(std::uint32_t id);
+    /// Draws the confirmation requested through replacing_ before a prefab is replaced.
+    void replaceDialog();
     /// Copies the selected node (without children) beside itself and selects the copy.
     void duplicate();
     /// Deletes the selected node (with its children) or runner, when the edited file owns it.
@@ -290,6 +299,8 @@ private:
     std::vector<Document> undo_, redo_;
     /// The drill-down; the first step is always the level.
     std::vector<Context> contexts_{{Context::Kind::Level, {}}};
+    /// A node and the prefab it is to replace, waiting for confirmation (replaceDialog()).
+    std::optional<std::pair<std::uint32_t, std::string>> replacing_, pendingReplace_;
     /// The drill-down to switch to at the start of the next frame.
     std::optional<std::vector<Context>> navigate_;
     Library library_;

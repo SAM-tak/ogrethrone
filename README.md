@@ -101,7 +101,9 @@ Instance places the prefab named next to it, creating one with a root node when
 the file does not exist yet; double-click the new instance node to fill the prefab.
 Dragging a node onto the Browser's Prefabs tab saves it as
 `prefabs/<name>.prefab.lton` and leaves an instance in its place; dragging an
-instance makes a variant of its prefab. Variants are shown in violet.
+instance makes a variant of its prefab. Dropping a node on an existing prefab
+file asks before replacing that prefab with it; dropping an instance on its own
+prefab applies the instance's overrides to the prefab. Variants are shown in violet.
 Ctrl+S saves the level, its scenes and every opened prefab.
 
 Right-drag orbits, middle-drag pans, the wheel zooms, left-click selects a node
