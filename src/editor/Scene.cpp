@@ -147,7 +147,10 @@ void readOptional(const LhatTable& table, std::string_view key, std::optional<T>
 }
 }
 
-bool Overrides::empty() const { return nodes.empty() && runners.empty() && added.empty() && removed.empty(); }
+bool Overrides::empty() const {
+    return nodes.empty() && runners.empty() && added.empty() && removed.empty() && addedRunners.empty() &&
+           removedRunners.empty();
+}
 
 NodeOverride& Overrides::node(const NodePath& path) {
     for (auto& entry : nodes)
@@ -202,6 +205,17 @@ LhatValue writeOverrides(lton::Writer& out, const Overrides& overrides) {
         for (const auto& path : overrides.removed) out.push(removed, writePath(out, path));
         out.set(root, "removed", removed);
     }
+    if (!overrides.addedRunners.empty()) out.set(root, "addedRunners", writeRunners(out, overrides.addedRunners));
+    if (!overrides.removedRunners.empty()) {
+        const auto removed = out.table();
+        for (const auto& entry : overrides.removedRunners) {
+            const auto item = out.table();
+            if (!entry.instance.empty()) out.set(item, "instance", writePath(out, entry.instance));
+            out.set(item, "runner", lhat_integer(entry.runner));
+            out.push(removed, item);
+        }
+        out.set(root, "removedRunners", removed);
+    }
     return root;
 }
 
@@ -253,6 +267,15 @@ Overrides readOverrides(LhatValue value) {
             if (overrides.removed.back().empty()) lton::invalid();
         }
     }
+    std::uint32_t unused = 1;
+    overrides.addedRunners = readRunners(lton::field(root, "addedRunners"), unused);
+    if (const auto removed = lton::field(root, "removedRunners"); !lhat_is_nil(removed)) {
+        const auto& list = lton::table(removed);
+        for (std::size_t i = 0, count = lton::sequence(list); i < count; ++i) {
+            const auto& item = lton::table(lton::at(list, i));
+            overrides.removedRunners.push_back({readPath(lton::field(item, "instance")), id(lton::field(item, "runner"))});
+        }
+    }
     return overrides;
 }
 
@@ -263,6 +286,11 @@ NodeId newNodeId() {
     do id = generator() >> 1;
     while (id < 0xFFFFFFFFu);
     return id;
+}
+
+std::uint32_t newRunnerId() {
+    static std::mt19937 generator(std::random_device{}());
+    return std::uniform_int_distribution<std::uint32_t>(0x80000000u, 0xFFFFFFFEu)(generator);
 }
 
 SceneNode* Prefab::findNode(NodeId id) {

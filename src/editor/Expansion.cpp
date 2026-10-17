@@ -45,6 +45,7 @@ void Expander::add(const Overrides& overrides, const NodePath& prefix) {
         }
         out.nodes[place(entry.node, join(prefix, {entry.node.id}), parent)].added = true;
     }
+    for (const auto& runner : overrides.addedRunners) out.runners.push_back({prefix, runner, true});
 }
 
 std::size_t Expander::place(const SceneNode& node, const NodePath& path, std::size_t parent) {
@@ -129,6 +130,24 @@ void apply(Expansion& out, const NodePath& prefix, const Overrides& overrides, s
         if (entry.rotation) node.rotation = *entry.rotation;
         if (entry.scale) node.scale = *entry.scale;
         if (entry.colour) node.colour = *entry.colour;
+    }
+    for (const auto& entry : overrides.removedRunners) {
+        const auto where = join(prefix, entry.instance);
+        auto instance = where;
+        if (!instance.empty()) {
+            const auto at = out.find(instance);
+            if (at == Expansion::npos) continue;
+            instance = out.nodes[at].path;
+        }
+        auto& runners = out.runners;
+        for (auto it = runners.begin(); it != runners.end();) {
+            if (it->instance != instance || it->runner.id != entry.runner) {
+                ++it;
+                continue;
+            }
+            out.removedRunners[{where, entry.runner}] = it->runner.name;
+            it = runners.erase(it);
+        }
     }
     for (const auto& entry : overrides.runners) {
         // The instance is found like a node, so it may have moved deeper since.

@@ -80,6 +80,13 @@ struct FieldOverride {
 
 struct AddedNode;
 
+/// A runner an instance's overrides remove: its ID in the instance it comes from.
+struct RemovedRunner {
+    /// That instance, relative to the overriding one; empty for the instance itself.
+    NodePath instance;
+    std::uint32_t runner = 0;
+};
+
 /// What one instance changes in what it instantiates (TDDja/06 4).
 struct Overrides {
     std::vector<NodeOverride> nodes;
@@ -89,6 +96,9 @@ struct Overrides {
     /// Nodes the instance removes, each with all below it; relative to the
     /// instance and never empty (the instance node itself stays).
     std::vector<NodePath> removed;
+    /// Runners the instance adds, with IDs from newRunnerId().
+    std::vector<Runner> addedRunners;
+    std::vector<RemovedRunner> removedRunners;
 
     /// Whether nothing is overridden.
     bool empty() const;
@@ -210,6 +220,9 @@ struct Scene : Prefab {
 
 /// Returns a new random NodeId.
 NodeId newNodeId();
+/// Returns a random runner ID from 0x80000000 up, for runners an instance adds:
+/// a file numbers its own runners from 1, so the two do not meet.
+std::uint32_t newRunnerId();
 /// Writes @p overrides as an LTON table; shared by prefab instances and scene instances.
 LhatValue writeOverrides(lton::Writer& out, const Overrides& overrides);
 /// Reads what writeOverrides wrote (nil^ reads as no overrides). @throws lton::Invalid on malformed data.

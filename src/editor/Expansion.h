@@ -53,6 +53,8 @@ struct ExpandedRunner {
     /// The prefab instance node it came from; empty for the content's own runner.
     NodePath instance;
     Runner runner;
+    /// Whether an instance's overrides added it.
+    bool added = false;
 };
 
 /// A scene or prefab with its prefab instances expanded (TDDja/06 5).
@@ -66,6 +68,9 @@ struct Expansion {
     /// Names of the nodes overrides removed, by the instance's path followed by the
     /// override's; they and all below them are not in `nodes`.
     std::map<NodePath, std::string> removed;
+    /// Names of the runners overrides removed, by the instance's path followed by
+    /// the override's instance path, and the runner's ID.
+    std::map<std::pair<NodePath, std::uint32_t>, std::string> removedRunners;
 
     /// Index of the node at @p path (see NodePath), or npos. Each ID is looked for
     /// below the node found for the one before it; the first match in order wins.

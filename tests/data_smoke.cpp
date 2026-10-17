@@ -216,6 +216,17 @@ int main() {
         alone.nodes[0].node.name != "Body" || alone.find({body, lid}) != 1 || alone.nodes[1].node.name != "Green Lid")
         return fail("A variant did not expand to its base with its overrides");
 
+    // An instance can remove the runners it brings and add its own.
+    const auto extra = throne::newRunnerId();
+    yard.nodes[0].overrides.addedRunners.push_back({extra, "Extra", {{"scripts/spin.lh", {}}}});
+    yard.nodes[0].overrides.removedRunners.push_back({{}, 1});
+    yard.save(directory / "scenes/yard.scene.lton");
+    const auto rerun = throne::expand(throne::Scene::load(directory / "scenes/yard.scene.lton"), library);
+    if (rerun.runners.size() != 1 || rerun.runners[0].runner.id != extra || !rerun.runners[0].added ||
+        rerun.runners[0].instance != throne::NodePath{yard.nodes[0].id} ||
+        rerun.removedRunners.at({{yard.nodes[0].id}, 1}) != "Spinner" || extra < 0x80000000u)
+        return fail("An instance did not remove and add runners");
+
     throne::Prefab loop, twoRoots, rootInstance;
     const auto loopRoot = loop.addNode("Root").id;
     loop.addNode("Self", loopRoot).prefab = "prefabs/loop.prefab.lton";

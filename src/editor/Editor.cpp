@@ -644,6 +644,26 @@ Editor::RunnerTarget Editor::runnerTarget() {
         target.overrides = &own->overrides;
         target.instance.assign(selected_.path.begin() + 1, selected_.path.end());
     }
+    // A runner an instance added is edited in place, inside that instance's overrides
+    // (or those of a node it added, for that node's runners).
+    while (target.overrides) {
+        if (target.instance.empty()) {
+            auto& added = target.overrides->addedRunners;
+            const auto it = std::find_if(added.begin(), added.end(), [&](const Runner& each) { return each.id == selected_.runner; });
+            if (it != added.end()) {
+                target.runner = &*it;
+                target.addedTo = target.overrides;
+                target.overrides = nullptr;
+            }
+            break;
+        }
+        auto& nodes = target.overrides->added;
+        const auto it = std::find_if(nodes.begin(), nodes.end(),
+                                     [&](const AddedNode& each) { return each.node.id == target.instance[0]; });
+        if (it == nodes.end()) break;
+        target.overrides = &it->node.overrides;
+        target.instance.erase(target.instance.begin());
+    }
     return target;
 }
 
@@ -974,6 +994,8 @@ void merge(Overrides& into, const Overrides& from) {
         for (const auto& [name, value] : entry.fields) into.fieldsOf(entry.instance, entry.runner, entry.behaviour).fields[name] = value;
     into.added.insert(into.added.end(), from.added.begin(), from.added.end());
     into.removed.insert(into.removed.end(), from.removed.begin(), from.removed.end());
+    into.addedRunners.insert(into.addedRunners.end(), from.addedRunners.begin(), from.addedRunners.end());
+    into.removedRunners.insert(into.removedRunners.end(), from.removedRunners.begin(), from.removedRunners.end());
 }
 }
 
@@ -1015,6 +1037,20 @@ void Editor::applyOverrides(NodeId id) {
             }
             entry.node.parent = entry.parent.empty() ? prefab.nodes.front().id : entry.parent[0];
             if (prefab.findNode(entry.node.parent)) prefab.nodes.push_back(std::move(entry.node));
+        }
+        // Added runners join the prefab's; removed ones leave it, or the instance they come from.
+        for (const auto& runner : node->overrides.addedRunners) {
+            auto& made = prefab.addRunner(runner.name);
+            const auto madeId = made.id;
+            made = runner;
+            made.id = madeId;
+        }
+        for (const auto& entry : node->overrides.removedRunners) {
+            if (entry.instance.empty()) {
+                prefab.removeRunner(entry.runner);
+            } else if (auto* target = prefab.findNode(entry.instance[0])) {
+                target->overrides.removedRunners.push_back({NodePath(entry.instance.begin() + 1, entry.instance.end()), entry.runner});
+            }
         }
         // Removed nodes leave the prefab, or join the removals of its instance they lie in.
         for (const auto& path : node->overrides.removed) {
@@ -1157,6 +1193,44 @@ void Editor::replaceDialog() {
 }
 
 void Editor::addRunner() {
+    // Into an instance (the selected runner's, or the one holding the selected
+    // node), the runner is kept in that instance's overrides.
+    Overrides* into = nullptr;
+    NodePath prefix;
+    if (selected_.kind == Selection::Kind::Runner && selected_.instance >= 0) {
+        const auto target = runnerTarget();
+        if (target.addedTo) {
+            into = target.addedTo;
+            prefix = selected_.path;
+        } else if (target.overrides) {
+            into = target.overrides;
+            prefix.assign(selected_.path.begin(), selected_.path.end() - static_cast<std::ptrdiff_t>(target.instance.size()));
+        }
+    } else if (selectedNode()) {
+        const auto target = targetOf(selected_.instance, selected_.path);
+        if (target.node && !target.node->prefab.empty()) {
+            into = &target.node->overrides;
+            prefix = selected_.path;
+        } else if (target.addedTo) {
+            into = target.addedTo;
+            prefix.assign(selected_.path.begin(), selected_.path.end() - 1);
+        } else if (!target.node && target.overrides) {
+            into = target.overrides;
+            prefix.assign(selected_.path.begin(), selected_.path.end() - static_cast<std::ptrdiff_t>(target.relative.size()));
+        }
+    } else if (auto* placed = selectedScene()) {
+        into = &placed->overrides;
+    } else if (content() && content()->variant()) {
+        into = &content()->overrides;
+    }
+    if (into) {
+        auto before = doc_;
+        Runner runner{newRunnerId(), "Runner", {}};
+        into->addedRunners.push_back(runner);
+        selected_ = {Selection::Kind::Runner, std::max(selected_.instance, 0), prefix, runner.id};
+        commit(std::move(before));
+        return;
+    }
     try {
         auto before = doc_;
         auto& owner = content() ? static_cast<RunnerSet&>(*content()) : doc_.world.level;
@@ -1249,8 +1323,19 @@ void Editor::erase() {
         checkpoint();
         content()->removeNode(selected_.path[0]);
     } else if (selected_.kind == Selection::Kind::Runner) {
-        if (!runnerTarget().runner) {
-            log("This runner comes from an instance: open its prefab or scene to delete it");
+        // One an instance added leaves its overrides; one it brought is removed by them.
+        const auto target = runnerTarget();
+        if (!target.runner || target.addedTo) {
+            if (!target.addedTo && !target.overrides) return;
+            checkpoint();
+            if (target.addedTo) {
+                auto& added = target.addedTo->addedRunners;
+                added.erase(std::remove_if(added.begin(), added.end(), [&](const Runner& each) { return each.id == selected_.runner; }),
+                            added.end());
+            } else {
+                target.overrides->removedRunners.push_back({target.instance, selected_.runner});
+            }
+            selected_ = {};
             return;
         }
         checkpoint();

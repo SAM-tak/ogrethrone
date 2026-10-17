@@ -214,11 +214,13 @@ void Editor::runnersPanel() {
         ImGui::EndDisabled();
         ImGui::SameLine();
         ImGui::TextDisabled(content() ? "to the edited file" : "to the level");
-        const auto item = [&](const char* label, int instance, const NodePath& path, std::uint32_t id, bool own) {
+        // Runners from instances are blue; those an instance added are overrides.
+        const auto item = [&](const char* label, int instance, const NodePath& path, std::uint32_t id, bool own,
+                              bool added = false) {
             ImGui::PushID(static_cast<int>(id));
             const bool chosen = selected_.kind == Selection::Kind::Runner && selected_.instance == instance &&
                                 selected_.path == path && selected_.runner == id;
-            if (!own) ImGui::PushStyleColor(ImGuiCol_Text, instanceColour);
+            if (!own) ImGui::PushStyleColor(ImGuiCol_Text, added ? overriddenColour : instanceColour);
             if (ImGui::Selectable(label, chosen)) selected_ = {Selection::Kind::Runner, instance, path, id};
             if (!own) ImGui::PopStyleColor();
             ImGui::PopID();
@@ -235,7 +237,7 @@ void Editor::runnersPanel() {
                     const auto& expanded = view_.instances[i].expansion.runners[r];
                     ImGui::PushID(static_cast<int>(r));
                     item(expanded.runner.name.c_str(), static_cast<int>(i), expanded.instance, expanded.runner.id,
-                         content() && !content()->variant() && expanded.instance.empty());
+                         content() && !content()->variant() && expanded.instance.empty() && !expanded.added, expanded.added);
                     ImGui::PopID();
                 }
                 ImGui::TreePop();
@@ -369,9 +371,24 @@ void Editor::removedList(Overrides& overrides, const Expansion& expansion, const
         if (ImGui::SmallButton("Restore")) restored = i;
         ImGui::PopID();
     }
-    if (!restored) return;
+    std::optional<std::size_t> restoredRunner;
+    for (std::size_t i = 0; i < overrides.removedRunners.size(); ++i) {
+        const auto& entry = overrides.removedRunners[i];
+        auto where = prefix;
+        where.insert(where.end(), entry.instance.begin(), entry.instance.end());
+        const auto name = expansion.removedRunners.find({where, entry.runner});
+        ImGui::PushID(static_cast<int>(overrides.removed.size() + i));
+        ImGui::TextColored(overriddenColour, "Removed runner %s",
+                           name != expansion.removedRunners.end() ? name->second.c_str() : "(gone)");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Restore")) restoredRunner = i;
+        ImGui::PopID();
+    }
+    if (!restored && !restoredRunner) return;
     checkpoint();
-    overrides.removed.erase(overrides.removed.begin() + static_cast<std::ptrdiff_t>(*restored));
+    if (restored) overrides.removed.erase(overrides.removed.begin() + static_cast<std::ptrdiff_t>(*restored));
+    if (restoredRunner)
+        overrides.removedRunners.erase(overrides.removedRunners.begin() + static_cast<std::ptrdiff_t>(*restoredRunner));
 }
 
 void Editor::runnerInspector(const Runner& shown) {
@@ -380,7 +397,9 @@ void Editor::runnerInspector(const Runner& shown) {
         if (ImGui::IsItemDeactivatedAfterEdit()) commit(std::move(editStart_));
     };
     auto target = runnerTarget();
-    ImGui::TextDisabled(target.runner ? "Runner" : "Runner of an instance: field edits are overrides");
+    ImGui::TextDisabled(target.addedTo  ? "Added by an instance: kept in its overrides"
+                        : target.runner ? "Runner"
+                                        : "Runner of an instance: field edits are overrides");
     char text[256];
     if (target.runner) {
         fill(text, target.runner->name);
