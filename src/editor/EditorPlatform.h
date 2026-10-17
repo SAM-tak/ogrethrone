@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 
 namespace Ogre { class Window; }
 namespace throne {
@@ -6,7 +7,9 @@ namespace throne {
 ///
 /// On Windows this initializes the ImGui Win32 backend and subclasses the OGRE
 /// window so its messages reach ImGui and closing the window becomes a request
-/// (see takeCloseRequest()). Elsewhere only the display size is set.
+/// (see takeCloseRequest()). While the window is dragged or resized, Windows runs
+/// its own message loop; modalFrame is then called about 60 times a second so the
+/// window keeps being drawn. Elsewhere only the display size is set.
 /// Requires a current ImGui context for its whole lifetime.
 class EditorPlatform {
 public:
@@ -21,7 +24,12 @@ public:
     void newFrame();
     /// Returns whether the user asked to close the window since the last call.
     bool takeCloseRequest();
+    /// Runs one frame of the application while a move or resize blocks its main loop.
+    std::function<void()> modalFrame;
 private:
+#ifdef _WIN32
+    friend struct WindowHook;
+#endif
     Ogre::Window& window_;
     void* handle_ = nullptr;
     bool closeRequested_ = false;

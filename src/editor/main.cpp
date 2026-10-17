@@ -94,9 +94,9 @@ int main(int argc, char** argv) {
             auto previous = std::chrono::steady_clock::now();
             double accumulator = 0.0;
             unsigned frames = 0;
-            while (!window->isClosed() && !editor.shouldClose() && (!smoke || frames < 3)) {
-                Ogre::WindowEventUtilities::messagePump();
-                if (window->isClosed()) break;
+            bool running = true;
+            // One frame; also run from the window hook while a move or resize blocks the loop.
+            const auto step = [&] {
                 const auto now = std::chrono::steady_clock::now();
                 const double elapsed = std::min(0.25, std::chrono::duration<double>(now - previous).count());
                 accumulator += elapsed;
@@ -106,10 +106,19 @@ int main(int argc, char** argv) {
                     physics.step();
                     accumulator -= 1.0 / 60.0;
                 }
-                if (!root.renderOneFrame()) break;
+                running = root.renderOneFrame();
                 ++frames;
+            };
+            editor.platform().modalFrame = [&] {
+                if (running && !window->isClosed()) step();
+            };
+            while (running && !window->isClosed() && !editor.shouldClose() && (!smoke || frames < 3)) {
+                Ogre::WindowEventUtilities::messagePump();
+                if (window->isClosed()) break;
+                step();
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
+            editor.platform().modalFrame = nullptr;
         }
         ImGui::DestroyContext();
         if (smoke) std::filesystem::remove_all(project);

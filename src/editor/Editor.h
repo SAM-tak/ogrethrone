@@ -60,6 +60,8 @@ public:
     /// True once the user chose to close (File > Exit or the window's close button),
     /// after resolving unsaved changes.
     bool shouldClose() const { return close_; }
+    /// The window hook; set its modalFrame to keep drawing during moves and resizes.
+    EditorPlatform& platform() { return platform_; }
 
 private:
     /// What to do once unsaved changes are resolved.
