@@ -44,6 +44,18 @@ constexpr const char* windowWorkspaceName = "ThroneEditor/Window";
 constexpr const char* lineMaterial = "ThroneEditor/Lines";
 constexpr std::size_t historyLimit = 100, logLimit = 200;
 
+/// ImGui's dark style with its blue accents turned to OGRE's green (#81d742).
+/// Green looks brighter than blue at the same value, so the accents are dimmed.
+void styleColours() {
+    ImGui::StyleColorsDark();
+    for (auto& colour : ImGui::GetStyle().Colors) {
+        float h, s, v;
+        ImGui::ColorConvertRGBtoHSV(colour.x, colour.y, colour.z, h, s, v);
+        if (s < 0.2f || h < 0.5f || h > 0.75f) continue;
+        ImGui::ColorConvertHSVtoRGB(94.0f / 360.0f, s, v * 0.75f, colour.x, colour.y, colour.z);
+    }
+}
+
 /// Returns the registered HlmsUnlit.
 /// @throws std::runtime_error if it has not been registered.
 Ogre::HlmsUnlit& unlitHlms(Ogre::Root& root) {
@@ -224,6 +236,7 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
     iniFile_ = projectListFile_.empty() ? std::string() : (projectListFile_.parent_path() / "editor.ini").u8string();
     io.IniFilename = iniFile_.empty() ? nullptr : iniFile_.c_str();
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    styleColours();
     io.Fonts->AddFontDefault();
     // The synchronous upload path asserts upstream (AlwaysKeepSystemRamCopy without
     // a RAM copy), so upload asynchronously and wait for it instead.
