@@ -6,17 +6,28 @@
 #include <cstdint>
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <string>
 #include <variant>
 #include <vector>
 
 namespace throne {
-/// A reference to a scene node: the scene's project-relative path and the node's ID.
-/// An empty scene path means the scene that holds the reference (TDDja/05 4).
+/// Node IDs from a scene or prefab's own node down through prefab instances,
+/// outermost first (TDDja/06 3). IDs are unique only within one file, so a
+/// node inside nested instances needs the whole path.
+using NodePath = std::vector<std::uint32_t>;
+
+/// A reference to a scene node (TDDja/05 4, 06 3.1).
 struct NodeRef {
-    std::string scene;
+    /// ID of the level's scene instance, or 0 for the scene (or prefab) holding the reference.
+    std::uint32_t scene = 0;
+    /// The node's ID in that scene; 0 means no node.
     std::uint32_t node = 0;
-    bool operator==(const NodeRef& other) const { return scene == other.scene && node == other.node; }
+    /// Path below `node` when it is a prefab instance; empty for the node itself.
+    NodePath inner;
+    bool operator==(const NodeRef& other) const {
+        return scene == other.scene && node == other.node && inner == other.inner;
+    }
 };
 
 /// A value written for one behaviour field, overriding the script's default.
@@ -40,7 +51,41 @@ struct Runner {
     std::vector<Behaviour> behaviours;
 };
 
+/// Property values an instance gives one node of its prefab (TDDja/06 4); unset ones keep the prefab's.
+struct NodeOverride {
+    /// The node, relative to the instance.
+    NodePath path;
+    std::optional<std::string> name;
+    std::optional<Vec3> position, rotation, scale;
+    std::optional<std::array<float, 3>> colour;
+};
+
+/// Field values an instance gives one behaviour of a runner in its prefab.
+struct FieldOverride {
+    /// The prefab instance the runner comes from, relative to the instance; empty for
+    /// the instance's own prefab.
+    NodePath instance;
+    std::uint32_t runner = 0;
+    std::size_t behaviour = 0;
+    std::map<std::string, FieldValue> fields;
+};
+
+/// What one instance changes in what it instantiates (TDDja/06 4).
+struct Overrides {
+    std::vector<NodeOverride> nodes;
+    std::vector<FieldOverride> runners;
+
+    /// Whether nothing is overridden.
+    bool empty() const { return nodes.empty() && runners.empty(); }
+    /// Returns the override for @p path, adding an empty one when there is none.
+    NodeOverride& node(const NodePath& path);
+    /// Returns the field override for that behaviour, adding an empty one when there is none.
+    FieldOverride& fieldsOf(const NodePath& instance, std::uint32_t runner, std::size_t behaviour);
+};
+
 /// One drawable node of a scene hierarchy. Currently every node is a unit cube.
+/// A node naming a prefab is a prefab instance: its transform places the
+/// prefab, whose root nodes become its children (TDDja/06 3).
 struct SceneNode {
     /// Unique nonzero ID within its scene.
     std::uint32_t id = 0;
@@ -56,6 +101,10 @@ struct SceneNode {
     Vec3 scale{1, 1, 1};
     /// Linear RGB colour with components in [0, 1].
     std::array<float, 3> colour{0.32f, 0.62f, 0.82f};
+    /// Project-relative path of the prefab this node instantiates; empty for a plain node.
+    std::string prefab;
+    /// What this instance changes in the prefab.
+    Overrides overrides;
 };
 
 /// The runners of one file (a prefab, scene or level), in run order.
@@ -115,6 +164,10 @@ struct Scene : Prefab {
     static Scene example();
 };
 
+/// Writes @p overrides as an LTON table; shared by prefab instances and scene instances.
+LhatValue writeOverrides(lton::Writer& out, const Overrides& overrides);
+/// Reads what writeOverrides wrote (nil^ reads as no overrides). @throws lton::Invalid on malformed data.
+Overrides readOverrides(LhatValue value);
 /// Writes @p runners as an LTON sequence; shared by prefabs, scenes and levels.
 LhatValue writeRunners(lton::Writer& out, const std::vector<Runner>& runners);
 /// Reads what writeRunners wrote. @throws lton::Invalid on malformed data.

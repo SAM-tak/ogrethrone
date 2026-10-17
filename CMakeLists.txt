@@ -48,7 +48,7 @@ endif()
 
 # Levels, projects and the project list: the editor's LTON data, without OGRE.
 add_library(throne_data STATIC src/editor/Lton.cpp src/editor/Scene.cpp src/editor/Level.cpp
-    src/editor/Project.cpp)
+    src/editor/Expansion.cpp src/editor/Project.cpp)
 target_include_directories(throne_data PUBLIC src)
 # stdlib/*.h are included by path relative to the L^ source root.
 target_include_directories(throne_data PRIVATE "${THRONE_LHAT_SOURCE_DIR}")
@@ -67,7 +67,7 @@ target_link_libraries(throne_script PUBLIC throne_data PRIVATE lhatstdlib)
 add_executable(throne_script_smoke tests/script_smoke.cpp)
 target_link_libraries(throne_script_smoke PRIVATE throne_script)
 if(BUILD_TESTING)
-    add_test(NAME script_smoke COMMAND throne_script_smoke)
+    add_test(NAME script_smoke COMMAND throne_script_smoke "${PROJECT_SOURCE_DIR}/samples/basic")
 endif()
 
 if(THRONE_BUILD_GRAPHICS)

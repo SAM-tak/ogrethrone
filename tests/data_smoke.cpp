@@ -1,3 +1,4 @@
+#include "editor/Expansion.h"
 #include "editor/Level.h"
 #include "editor/Project.h"
 #include "editor/Scene.h"
@@ -40,7 +41,7 @@ int main() {
         original.nodes[0].id != parent || original.nodes[2].id != grandchildId || !original.isWithin(grandchildId, parent))
         return fail("Reparenting broke the order or accepted a cycle");
     auto& runner = original.addRunner("Spinner");
-    runner.behaviours.push_back({"scripts/spin.lh", {{"target", throne::NodeRef{"", parent}},
+    runner.behaviours.push_back({"scripts/spin.lh", {{"target", throne::NodeRef{0, parent, {}}},
                                                      {"degreesPerSecond", 45.0},
                                                      {"label", std::string("x")},
                                                      {"enabled", true}}});
@@ -77,7 +78,7 @@ int main() {
     const auto reopened = throne::Project::open(project.root / throne::Project::markerName);
     const auto level = throne::Level::load(reopened.resolve(reopened.mainLevel));
     if (reopened.name != "My Game" || level.scenes.size() != 1 ||
-        throne::Scene::load(reopened.resolve(level.scenes[0])).nodes.size() != 2 ||
+        throne::Scene::load(reopened.resolve(level.scenes[0].scene)).nodes.size() != 2 ||
         !fs::exists(reopened.resolve("main.lh")))
         return fail("Created project did not reopen with main.lh, its main level and scene");
     try {
@@ -95,6 +96,56 @@ int main() {
         known.entries[1].root != project.root)
         return fail("Project list did not keep most-recent-first order");
 
+    // Nested prefabs: a stack of two crates; the scene places the stack and
+    // overrides one lid, and so does the level's second instance of the scene.
+    throne::Prefab crate;
+    crate.addNode("Body");
+    crate.addNode("Lid", 1);
+    crate.addRunner("Spinner").behaviours.push_back({"scripts/spin.lh", {{"target", throne::NodeRef{0, 2, {}}}}});
+    crate.save(directory / "prefabs/crate.prefab.lton");
+    throne::Prefab stack;
+    for (const char* name : {"Bottom", "Top"}) stack.addNode(name).prefab = "prefabs/crate.prefab.lton";
+    stack.nodes[0].overrides.node({2}).colour = std::array<float, 3>{1, 0, 0};
+    stack.save(directory / "prefabs/stack.prefab.lton");
+    throne::Scene room;
+    room.addNode("Floor");
+    auto& placed = room.addNode("Stack");
+    placed.prefab = "prefabs/stack.prefab.lton";
+    placed.overrides.node({1, 2}).position = throne::Vec3{0, 5, 0};
+    placed.overrides.fieldsOf({1}, 1, 0).fields["degreesPerSecond"] = 10.0;
+    room.save(directory / "scenes/room.scene.lton");
+
+    throne::Library library(directory);
+    const auto reloaded = throne::Scene::load(directory / "scenes/room.scene.lton");
+    const auto expanded = throne::expand(reloaded, library, "scenes/room.scene.lton");
+    const auto lid = expanded.find({2, 1, 2});
+    if (!expanded.errors.empty() || expanded.nodes.size() != 8 || lid == throne::Expansion::npos)
+        return fail("Nested prefab instances did not expand to eight nodes");
+    if (expanded.nodes[lid].node.colour[0] != 1 || expanded.nodes[lid].node.position.y != 5 ||
+        expanded.nodes[expanded.nodes[lid].parent].path != throne::NodePath{2, 1, 1})
+        return fail("Inner and outer overrides were not both applied to the nested lid");
+    if (expanded.runners.size() != 2 || expanded.runners[0].instance != throne::NodePath{2, 1} ||
+        std::get<double>(expanded.runners[0].runner.behaviours[0].fields.at("degreesPerSecond")) != 10 ||
+        expanded.runners[1].runner.behaviours[0].fields.count("degreesPerSecond"))
+        return fail("Prefab runners were not copied per instance with their field overrides");
+
+    throne::Prefab loop;
+    loop.addNode("Self").prefab = "prefabs/loop.prefab.lton";
+    loop.save(directory / "prefabs/loop.prefab.lton");
+    if (throne::expand(loop, library, "prefabs/loop.prefab.lton").errors.empty())
+        return fail("A prefab that instantiates itself was accepted");
+
+    throne::World world;
+    world.scenes["scenes/room.scene.lton"] = reloaded;
+    world.level.addScene("scenes/room.scene.lton");
+    world.level.addScene("scenes/room.scene.lton").overrides.node({1}).name = "Other Floor";
+    world.level.save(directory / "levels/two.level.lton");
+    world.level = throne::Level::load(directory / "levels/two.level.lton");
+    auto both = throne::expand(world, library);
+    if (both.instances.size() != 2 || both.find(1)->nodes[0].node.name != "Floor" ||
+        both.find(2)->nodes[0].node.name != "Other Floor")
+        return fail("Two instances of one scene did not keep their own overrides");
+
     fs::remove_all(directory);
-    std::printf("Scene, level, project and list round-tripped\n");
+    std::printf("Scene, level, prefab expansion, project and list round-tripped\n");
 }

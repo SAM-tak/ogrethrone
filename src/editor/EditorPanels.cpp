@@ -1,4 +1,5 @@
-// The Scene, Runners and Inspector panels of the Editor (TDDja/05 6).
+// The Scene, Runners and Inspector panels and the drill-down breadcrumb of the Editor
+// (TDDja/05 6, 06 6).
 #include "editor/Editor.h"
 #include <imgui.h>
 #include <algorithm>
@@ -7,27 +8,22 @@
 
 namespace throne {
 namespace {
-/// Drag-and-drop payload naming a scene node.
-struct NodePayload {
-    int scene;
-    std::uint32_t id;
-};
+/// Drag-and-drop payload naming a node of the edited file by its ID.
 constexpr const char* nodePayload = "THRONE_NODE";
+/// Text colour of overridden properties and of nodes that come from instances.
+const ImVec4 overriddenColour(1.0f, 0.75f, 0.3f, 1.0f), instanceColour(0.55f, 0.75f, 1.0f, 1.0f);
 
 /// A pending reparent, applied after the tree has been drawn.
 struct Move {
-    int scene;
     std::uint32_t id, parent;
 };
 std::optional<Move> pendingMove;
 
-/// Accepts a node dropped on the last item, from the same scene, to go under @p parent.
-void dropTarget(int scene, std::uint32_t parent) {
+/// Accepts a node of the edited file dropped on the last item, to go under @p parent.
+void dropTarget(std::uint32_t parent) {
     if (!ImGui::BeginDragDropTarget()) return;
-    if (const auto* payload = ImGui::AcceptDragDropPayload(nodePayload)) {
-        const auto& node = *static_cast<const NodePayload*>(payload->Data);
-        if (node.scene == scene) pendingMove = Move{scene, node.id, parent};
-    }
+    if (const auto* payload = ImGui::AcceptDragDropPayload(nodePayload))
+        pendingMove = Move{*static_cast<const std::uint32_t*>(payload->Data), parent};
     ImGui::EndDragDropTarget();
 }
 
@@ -36,67 +32,116 @@ template <std::size_t Size>
 void fill(char (&buffer)[Size], const std::string& text) {
     std::snprintf(buffer, Size, "%s", text.c_str());
 }
+
+/// Returns @p path without its first @p count IDs.
+NodePath after(const NodePath& path, std::size_t count) { return NodePath(path.begin() + count, path.end()); }
+}
+
+void Editor::breadcrumb() {
+    for (std::size_t i = 0; i < contexts_.size(); ++i) {
+        ImGui::PushID(static_cast<int>(i));
+        if (i) {
+            ImGui::SameLine();
+            ImGui::TextUnformatted(">");
+            ImGui::SameLine();
+        }
+        const auto label = i == 0 ? std::string("Level") : contexts_[i].path;
+        if (ImGui::SmallButton(label.c_str()) && i + 1 < contexts_.size() && !runtime_) {
+            contexts_.resize(i + 1);
+            selected_ = {};
+        }
+        ImGui::PopID();
+    }
 }
 
 void Editor::scenePanel() {
     if (ImGui::Begin("Scene")) {
         ImGui::BeginDisabled(runtime_ != nullptr);
-        if (ImGui::Button("Add Node")) addNode();
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(-90);
-        ImGui::InputText("##ScenePath", newScenePath_, sizeof newScenePath_);
-        ImGui::SameLine();
-        if (ImGui::Button("Add Scene")) addScene();
+        if (!content()) {
+            if (ImGui::Button("Add Scene")) addScene();
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(-1);
+            ImGui::InputText("##ScenePath", newScenePath_, sizeof newScenePath_);
+        } else {
+            if (ImGui::Button("Add Node")) addNode();
+            ImGui::SameLine();
+            if (ImGui::Button("Add Instance")) addInstance();
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(-1);
+            ImGui::InputText("##PrefabPath", newPrefabPath_, sizeof newPrefabPath_);
+        }
         ImGui::EndDisabled();
         ImGui::Separator();
-        if (world_.scenes.empty()) ImGui::TextDisabled("No scenes. Add one above.");
-        for (std::size_t i = 0; i < world_.scenes.size(); ++i) {
+        if (view_.instances.empty()) ImGui::TextDisabled("No scenes. Add one above.");
+        std::optional<std::uint32_t> removed;
+        for (std::size_t i = 0; i < view_.instances.size(); ++i) {
             ImGui::PushID(static_cast<int>(i));
-            const bool open = ImGui::TreeNodeEx("##scene", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth,
-                                                "%s", world_.scenes[i].path.c_str());
-            dropTarget(static_cast<int>(i), 0);
+            std::string label = contexts_.back().path;
+            if (!content()) {
+                const auto* instance = doc_.world.level.findScene(view_.instances[i].id);
+                label = "#" + std::to_string(view_.instances[i].id) + " " + (instance ? instance->scene : "?");
+            }
+            const bool open = ImGui::TreeNodeEx("##root", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth,
+                                                "%s", label.c_str());
+            // Double-clicking a scene instance drills into its scene file.
+            if (!content() && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !runtime_)
+                if (const auto* instance = doc_.world.level.findScene(view_.instances[i].id))
+                    enter({Context::Kind::Scene, instance->scene});
+            if (content()) dropTarget(0);
+            if (!content() && !runtime_) {
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Remove")) removed = view_.instances[i].id;
+            }
             if (open) {
-                nodeTree(i, 0);
+                for (const auto& error : view_.instances[i].expansion.errors)
+                    ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "%s", error.c_str());
+                nodeTree(i, Expansion::npos);
                 ImGui::TreePop();
             }
             ImGui::PopID();
         }
-        if (pendingMove && !runtime_) {
-            auto before = world_;
-            if (world_.scenes[pendingMove->scene].scene.reparent(pendingMove->id, pendingMove->parent)) {
-                commit(std::move(before));
-                rebuildScene();
-            }
+        if (pendingMove && !runtime_ && content()) {
+            auto before = doc_;
+            if (content()->reparent(pendingMove->id, pendingMove->parent)) commit(std::move(before));
         }
         pendingMove.reset();
+        if (removed) removeScene(*removed);
     }
     ImGui::End();
 }
 
-void Editor::nodeTree(std::size_t scene, std::uint32_t parent) {
-    const auto& prefab = world_.scenes[scene].scene;
-    for (const auto& node : prefab.nodes) {
-        if (node.parent != parent) continue;
-        const bool leaf = std::none_of(prefab.nodes.begin(), prefab.nodes.end(),
-                                       [&](const SceneNode& other) { return other.parent == node.id; });
-        const bool chosen = selected_.kind == Selection::Kind::Node && selected_.scene == static_cast<int>(scene) &&
-                            selected_.id == node.id;
+void Editor::nodeTree(std::size_t instance, std::size_t parent) {
+    const auto& nodes = view_.instances[instance].expansion.nodes;
+    for (std::size_t k = 0; k < nodes.size(); ++k) {
+        const auto& expanded = nodes[k];
+        if (expanded.parent != parent) continue;
+        const bool leaf = std::none_of(nodes.begin(), nodes.end(), [&](const ExpandedNode& other) { return other.parent == k; });
+        const bool chosen = selected_.kind == Selection::Kind::Node && selected_.instance == static_cast<int>(instance) &&
+                            selected_.path == expanded.path;
+        // Only the edited file's own nodes can be dragged or take children.
+        const bool own = content() && expanded.path.size() == 1;
         auto flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_DefaultOpen;
         if (leaf) flags |= ImGuiTreeNodeFlags_Leaf;
         if (chosen) flags |= ImGuiTreeNodeFlags_Selected;
-        const bool open = ImGui::TreeNodeEx(reinterpret_cast<void*>(static_cast<std::uintptr_t>(node.id)), flags, "%s",
-                                            node.name.c_str());
+        const auto label = expanded.node.prefab.empty() ? expanded.node.name
+                                                         : expanded.node.name + "  [" + expanded.node.prefab + "]";
+        if (!own) ImGui::PushStyleColor(ImGuiCol_Text, instanceColour);
+        const bool open = ImGui::TreeNodeEx(reinterpret_cast<void*>(static_cast<std::uintptr_t>(k)), flags, "%s", label.c_str());
+        if (!own) ImGui::PopStyleColor();
         if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
-            selected_ = {Selection::Kind::Node, static_cast<int>(scene), node.id};
-        if (ImGui::BeginDragDropSource()) {
-            const NodePayload payload{static_cast<int>(scene), node.id};
-            ImGui::SetDragDropPayload(nodePayload, &payload, sizeof payload);
-            ImGui::TextUnformatted(node.name.c_str());
+            selected_ = {Selection::Kind::Node, static_cast<int>(instance), expanded.path};
+        // Double-clicking an instance node drills into its prefab.
+        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !expanded.node.prefab.empty() &&
+            !runtime_)
+            enter({Context::Kind::Prefab, expanded.node.prefab});
+        if (own && ImGui::BeginDragDropSource()) {
+            ImGui::SetDragDropPayload(nodePayload, &expanded.path[0], sizeof expanded.path[0]);
+            ImGui::TextUnformatted(expanded.node.name.c_str());
             ImGui::EndDragDropSource();
         }
-        dropTarget(static_cast<int>(scene), node.id);
+        if (own && expanded.node.prefab.empty()) dropTarget(expanded.path[0]);
         if (open) {
-            nodeTree(scene, node.id);
+            nodeTree(instance, k);
             ImGui::TreePop();
         }
     }
@@ -104,28 +149,39 @@ void Editor::nodeTree(std::size_t scene, std::uint32_t parent) {
 
 void Editor::runnersPanel() {
     if (ImGui::Begin("Runners")) {
-        const auto section = [&](int scene, const char* label) {
-            ImGui::PushID(scene);
-            const bool open = ImGui::TreeNodeEx("##runners", ImGuiTreeNodeFlags_DefaultOpen, "%s", label);
-            ImGui::SameLine();
-            ImGui::BeginDisabled(runtime_ != nullptr);
-            if (ImGui::SmallButton("+ Runner")) addRunner(scene);
-            ImGui::EndDisabled();
-            if (open) {
-                for (const auto& runner : runnersOf(scene).runners) {
-                    ImGui::PushID(static_cast<int>(runner.id));
-                    const bool chosen = selected_.kind == Selection::Kind::Runner && selected_.scene == scene &&
-                                        selected_.id == runner.id;
-                    if (ImGui::Selectable(runner.name.c_str(), chosen))
-                        selected_ = {Selection::Kind::Runner, scene, runner.id};
+        ImGui::BeginDisabled(runtime_ != nullptr);
+        if (ImGui::Button("+ Runner")) addRunner();
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::TextDisabled(content() ? "to the edited file" : "to the level");
+        const auto item = [&](const char* label, int instance, const NodePath& path, std::uint32_t id, bool own) {
+            ImGui::PushID(static_cast<int>(id));
+            const bool chosen = selected_.kind == Selection::Kind::Runner && selected_.instance == instance &&
+                                selected_.path == path && selected_.runner == id;
+            if (!own) ImGui::PushStyleColor(ImGuiCol_Text, instanceColour);
+            if (ImGui::Selectable(label, chosen)) selected_ = {Selection::Kind::Runner, instance, path, id};
+            if (!own) ImGui::PopStyleColor();
+            ImGui::PopID();
+        };
+        if (!content() && ImGui::TreeNodeEx("Level", ImGuiTreeNodeFlags_DefaultOpen)) {
+            for (const auto& runner : doc_.world.level.runners) item(runner.name.c_str(), -1, {}, runner.id, true);
+            ImGui::TreePop();
+        }
+        for (std::size_t i = 0; i < view_.instances.size(); ++i) {
+            ImGui::PushID(static_cast<int>(i));
+            const auto label = content() ? contexts_.back().path : "#" + std::to_string(view_.instances[i].id);
+            if (ImGui::TreeNodeEx("##runners", ImGuiTreeNodeFlags_DefaultOpen, "%s", label.c_str())) {
+                for (std::size_t r = 0; r < view_.instances[i].expansion.runners.size(); ++r) {
+                    const auto& expanded = view_.instances[i].expansion.runners[r];
+                    ImGui::PushID(static_cast<int>(r));
+                    item(expanded.runner.name.c_str(), static_cast<int>(i), expanded.instance, expanded.runner.id,
+                         content() && expanded.instance.empty());
                     ImGui::PopID();
                 }
                 ImGui::TreePop();
             }
             ImGui::PopID();
-        };
-        section(-1, "Level");
-        for (std::size_t i = 0; i < world_.scenes.size(); ++i) section(static_cast<int>(i), world_.scenes[i].path.c_str());
+        }
     }
     ImGui::End();
 }
@@ -133,73 +189,134 @@ void Editor::runnersPanel() {
 void Editor::inspector() {
     if (ImGui::Begin("Inspector")) {
         ImGui::BeginDisabled(runtime_ != nullptr);
-        if (auto* node = selectedNode()) nodeInspector(*node);
-        else if (auto* runner = selectedRunner()) runnerInspector(*runner, selected_.scene);
+        if (const auto* node = selectedNode()) nodeInspector(*node);
+        else if (const auto* runner = selectedRunner()) runnerInspector(*runner);
         else ImGui::TextDisabled("Nothing selected");
         ImGui::EndDisabled();
     }
     ImGui::End();
 }
 
-void Editor::nodeInspector(SceneNode& node) {
+void Editor::nodeInspector(const ExpandedNode& expanded) {
     // One undo step per widget interaction, recorded when the widget is released.
     const auto track = [this] {
-        if (ImGui::IsItemActivated()) editStart_ = world_;
+        if (ImGui::IsItemActivated()) editStart_ = doc_;
         if (ImGui::IsItemDeactivatedAfterEdit()) commit(std::move(editStart_));
+    };
+    const auto target = targetOf(selected_.instance, selected_.path);
+    NodeOverride* layer = nullptr;
+    if (target.overrides)
+        for (auto& entry : target.overrides->nodes)
+            if (entry.path == target.relative) layer = &entry;
+    ImGui::TextDisabled(target.node ? "Scene node" : "Node of an instance: edits are overrides");
+
+    auto value = expanded.node;
+    unsigned changed = 0;
+    // Draws one property, coloured when overridden, with Revert next to it.
+    const auto property = [&](unsigned bit, bool overridden, auto&& widget, auto&& revert) {
+        if (overridden) ImGui::PushStyleColor(ImGuiCol_Text, overriddenColour);
+        if (widget()) changed |= bit;
+        if (overridden) ImGui::PopStyleColor();
+        track();
+        if (overridden) {
+            ImGui::SameLine();
+            ImGui::PushID(static_cast<int>(bit));
+            if (ImGui::SmallButton("Revert")) {
+                checkpoint();
+                revert();
+            }
+            ImGui::PopID();
+        }
     };
     constexpr auto clamp = ImGuiSliderFlags_AlwaysClamp;
-    ImGui::TextDisabled("Scene node");
     char name[256];
-    fill(name, node.name);
-    if (ImGui::InputText("Name", name, sizeof name) && name[0]) node.name = name;
-    track();
-    ImGui::DragFloat3("Position", node.position.data(), 0.05f, -1.0e6f, 1.0e6f, "%.3f", clamp);
-    track();
-    ImGui::DragFloat3("Rotation", node.rotation.data(), 0.5f, -1.0e6f, 1.0e6f, "%.1f", clamp);
-    track();
-    ImGui::DragFloat3("Scale", node.scale.data(), 0.01f, 0.001f, 1.0e6f, "%.3f", clamp);
-    track();
-    ImGui::ColorEdit3("Colour", node.colour.data());
-    track();
-    ImGui::Separator();
-    if (ImGui::Button("Duplicate")) duplicate();
-    ImGui::SameLine();
-    if (ImGui::Button("Delete")) erase();
+    fill(name, value.name);
+    property(1, layer && layer->name, [&] { return ImGui::InputText("Name", name, sizeof name) && name[0] && (value.name = name, true); },
+             [&] { layer->name.reset(); });
+    property(2, layer && layer->position,
+             [&] { return ImGui::DragFloat3("Position", value.position.data(), 0.05f, -1.0e6f, 1.0e6f, "%.3f", clamp); },
+             [&] { layer->position.reset(); });
+    property(4, layer && layer->rotation,
+             [&] { return ImGui::DragFloat3("Rotation", value.rotation.data(), 0.5f, -1.0e6f, 1.0e6f, "%.1f", clamp); },
+             [&] { layer->rotation.reset(); });
+    property(8, layer && layer->scale,
+             [&] { return ImGui::DragFloat3("Scale", value.scale.data(), 0.01f, 0.001f, 1.0e6f, "%.3f", clamp); },
+             [&] { layer->scale.reset(); });
+    property(16, layer && layer->colour, [&] { return ImGui::ColorEdit3("Colour", value.colour.data()); },
+             [&] { layer->colour.reset(); });
+    if (changed) writeNode(value, changed);
+
+    if (!expanded.node.prefab.empty()) {
+        ImGui::Separator();
+        ImGui::Text("Instance of %s", expanded.node.prefab.c_str());
+        if (ImGui::Button("Open Prefab")) enter({Context::Kind::Prefab, expanded.node.prefab});
+    }
+    if (target.node) {
+        ImGui::Separator();
+        if (ImGui::Button("Duplicate")) duplicate();
+        ImGui::SameLine();
+        if (ImGui::Button("Delete")) erase();
+    }
 }
 
-void Editor::runnerInspector(Runner& runner, int scene) {
+void Editor::runnerInspector(const Runner& shown) {
     const auto track = [this] {
-        if (ImGui::IsItemActivated()) editStart_ = world_;
+        if (ImGui::IsItemActivated()) editStart_ = doc_;
         if (ImGui::IsItemDeactivatedAfterEdit()) commit(std::move(editStart_));
     };
-    ImGui::TextDisabled(scene < 0 ? "Level runner" : "Scene runner");
+    auto target = runnerTarget();
+    ImGui::TextDisabled(target.runner ? "Runner" : "Runner of an instance: field edits are overrides");
     char text[256];
-    fill(text, runner.name);
-    if (ImGui::InputText("Name", text, sizeof text) && text[0]) runner.name = text;
-    track();
+    if (target.runner) {
+        fill(text, target.runner->name);
+        if (ImGui::InputText("Name", text, sizeof text) && text[0]) target.runner->name = text;
+        track();
+    } else {
+        ImGui::Text("%s", shown.name.c_str());
+    }
+    // The layer field values are written to: the runner itself, or this instance's overrides.
+    const auto layer = [&](std::size_t k) -> std::map<std::string, FieldValue>* {
+        if (target.runner) return &target.runner->behaviours[k].fields;
+        if (target.overrides) return &target.overrides->fieldsOf(target.instance, selected_.runner, k).fields;
+        return nullptr;
+    };
+    const auto overridden = [&](std::size_t k, const std::string& name) {
+        if (target.runner) return target.runner->behaviours[k].fields.count(name) > 0;
+        if (!target.overrides) return false;
+        for (const auto& entry : target.overrides->runners)
+            if (entry.instance == target.instance && entry.runner == selected_.runner && entry.behaviour == k)
+                return entry.fields.count(name) > 0;
+        return false;
+    };
 
     std::optional<std::size_t> remove;
-    for (std::size_t k = 0; k < runner.behaviours.size(); ++k) {
-        auto& behaviour = runner.behaviours[k];
+    for (std::size_t k = 0; k < shown.behaviours.size(); ++k) {
+        const auto& behaviour = shown.behaviours[k];
         ImGui::PushID(static_cast<int>(k));
         const auto title = (behaviour.script.empty() ? std::string("(no script)") : behaviour.script) + "###behaviour";
         if (ImGui::CollapsingHeader(title.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
-            fill(text, behaviour.script);
-            if (ImGui::InputTextWithHint("Script", "scripts/....lh", text, sizeof text)) behaviour.script = text;
-            track();
+            if (target.runner) {
+                fill(text, behaviour.script);
+                if (ImGui::InputTextWithHint("Script", "scripts/....lh", text, sizeof text))
+                    target.runner->behaviours[k].script = text;
+                track();
+            }
             const auto& cached = fieldsOf(behaviour.script);
             if (!cached.error.empty()) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "%s", cached.error.c_str());
             for (const auto& info : cached.fields) {
                 ImGui::PushID(info.name.c_str());
                 const auto found = behaviour.fields.find(info.name);
-                const bool overridden = found != behaviour.fields.end();
                 // A stored value of the wrong type (the script changed) shows the default.
-                const auto& value =
-                    overridden && found->second.index() == info.defaultValue.index() ? found->second : info.defaultValue;
+                const FieldValue value = found != behaviour.fields.end() && found->second.index() == info.defaultValue.index()
+                                             ? found->second
+                                             : info.defaultValue;
+                const bool marked = overridden(k, info.name);
+                if (marked && !target.runner) ImGui::PushStyleColor(ImGuiCol_Text, overriddenColour);
                 switch (info.kind) {
                 case FieldKind::Number: {
                     auto number = static_cast<float>(std::get<double>(value));
-                    if (ImGui::DragFloat(info.name.c_str(), &number, 0.1f)) behaviour.fields[info.name] = double(number);
+                    if (ImGui::DragFloat(info.name.c_str(), &number, 0.1f))
+                        if (auto* fields = layer(k)) (*fields)[info.name] = double(number);
                     track();
                     break;
                 }
@@ -207,64 +324,86 @@ void Editor::runnerInspector(Runner& runner, int scene) {
                     bool flag = std::get<bool>(value);
                     if (ImGui::Checkbox(info.name.c_str(), &flag)) {
                         checkpoint();
-                        behaviour.fields[info.name] = flag;
+                        if (auto* fields = layer(k)) (*fields)[info.name] = flag;
                     }
                     break;
                 }
                 case FieldKind::String:
                     fill(text, std::get<std::string>(value));
-                    if (ImGui::InputText(info.name.c_str(), text, sizeof text)) behaviour.fields[info.name] = std::string(text);
+                    if (ImGui::InputText(info.name.c_str(), text, sizeof text))
+                        if (auto* fields = layer(k)) (*fields)[info.name] = std::string(text);
                     track();
                     break;
                 case FieldKind::SceneNode: {
-                    // An empty scene path in a scene runner's reference means its own scene.
-                    // Copies: choosing an entry below may erase the stored value.
+                    // A reference without a scene is relative to where the runner is; one
+                    // with a scene instance ID (level runners) starts at that scene.
                     const NodeRef ref = std::get<NodeRef>(value);
-                    const std::string refScene = ref.scene.empty() && scene >= 0 ? world_.scenes[scene].path : ref.scene;
+                    int refInstance = selected_.instance;
+                    NodePath refPath = selected_.instance >= 0 ? selected_.path : NodePath{};
+                    if (ref.scene) {
+                        refInstance = -1;
+                        refPath.clear();
+                        for (std::size_t i = 0; i < view_.instances.size(); ++i)
+                            if (view_.instances[i].id == ref.scene) refInstance = static_cast<int>(i);
+                    }
+                    refPath.push_back(ref.node);
+                    refPath.insert(refPath.end(), ref.inner.begin(), ref.inner.end());
                     std::string current = "(none)";
-                    if (auto* loaded = world_.findScene(refScene))
-                        if (const auto* node = loaded->scene.findNode(ref.node)) current = refScene + ": " + node->name;
+                    if (ref.node && refInstance >= 0)
+                        if (const auto at = view_.instances[refInstance].expansion.find(refPath); at != Expansion::npos)
+                            current = view_.instances[refInstance].expansion.nodes[at].node.name;
                     if (ImGui::BeginCombo(info.name.c_str(), current.c_str())) {
                         if (ImGui::Selectable("(none)", ref.node == 0)) {
                             checkpoint();
-                            behaviour.fields.erase(info.name);
+                            if (auto* fields = layer(k)) (*fields)[info.name] = NodeRef{};
                         }
-                        for (std::size_t j = 0; j < world_.scenes.size(); ++j)
-                            for (const auto& node : world_.scenes[j].scene.nodes) {
-                                const auto label = world_.scenes[j].path + ": " + node.name + "##" +
-                                                   std::to_string(j) + "/" + std::to_string(node.id);
-                                if (ImGui::Selectable(label.c_str(), refScene == world_.scenes[j].path && ref.node == node.id)) {
-                                    checkpoint();
-                                    const bool own = scene == static_cast<int>(j);
-                                    behaviour.fields[info.name] = NodeRef{own ? std::string() : world_.scenes[j].path, node.id};
-                                }
+                        // A level runner may pick any node; any other runner, nodes of its own instance.
+                        const auto& prefix = selected_.instance >= 0 ? selected_.path : NodePath{};
+                        for (std::size_t i = 0; i < view_.instances.size(); ++i) {
+                            if (selected_.instance >= 0 && static_cast<int>(i) != selected_.instance) continue;
+                            for (const auto& node : view_.instances[i].expansion.nodes) {
+                                if (node.path.size() <= prefix.size() || !std::equal(prefix.begin(), prefix.end(), node.path.begin()))
+                                    continue;
+                                std::string label = node.node.name;
+                                if (selected_.instance < 0) label = "#" + std::to_string(view_.instances[i].id) + " " + label;
+                                label += "##" + std::to_string(i);
+                                for (const auto step : node.path) label += "/" + std::to_string(step);
+                                if (!ImGui::Selectable(label.c_str(), static_cast<int>(i) == refInstance && node.path == refPath))
+                                    continue;
+                                checkpoint();
+                                const auto relative = after(node.path, prefix.size());
+                                NodeRef picked{selected_.instance < 0 ? view_.instances[i].id : 0, relative[0], after(relative, 1)};
+                                if (auto* fields = layer(k)) (*fields)[info.name] = picked;
                             }
+                        }
                         ImGui::EndCombo();
                     }
                     break;
                 }
                 }
-                if (overridden && behaviour.fields.count(info.name)) {
+                if (marked && !target.runner) ImGui::PopStyleColor();
+                if (marked) {
                     ImGui::SameLine();
-                    if (ImGui::SmallButton("Reset")) {
+                    if (ImGui::SmallButton(target.runner ? "Reset" : "Revert")) {
                         checkpoint();
-                        behaviour.fields.erase(info.name);
+                        if (auto* fields = layer(k)) fields->erase(info.name);
                     }
                 }
                 ImGui::PopID();
             }
-            if (ImGui::Button("Remove Behaviour")) remove = k;
+            if (target.runner && ImGui::Button("Remove Behaviour")) remove = k;
         }
         ImGui::PopID();
     }
+    if (!target.runner) return;
     if (remove) {
         checkpoint();
-        runner.behaviours.erase(runner.behaviours.begin() + static_cast<std::ptrdiff_t>(*remove));
+        target.runner->behaviours.erase(target.runner->behaviours.begin() + static_cast<std::ptrdiff_t>(*remove));
     }
     ImGui::Separator();
     if (ImGui::Button("Add Behaviour")) {
         checkpoint();
-        runner.behaviours.push_back({});
+        target.runner->behaviours.push_back({});
     }
     ImGui::SameLine();
     if (ImGui::Button("Delete Runner")) erase();

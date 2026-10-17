@@ -19,5 +19,18 @@ nodes = {
         scale = {1.0, 1.5, 1.0},
     },
 },
-runners = {},
+runners = {
+    {
+        behaviours = {
+            {
+                fields = {
+                    target = {node = 1},
+                },
+                script = "scripts/spin.lh",
+            },
+        },
+        id = 1,
+        name = "SpinningCube",
+    },
+},
 version = 1,

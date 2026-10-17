@@ -54,6 +54,7 @@ A project is a folder containing `project.throne.lton`:
     lhat-host.json        # written by the editor for the L^ language server
     levels/               # *.level.lton
     scenes/               # *.scene.lton
+    prefabs/              # *.prefab.lton
     scripts/              # *.lh
 ```
 
@@ -70,10 +71,24 @@ effect-free data):
   local position, rotation (degrees, applied about X, then Y, then Z), scale and
   colour; nodes are unit cubes for now. Drag nodes in the Scene panel to reparent
   them. A scene is a prefab (`*.prefab.lton`) extended with scene-wide data.
+- A **prefab** (`*.prefab.lton`) is a reusable node hierarchy with its own
+  runners. A node of a scene or prefab can be an *instance* of a prefab: it shows
+  the prefab's nodes under it and stores only its overrides of their properties
+  and runner field values. Prefabs nest; a prefab that contains itself is reported.
 - A **runner** runs behaviours. It is not part of the scene hierarchy and has no
   transform; it reaches nodes only through its behaviours' fields. Scenes and
   levels can both hold runners.
-- A **level** (`*.level.lton`) lists the scenes it loads and its own runners.
+- A **level** (`*.level.lton`) holds scene instances and its own runners. The
+  same scene can be placed more than once; each instance keeps its own overrides.
+  A level holds no nodes and no prefab instances of its own.
+
+The editor drills down: at the Level step the Scene panel lists the scene
+instances; double-clicking one (or a file in the Browser's Scenes tab) edits that
+scene, and double-clicking an instance node (or a file in the Prefabs tab) edits
+that prefab. The breadcrumb over the viewport returns to an outer step. Nodes and
+runners that come from an instance are drawn in blue; editing them writes an
+override, shown in orange with a Revert button. Add Instance places the prefab
+named next to it. Ctrl+S saves the level, its scenes and every opened prefab.
 
 Right-drag orbits, middle-drag pans, the wheel zooms, left-click selects a node
 and `F` frames it. The selected node shows an ImGuizmo gizmo: W, E and R (or the
@@ -191,7 +206,9 @@ public^let^Behaviour = def^{
 
 The `self^{ ... }` fields are what the Inspector shows for that behaviour: number,
 bool and string fields are edited directly, and `throne.SceneNode` fields pick a
-node from any loaded scene. A runner stores only the values that differ from the
+node: a level runner from any scene instance, a scene or prefab runner from its
+own hierarchy (each prefab instance gets its own copy of the prefab's runners,
+pointing into that instance). A runner stores only the values that differ from the
 script's defaults (Reset removes one); a value whose field is gone or has another
 type is skipped with a warning in the log.
 
@@ -227,10 +244,10 @@ without opening a window:
 
 The file defaults to `lhat-host.json` in the working directory.
 
-In [`samples/basic`](samples/basic), the level's SpinningCube runner gives
+In [`samples/basic`](samples/basic), the scene's SpinningCube runner gives
 [`spin.lh`](samples/basic/scripts/spin.lh) the SpinningCube node as its `target`.
-The design is recorded in [TDDja/02-scripting.md](TDDja/02-scripting.md) and
-[TDDja/05-runner.md](TDDja/05-runner.md).
+The design is recorded in [TDDja/02-scripting.md](TDDja/02-scripting.md),
+[TDDja/05-runner.md](TDDja/05-runner.md) and [TDDja/06-prefab.md](TDDja/06-prefab.md).
 
 ## Audio
 

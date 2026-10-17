@@ -286,12 +286,14 @@ void Editor::openProject(const std::filesystem::path& path) {
         writeHostApi();
         const auto level = project_->mainLevel.empty() ? std::string(defaultLevelPath) : project_->mainLevel;
         std::snprintf(levelPath_, sizeof levelPath_, "%s", level.c_str());
-        world_ = World();
+        library_ = Library(project_->root);
+        doc_ = Document();
+        contexts_.resize(1);
         if (std::filesystem::exists(project_->resolve(level)) && !open()) throw std::runtime_error(fileError_);
         undo_.clear();
         redo_.clear();
         dirty_ = false;
-        rebuildScene();
+        refreshView();
         launcherError_.clear();
         log("Opened project " + project_->name + " (" + project_->root.u8string() + ")");
     } catch (const std::exception& error) {
@@ -303,12 +305,13 @@ void Editor::openProject(const std::filesystem::path& path) {
 void Editor::closeProject() {
     if (runtime_) stop();
     project_.reset();
-    world_ = World();
+    doc_ = Document();
+    contexts_.resize(1);
     undo_.clear();
     redo_.clear();
     dirty_ = false;
     selected_ = {};
-    rebuildScene();
+    refreshView();
     projectsChanged();
 }
 
@@ -427,21 +430,22 @@ void Editor::launcher() {
 }
 
 void Editor::play() {
-    playBackup_ = world_;
+    // Play always runs the level (TDDja/06 6), on its expansion only.
+    contexts_.resize(1);
+    selected_ = {};
+    refreshView();
     try {
         // Play runs the open level; playing the whole game (with main.lh) comes later.
         runtime_ = std::make_unique<ScriptRuntime>(
-            world_, project_->root, [this](const std::string& line) { log(line); }, PlayScope::Level);
+            doc_.world, view_, project_->root, [this](const std::string& line) { log(line); }, PlayScope::Level);
         log("Play");
     } catch (const ScriptError& error) {
-        world_ = std::move(playBackup_);
         log(std::string("Play refused:\n") + error.what());
     }
 }
 
 void Editor::stop() {
     runtime_.reset();
-    world_ = std::move(playBackup_);
     log("Stop");
 }
 
@@ -481,6 +485,7 @@ void Editor::frame(float deltaSeconds) {
             stop();
         }
     }
+    refreshView();
     shortcuts();
     menu();
     dockSpace();
@@ -496,21 +501,154 @@ void Editor::frame(float deltaSeconds) {
     gui_->prepareForRender(&scene_);
 }
 
+Prefab* Editor::content() {
+    const auto& context = contexts_.back();
+    if (context.kind == Context::Kind::Scene) return &doc_.world.scenes[context.path];
+    if (context.kind == Context::Kind::Prefab) return &doc_.prefabs[context.path];
+    return nullptr;
+}
+
+void Editor::refreshView() {
+    if (runtime_) return;
+    // Opened prefabs show their unsaved edits wherever they are instantiated.
+    for (const auto& [prefabPath, prefab] : doc_.prefabs) library_.put(prefabPath, prefab);
+    if (auto* edited = content()) {
+        view_ = {};
+        view_.instances.push_back({0, expand(*edited, library_, contexts_.back().path)});
+    } else {
+        view_ = expand(doc_.world, library_);
+    }
+    decltype(viewShape_) shape;
+    for (std::size_t i = 0; i < view_.instances.size(); ++i)
+        for (const auto& node : view_.instances[i].expansion.nodes) shape.emplace_back(i, node.path, node.parent);
+    if (shape != viewShape_) {
+        viewShape_ = std::move(shape);
+        rebuildScene();
+    }
+}
+
+void Editor::enter(Context context) {
+    if (context.kind == Context::Kind::Scene && !doc_.world.scenes.count(context.path)) {
+        const auto file = project_->resolve(context.path);
+        try {
+            doc_.world.scenes[context.path] = std::filesystem::exists(file) ? Scene::load(file) : Scene();
+        } catch (const std::exception& error) {
+            log("Cannot open " + context.path + ": " + error.what());
+            return;
+        }
+    }
+    if (context.kind == Context::Kind::Prefab && !doc_.prefabs.count(context.path)) {
+        try {
+            doc_.prefabs[context.path] = library_.prefab(context.path);
+        } catch (const std::exception& error) {
+            log("Cannot open " + context.path + ": " + error.what());
+            return;
+        }
+    }
+    contexts_.push_back(std::move(context));
+    selected_ = {};
+    refreshView();
+}
+
+Editor::NodeTarget Editor::targetOf(int instance, const NodePath& path) {
+    NodeTarget target;
+    if (path.empty()) return target;
+    if (!content()) {
+        // At the level every node belongs to a scene instance, so edits become its overrides.
+        if (instance < 0 || instance >= static_cast<int>(view_.instances.size())) return target;
+        if (auto* scene = doc_.world.level.findScene(view_.instances[instance].id)) {
+            target.overrides = &scene->overrides;
+            target.relative = path;
+        }
+        return target;
+    }
+    auto* own = content()->findNode(path[0]);
+    if (!own) return target;
+    if (path.size() == 1) {
+        target.node = own;
+    } else {
+        target.overrides = &own->overrides;
+        target.relative.assign(path.begin() + 1, path.end());
+    }
+    return target;
+}
+
+Editor::RunnerTarget Editor::runnerTarget() {
+    RunnerTarget target;
+    if (selected_.kind != Selection::Kind::Runner) return target;
+    if (selected_.instance < 0) {
+        target.runner = doc_.world.level.findRunner(selected_.runner);
+    } else if (!content()) {
+        if (selected_.instance < static_cast<int>(view_.instances.size()))
+            if (auto* scene = doc_.world.level.findScene(view_.instances[selected_.instance].id)) {
+                target.overrides = &scene->overrides;
+                target.instance = selected_.path;
+            }
+    } else if (selected_.path.empty()) {
+        target.runner = content()->findRunner(selected_.runner);
+    } else if (auto* own = content()->findNode(selected_.path[0])) {
+        target.overrides = &own->overrides;
+        target.instance.assign(selected_.path.begin() + 1, selected_.path.end());
+    }
+    return target;
+}
+
+const ExpandedNode* Editor::selectedNode() {
+    if (selected_.kind != Selection::Kind::Node || selected_.instance < 0 ||
+        selected_.instance >= static_cast<int>(view_.instances.size()))
+        return nullptr;
+    const auto& expansion = view_.instances[selected_.instance].expansion;
+    const auto at = expansion.find(selected_.path);
+    return at == Expansion::npos ? nullptr : &expansion.nodes[at];
+}
+
+const Runner* Editor::selectedRunner() {
+    if (selected_.kind != Selection::Kind::Runner) return nullptr;
+    if (selected_.instance < 0) return doc_.world.level.findRunner(selected_.runner);
+    if (selected_.instance >= static_cast<int>(view_.instances.size())) return nullptr;
+    for (const auto& expanded : view_.instances[selected_.instance].expansion.runners)
+        if (expanded.instance == selected_.path && expanded.runner.id == selected_.runner) return &expanded.runner;
+    return nullptr;
+}
+
+void Editor::writeNode(const SceneNode& value, unsigned changed) {
+    const auto target = targetOf(selected_.instance, selected_.path);
+    if (target.node) {
+        if (changed & 1) target.node->name = value.name;
+        if (changed & 2) target.node->position = value.position;
+        if (changed & 4) target.node->rotation = value.rotation;
+        if (changed & 8) target.node->scale = value.scale;
+        if (changed & 16) target.node->colour = value.colour;
+    } else if (target.overrides) {
+        auto& entry = target.overrides->node(target.relative);
+        if (changed & 1) entry.name = value.name;
+        if (changed & 2) entry.position = value.position;
+        if (changed & 4) entry.rotation = value.rotation;
+        if (changed & 8) entry.scale = value.scale;
+        if (changed & 16) entry.colour = value.colour;
+    }
+}
+
 void Editor::rebuildScene() {
     destroyRenderObjects();
-    for (std::size_t scene = 0; scene < world_.scenes.size(); ++scene) {
+    for (std::size_t i = 0; i < view_.instances.size(); ++i) {
+        const auto& nodes = view_.instances[i].expansion.nodes;
         // Parents come first, so each node's OGRE parent already exists.
-        std::map<std::uint32_t, Ogre::SceneNode*> created;
-        for (const auto& node : world_.scenes[scene].scene.nodes) {
-            const auto name = "ThroneEditor/Node/" + std::to_string(scene) + "/" + std::to_string(node.id);
-            auto* material = createMaterial(unlit_, name);
-            auto* mesh = scene_.createManualObject();
-            addCubeGeometry(*mesh, name);
-            auto* parent = node.parent ? created.at(node.parent) : scene_.getRootSceneNode();
-            auto* ogreNode = parent->createChildSceneNode();
-            ogreNode->attachObject(mesh);
-            created[node.id] = ogreNode;
-            renderObjects_.push_back({scene, node.id, ogreNode, mesh, material});
+        std::vector<Ogre::SceneNode*> created(nodes.size());
+        for (std::size_t k = 0; k < nodes.size(); ++k) {
+            auto* parent = nodes[k].parent == Expansion::npos ? scene_.getRootSceneNode() : created[nodes[k].parent];
+            created[k] = parent->createChildSceneNode();
+            // An instance node only places its prefab; its content draws itself.
+            Ogre::ManualObject* mesh = nullptr;
+            Ogre::HlmsUnlitDatablock* material = nullptr;
+            if (nodes[k].node.prefab.empty()) {
+                const auto name = "ThroneEditor/Node/" + std::to_string(i) + "/" + std::to_string(k);
+                material = createMaterial(unlit_, name);
+                mesh = scene_.createManualObject();
+                addCubeGeometry(*mesh, name);
+                created[k]->attachObject(mesh);
+            }
+            renderObjects_.push_back({i, k, created[k], mesh, material});
         }
     }
     syncTransforms();
@@ -519,9 +657,9 @@ void Editor::rebuildScene() {
 void Editor::destroyRenderObjects() {
     // Children before parents, so no node is destroyed while it still has children.
     for (auto it = renderObjects_.rbegin(); it != renderObjects_.rend(); ++it) {
-        scene_.destroyManualObject(it->mesh);
+        if (it->mesh) scene_.destroyManualObject(it->mesh);
         scene_.destroySceneNode(it->node);
-        unlit_.destroyDatablock(it->material->getName());
+        if (it->material) unlit_.destroyDatablock(it->material->getName());
     }
     renderObjects_.clear();
 }
@@ -529,13 +667,15 @@ void Editor::destroyRenderObjects() {
 void Editor::syncTransforms() {
     const RenderObject* outlined = nullptr;
     for (const auto& render : renderObjects_) {
-        const auto* node = world_.scenes[render.scene].scene.findNode(render.id);
-        render.node->setPosition(toOgre(node->position));
-        render.node->setOrientation(orientation(node->rotation));
-        render.node->setScale(toOgre(node->scale));
-        render.material->setColour(Ogre::ColourValue(node->colour[0], node->colour[1], node->colour[2]));
-        if (selected_.kind == Selection::Kind::Node && selected_.scene == static_cast<int>(render.scene) &&
-            selected_.id == render.id)
+        const auto& expanded = view_.instances[render.instance].expansion.nodes[render.index];
+        const auto& node = expanded.node;
+        render.node->setPosition(toOgre(node.position));
+        render.node->setOrientation(orientation(node.rotation));
+        render.node->setScale(toOgre(node.scale));
+        if (render.material)
+            render.material->setColour(Ogre::ColourValue(node.colour[0], node.colour[1], node.colour[2]));
+        if (selected_.kind == Selection::Kind::Node && selected_.instance == static_cast<int>(render.instance) &&
+            selected_.path == expanded.path)
             outlined = &render;
     }
     gridNode_->setVisible(showGrid_);
@@ -547,9 +687,9 @@ void Editor::syncTransforms() {
     }
 }
 
-void Editor::checkpoint() { commit(world_); }
+void Editor::checkpoint() { commit(doc_); }
 
-void Editor::commit(World before) {
+void Editor::commit(Document before) {
     undo_.push_back(std::move(before));
     if (undo_.size() > historyLimit) undo_.erase(undo_.begin());
     redo_.clear();
@@ -558,64 +698,71 @@ void Editor::commit(World before) {
 
 void Editor::undo() {
     if (undo_.empty()) return;
-    redo_.push_back(std::move(world_));
-    world_ = std::move(undo_.back());
+    redo_.push_back(std::move(doc_));
+    doc_ = std::move(undo_.back());
     undo_.pop_back();
     dirty_ = true;
-    rebuildScene();
 }
 
 void Editor::redo() {
     if (redo_.empty()) return;
-    undo_.push_back(std::move(world_));
-    world_ = std::move(redo_.back());
+    undo_.push_back(std::move(doc_));
+    doc_ = std::move(redo_.back());
     redo_.pop_back();
     dirty_ = true;
-    rebuildScene();
-}
-
-SceneNode* Editor::selectedNode() {
-    if (selected_.kind != Selection::Kind::Node || selected_.scene < 0 ||
-        selected_.scene >= static_cast<int>(world_.scenes.size()))
-        return nullptr;
-    return world_.scenes[selected_.scene].scene.findNode(selected_.id);
-}
-
-Runner* Editor::selectedRunner() {
-    if (selected_.kind != Selection::Kind::Runner || selected_.scene >= static_cast<int>(world_.scenes.size()))
-        return nullptr;
-    return runnersOf(selected_.scene).findRunner(selected_.id);
-}
-
-RunnerSet& Editor::runnersOf(int scene) {
-    return scene < 0 ? static_cast<RunnerSet&>(world_.level) : world_.scenes[scene].scene;
 }
 
 void Editor::addNode() {
-    if (world_.scenes.empty()) {
-        log("Add a scene first (Scene panel)");
+    auto* edited = content();
+    if (!edited) {
+        log("Nodes live in scenes: double-click a scene to edit it");
         return;
     }
-    const auto* parent = selectedNode();
-    const int scene = parent ? selected_.scene : 0;
+    // A node of the edited file can take a child; one inside an instance cannot (yet).
+    const auto* chosen = selectedNode();
+    const std::uint32_t parent = chosen && chosen->path.size() == 1 && chosen->node.prefab.empty() ? chosen->path[0] : 0;
     try {
-        auto before = world_;
-        auto& added = world_.scenes[scene].scene.addNode("Cube", parent ? parent->id : 0);
+        auto before = doc_;
+        auto& added = edited->addNode("Cube", parent);
         added.name = "Cube " + std::to_string(added.id);
-        selected_ = {Selection::Kind::Node, scene, added.id};
+        selected_ = {Selection::Kind::Node, 0, {added.id}};
         commit(std::move(before));
-        rebuildScene();
     } catch (const std::exception& error) {
         log(error.what());
     }
 }
 
-void Editor::addRunner(int scene) {
+void Editor::addInstance() {
+    auto* edited = content();
+    const std::string prefab = newPrefabPath_;
+    if (!edited || prefab.empty()) return;
+    // Expanding a probe in the edited file's place reports a missing prefab or a cycle.
+    Prefab probe;
+    probe.addNode("probe").prefab = prefab;
+    const auto check = expand(probe, library_, contexts_.back().kind == Context::Kind::Prefab ? contexts_.back().path : "");
+    if (!check.errors.empty()) {
+        log("Cannot place " + prefab + ": " + check.errors.front());
+        return;
+    }
     try {
-        auto before = world_;
-        auto& added = runnersOf(scene).addRunner("Runner");
+        auto before = doc_;
+        auto& added = edited->addNode(std::filesystem::u8path(prefab).stem().stem().u8string());
+        added.prefab = prefab;
+        added.position = {};
+        selected_ = {Selection::Kind::Node, 0, {added.id}};
+        commit(std::move(before));
+    } catch (const std::exception& error) {
+        log(error.what());
+    }
+}
+
+void Editor::addRunner() {
+    try {
+        auto before = doc_;
+        auto& owner = content() ? static_cast<RunnerSet&>(*content()) : doc_.world.level;
+        auto& added = owner.addRunner("Runner");
         added.name = "Runner " + std::to_string(added.id);
-        selected_ = {Selection::Kind::Runner, scene, added.id};
+        selected_ = {Selection::Kind::Runner, content() ? 0 : -1, {}, added.id};
         commit(std::move(before));
     } catch (const std::exception& error) {
         log(error.what());
@@ -623,74 +770,90 @@ void Editor::addRunner(int scene) {
 }
 
 void Editor::addScene() {
-    const std::string path = newScenePath_;
-    if (path.empty() || world_.findScene(path)) return;
+    const std::string scene = newScenePath_;
+    if (scene.empty() || content()) return;
     try {
-        auto before = world_;
-        const auto file = project_->resolve(path);
-        world_.scenes.push_back({path, std::filesystem::exists(file) ? Scene::load(file) : Scene()});
-        world_.level.scenes.push_back(path);
+        auto before = doc_;
+        if (!doc_.world.scenes.count(scene)) {
+            const auto file = project_->resolve(scene);
+            doc_.world.scenes[scene] = std::filesystem::exists(file) ? Scene::load(file) : Scene();
+        }
+        doc_.world.level.addScene(scene);
         commit(std::move(before));
-        rebuildScene();
     } catch (const std::exception& error) {
-        log("Could not add " + path + ": " + error.what());
+        log("Could not add " + scene + ": " + error.what());
     }
 }
 
+void Editor::removeScene(std::uint32_t id) {
+    auto& scenes = doc_.world.level.scenes;
+    checkpoint();
+    scenes.erase(std::remove_if(scenes.begin(), scenes.end(), [id](const SceneInstance& each) { return each.id == id; }),
+                 scenes.end());
+    selected_ = {};
+}
+
 void Editor::duplicate() {
-    const auto* source = selectedNode();
-    if (!source) return;
+    const auto target = targetOf(selected_.instance, selected_.path);
+    if (!target.node) return;
     try {
-        auto before = world_;
-        auto copy = *source;
-        auto& scene = world_.scenes[selected_.scene].scene;
-        auto& added = scene.addNode(copy.name, copy.parent);
+        auto before = doc_;
+        auto copy = *target.node;
+        auto& added = content()->addNode(copy.name, copy.parent);
         copy.id = added.id;
         if (copy.name.size() <= 250) copy.name += " Copy";
         copy.position.x += 1;
         added = std::move(copy);
-        selected_.id = added.id;
+        selected_.path = {added.id};
         commit(std::move(before));
-        rebuildScene();
     } catch (const std::exception& error) {
         log(error.what());
     }
 }
 
 void Editor::erase() {
-    if (selectedNode()) {
+    if (selected_.kind == Selection::Kind::Node) {
+        if (!targetOf(selected_.instance, selected_.path).node) {
+            log("This node comes from an instance: open its prefab or scene to delete it");
+            return;
+        }
         checkpoint();
-        world_.scenes[selected_.scene].scene.removeNode(selected_.id);
-    } else if (selectedRunner()) {
+        content()->removeNode(selected_.path[0]);
+    } else if (selected_.kind == Selection::Kind::Runner) {
+        if (!runnerTarget().runner) {
+            log("This runner comes from an instance: open its prefab or scene to delete it");
+            return;
+        }
         checkpoint();
-        runnersOf(selected_.scene).removeRunner(selected_.id);
+        (selected_.instance < 0 ? static_cast<RunnerSet&>(doc_.world.level) : *content()).removeRunner(selected_.runner);
     } else {
         return;
     }
     selected_ = {};
-    rebuildScene();
 }
 
 bool Editor::open() {
     try {
-        World loaded;
-        loaded.level = Level::load(project_->resolve(levelPath_));
-        for (const auto& path : loaded.level.scenes) {
-            const auto file = project_->resolve(path);
+        Document loaded;
+        loaded.world.level = Level::load(project_->resolve(levelPath_));
+        for (const auto& instance : loaded.world.level.scenes) {
+            if (loaded.world.scenes.count(instance.scene)) continue;
+            const auto file = project_->resolve(instance.scene);
             if (std::filesystem::exists(file)) {
-                loaded.scenes.push_back({path, Scene::load(file)});
+                loaded.world.scenes[instance.scene] = Scene::load(file);
             } else {
-                log("Scene " + path + " does not exist yet; it will be created on save");
-                loaded.scenes.push_back({path, Scene()});
+                log("Scene " + instance.scene + " does not exist yet; it will be created on save");
+                loaded.world.scenes[instance.scene] = Scene();
             }
         }
         checkpoint();
-        world_ = std::move(loaded);
+        doc_ = std::move(loaded);
+        contexts_.resize(1);
         dirty_ = false;
         selected_ = {};
-        if (!world_.scenes.empty() && !world_.scenes[0].scene.nodes.empty())
-            selected_ = {Selection::Kind::Node, 0, world_.scenes[0].scene.nodes.front().id};
-        rebuildScene();
+        refreshView();
+        if (!view_.instances.empty() && !view_.instances[0].expansion.nodes.empty())
+            selected_ = {Selection::Kind::Node, 0, view_.instances[0].expansion.nodes[0].path};
         focusSelection();
         log(std::string("Opened ") + levelPath_);
         return true;
@@ -703,10 +866,12 @@ bool Editor::open() {
 
 bool Editor::save() {
     try {
-        for (const auto& loaded : world_.scenes) loaded.scene.save(project_->resolve(loaded.path));
-        world_.level.save(project_->resolve(levelPath_));
+        for (const auto& [scenePath, scene] : doc_.world.scenes) scene.save(project_->resolve(scenePath));
+        for (const auto& [prefabPath, prefab] : doc_.prefabs) prefab.save(project_->resolve(prefabPath));
+        doc_.world.level.save(project_->resolve(levelPath_));
         dirty_ = false;
-        log(std::string("Saved ") + levelPath_ + " and " + std::to_string(world_.scenes.size()) + " scene(s)");
+        log(std::string("Saved ") + levelPath_ + ", " + std::to_string(doc_.world.scenes.size()) + " scene(s) and " +
+            std::to_string(doc_.prefabs.size()) + " prefab(s)");
         return true;
     } catch (const std::exception& error) {
         fileError_ = error.what();
@@ -740,10 +905,10 @@ void Editor::menu() {
     if (ImGui::BeginMenu("File")) {
         if (ImGui::MenuItem("New Level", nullptr, false, editing)) {
             checkpoint();
-            world_ = World();
+            doc_ = Document();
+            contexts_.resize(1);
             selected_ = {};
             std::snprintf(levelPath_, sizeof levelPath_, "levels/untitled.level.lton");
-            rebuildScene();
         }
         if (ImGui::MenuItem("Open...", "Ctrl+O", false, editing)) showFiles_ = true, saving_ = false;
         if (ImGui::MenuItem("Save", "Ctrl+S", false, editing)) save();
@@ -757,9 +922,10 @@ void Editor::menu() {
         if (ImGui::MenuItem("Undo", "Ctrl+Z", false, !undo_.empty())) undo();
         if (ImGui::MenuItem("Redo", "Ctrl+Y", false, !redo_.empty())) redo();
         ImGui::Separator();
-        if (ImGui::MenuItem("Add Node", nullptr, false, !world_.scenes.empty())) addNode();
-        if (ImGui::MenuItem("Add Level Runner")) addRunner(-1);
-        if (ImGui::MenuItem("Duplicate Node", "Ctrl+D", false, selectedNode() != nullptr)) duplicate();
+        if (ImGui::MenuItem("Add Node", nullptr, false, content() != nullptr)) addNode();
+        if (ImGui::MenuItem("Add Runner")) addRunner();
+        if (ImGui::MenuItem("Duplicate Node", "Ctrl+D", false, targetOf(selected_.instance, selected_.path).node))
+            duplicate();
         if (ImGui::MenuItem("Delete", "Del", false, selectedNode() || selectedRunner())) erase();
         ImGui::EndMenu();
     }
@@ -862,6 +1028,8 @@ void Editor::viewport() {
             ImGui::RadioButton("Scale (R)", &gizmoOperation_, ImGuizmo::SCALE);
             ImGui::SameLine();
             ImGui::Checkbox("Local", &gizmoLocal_);
+            ImGui::SetCursorScreenPos(ImVec2(origin.x + 6, origin.y + 30));
+            breadcrumb();
         }
     }
     ImGui::End();
@@ -888,6 +1056,27 @@ void Editor::browser() {
                 }
                 ImGui::EndTabItem();
             }
+            // One click picks the file for Add Scene / Add Instance; a double click opens it.
+            const auto files = [&](const char* tab, const char* folder, std::string_view suffix, char* pick,
+                                   std::size_t capacity, Context::Kind kind) {
+                if (!ImGui::BeginTabItem(tab)) return;
+                std::error_code error;
+                for (const auto& entry : std::filesystem::directory_iterator(project_->resolve(folder), error)) {
+                    const auto file = entry.path().filename().u8string();
+                    if (file.size() <= suffix.size() ||
+                        file.compare(file.size() - suffix.size(), suffix.size(), suffix) != 0)
+                        continue;
+                    const auto relative = std::string(folder) + "/" + file;
+                    if (ImGui::Selectable(file.c_str(), relative == pick, ImGuiSelectableFlags_AllowDoubleClick) &&
+                        relative.size() < capacity) {
+                        std::memcpy(pick, relative.c_str(), relative.size() + 1);
+                        if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !runtime_) enter({kind, relative});
+                    }
+                }
+                ImGui::EndTabItem();
+            };
+            files("Scenes", "scenes", ".scene.lton", newScenePath_, sizeof newScenePath_, Context::Kind::Scene);
+            files("Prefabs", "prefabs", ".prefab.lton", newPrefabPath_, sizeof newPrefabPath_, Context::Kind::Prefab);
             if (ImGui::BeginTabItem("Log")) {
                 for (const auto& message : messages_) ImGui::TextUnformatted(message.c_str());
                 if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) ImGui::SetScrollHereY(1.0f);
@@ -900,10 +1089,12 @@ void Editor::browser() {
 }
 
 void Editor::gizmo(ImVec2 origin, ImVec2 size) {
-    auto* node = selectedNode();
+    const auto* node = selectedNode();
     const RenderObject* render = nullptr;
     for (const auto& each : renderObjects_)
-        if (node && selected_.scene == static_cast<int>(each.scene) && each.id == node->id) render = &each;
+        if (node && selected_.instance == static_cast<int>(each.instance) &&
+            view_.instances[each.instance].expansion.nodes[each.index].path == selected_.path)
+            render = &each;
     if (!render || runtime_) {
         gizmoOver_ = false;
         return;
@@ -920,7 +1111,7 @@ void Editor::gizmo(ImVec2 origin, ImVec2 size) {
                              gizmoLocal_ ? ImGuizmo::LOCAL : ImGuizmo::WORLD, model);
     // One undo step per drag.
     const bool using_ = ImGuizmo::IsUsing();
-    if (using_ && !gizmoUsing_) editStart_ = world_;
+    if (using_ && !gizmoUsing_) editStart_ = doc_;
     if (!using_ && gizmoUsing_) commit(std::move(editStart_));
     gizmoUsing_ = using_;
     gizmoOver_ = ImGuizmo::IsOver();
@@ -936,10 +1127,12 @@ void Editor::gizmo(ImVec2 origin, ImVec2 size) {
     rotation.ToRotationMatrix(axes);
     Ogre::Radian z, y, x;
     axes.ToEulerAnglesZYX(z, y, x);
-    node->position = fromOgre(position);
-    node->rotation = {x.valueDegrees(), y.valueDegrees(), z.valueDegrees()};
-    node->scale = fromOgre(scale);
-    for (float* component : {&node->scale.x, &node->scale.y, &node->scale.z}) *component = std::max(*component, 0.001f);
+    auto value = node->node;
+    value.position = fromOgre(position);
+    value.rotation = {x.valueDegrees(), y.valueDegrees(), z.valueDegrees()};
+    value.scale = fromOgre(scale);
+    for (float* component : {&value.scale.x, &value.scale.y, &value.scale.z}) *component = std::max(*component, 0.001f);
+    writeNode(value, 2 | 4 | 8);
 }
 
 void Editor::updateCamera() {
@@ -955,8 +1148,8 @@ void Editor::updateCamera() {
 
 void Editor::focusSelection() {
     for (const auto& render : renderObjects_) {
-        if (selected_.kind != Selection::Kind::Node || selected_.scene != static_cast<int>(render.scene) ||
-            selected_.id != render.id)
+        if (selected_.kind != Selection::Kind::Node || selected_.instance != static_cast<int>(render.instance) ||
+            view_.instances[render.instance].expansion.nodes[render.index].path != selected_.path)
             continue;
         target_ = render.node->_getDerivedPositionUpdated();
         const auto scale = render.node->_getDerivedScaleUpdated();
@@ -970,6 +1163,7 @@ void Editor::pick(float x, float y) {
     auto nearest = std::numeric_limits<Ogre::Real>::max();
     selected_ = {};
     for (const auto& render : renderObjects_) {
+        if (!render.mesh) continue;
         // Test in node space; the unnormalized direction keeps distances comparable.
         const auto inverse = render.node->_getFullTransformUpdated().inverseAffine();
         const Ogre::Ray local(inverse.transformAffine(ray.getOrigin()),
@@ -977,7 +1171,8 @@ void Editor::pick(float x, float y) {
         const auto hit = local.intersects(unit);
         if (hit.first && hit.second < nearest) {
             nearest = hit.second;
-            selected_ = {Selection::Kind::Node, static_cast<int>(render.scene), render.id};
+            selected_ = {Selection::Kind::Node, static_cast<int>(render.instance),
+                         view_.instances[render.instance].expansion.nodes[render.index].path};
         }
     }
 }

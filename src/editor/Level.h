@@ -6,14 +6,31 @@
 #include <vector>
 
 namespace throne {
-/// The game-side data of one level (TDDja/04, 05): the scenes it starts with and
-/// the runners that belong to the level itself. Independent of OGRE and the
-/// simulation world; "scene" is left to OGRE's rendering terms.
-struct Level : RunnerSet {
-    /// Project-relative paths of the scenes loaded when the level starts.
-    std::vector<std::string> scenes;
+/// One placement of a scene in a level (TDDja/06 3.1). A scene instance has no
+/// transform; the same scene may be placed several times, each with its own overrides.
+struct SceneInstance {
+    /// Unique nonzero ID within the level; NodeRef::scene names it.
+    std::uint32_t id = 0;
+    /// Project-relative path of the scene.
+    std::string scene;
+    /// What this placement changes in the scene.
+    Overrides overrides;
+};
 
-    /// Writes the level as `ogrethrone-level` version 2 LTON (L^ Table Object Notation).
+/// The game-side data of one level (TDDja/04, 05, 06): the scene instances it
+/// starts with and the runners that belong to the level itself. A level holds
+/// no scene nodes of its own. Independent of OGRE and the simulation world.
+struct Level : RunnerSet {
+    /// Scene instances loaded when the level starts, in order.
+    std::vector<SceneInstance> scenes;
+    std::uint32_t nextSceneId = 1;
+
+    /// Appends an instance of the scene at @p path and returns it.
+    SceneInstance& addScene(const std::string& path);
+    /// Returns the scene instance with @p id, or nullptr.
+    SceneInstance* findScene(std::uint32_t id);
+
+    /// Writes the level as `ogrethrone-level` version 3 LTON (L^ Table Object Notation).
     ///
     /// The file is written to a temporary sibling and then replaced, so a failed
     /// save leaves any existing file intact.
@@ -25,24 +42,5 @@ struct Level : RunnerSet {
     /// expressions but cannot call anything with effects.
     /// @throws lton::Invalid when the file is missing, malformed or out of range.
     static Level load(const std::filesystem::path& path);
-};
-
-/// A scene loaded into a level, with its project-relative path.
-struct LoadedScene {
-    std::string path;
-    Scene scene;
-};
-
-/// A level with the scenes it has loaded: what the editor edits and Play runs on.
-struct World {
-    Level level;
-    std::vector<LoadedScene> scenes;
-
-    /// Returns the loaded scene at @p path, or nullptr.
-    LoadedScene* findScene(const std::string& path) {
-        for (auto& loaded : scenes)
-            if (loaded.path == path) return &loaded;
-        return nullptr;
-    }
 };
 }

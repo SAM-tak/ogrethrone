@@ -38,7 +38,7 @@ Project Project::create(const fs::path& parent, const std::string& name) {
     lton::writeAtomically(project.resolve("main.lh"), mainScript);
     Scene::example().save(project.resolve("scenes/main.scene.lton"));
     Level level;
-    level.scenes.push_back("scenes/main.scene.lton");
+    level.addScene("scenes/main.scene.lton");
     level.save(project.resolve(mainLevelPath));
     project.save();
     return project;

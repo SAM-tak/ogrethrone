@@ -30,8 +30,10 @@ struct Instance {
 
 /// A behaviour waiting to be instantiated, with where it came from.
 struct Pending {
-    /// Index of the runner's scene in World::scenes, or -1 for a level runner.
+    /// Index of the runner's scene instance in LevelExpansion::instances, or -1 for a level runner.
     int scene;
+    /// The prefab instance the runner came from; its NodeRefs are relative to it.
+    NodePath prefix;
     std::size_t runner;
     const Behaviour* behaviour;
     std::string what;
@@ -70,7 +72,8 @@ const char* fieldType(const FieldValue& value) {
 }
 
 struct ScriptRuntime::State {
-    World& world;
+    const World& world;
+    LevelExpansion& expanded;
     std::filesystem::path root;
     Log log;
     Program program{nullptr, &lhat_program_free};
@@ -92,8 +95,8 @@ struct ScriptRuntime::State {
     std::vector<const Runner*> runners;
     double time = 0;
 
-    State(World& world, std::filesystem::path root, Log log)
-        : world(world), root(std::move(root)), log(std::move(log)) {}
+    State(const World& world, LevelExpansion& expanded, std::filesystem::path root, Log log)
+        : world(world), expanded(expanded), root(std::move(root)), log(std::move(log)) {}
 
     /// Keeps @p value alive for the session and returns it.
     LhatValue keep(LhatValue value) {
@@ -112,7 +115,7 @@ struct ScriptRuntime::State {
     }
 
     /// A throne.SceneNode handle: the scene's index plus one, and the node ID.
-    static std::uintptr_t nodeBits(std::size_t scene, std::uint32_t node) {
+    static std::uintptr_t nodeBits(std::size_t scene, std::size_t node) {
         return (static_cast<std::uintptr_t>(scene + 1) << 32) | node;
     }
 
@@ -120,8 +123,10 @@ struct ScriptRuntime::State {
     SceneNode* resolve(LhatValue value) {
         const auto bits = reinterpret_cast<std::uintptr_t>(lhat_hostdata_pointer(value, sceneNode));
         const auto scene = static_cast<std::size_t>(bits >> 32);
-        if (scene == 0 || scene > world.scenes.size()) return nullptr;
-        return world.scenes[scene - 1].scene.findNode(static_cast<std::uint32_t>(bits & 0xFFFFFFFFu));
+        if (scene == 0 || scene > expanded.instances.size()) return nullptr;
+        auto& nodes = expanded.instances[scene - 1].expansion.nodes;
+        const auto node = static_cast<std::size_t>(bits & 0xFFFFFFFFu);
+        return node < nodes.size() ? &nodes[node].node : nullptr;
     }
 
     /// Returns the node a handle names, or panics and answers null.
@@ -298,12 +303,14 @@ THRONE_HOST(find, {
     const auto name = text(arguments[0]);
     answers[0] = lhat_nil();
     *count = 1;
-    for (std::size_t scene = 0; scene < s.world.scenes.size(); ++scene)
-        for (const auto& node : s.world.scenes[scene].scene.nodes)
-            if (node.name == name) {
-                answers[0] = s.handle(machine, s.sceneNode, State::nodeBits(scene, node.id));
+    for (std::size_t scene = 0; scene < s.expanded.instances.size(); ++scene) {
+        const auto& nodes = s.expanded.instances[scene].expansion.nodes;
+        for (std::size_t i = 0; i < nodes.size(); ++i)
+            if (nodes[i].node.name == name) {
+                answers[0] = s.handle(machine, s.sceneNode, State::nodeBits(scene, i));
                 return;
             }
+    }
 })
 /// throne.log(text).
 THRONE_HOST(log, { s.log(std::string(text(arguments[0]))); })
@@ -454,7 +461,8 @@ LhatValue definition(State& s, const LhatUnit* unit, const std::string& path) {
 
 std::string ScriptRuntime::hostApi() {
     World none;
-    State s(none, {}, {});
+    LevelExpansion nothing;
+    State s(none, nothing, {}, {});
     createProgram(s);
     std::string json(lhat_program_dump_host_api(s.program.get(), nullptr, 0) + 1, '\0');
     lhat_program_dump_host_api(s.program.get(), json.data(), json.size());
@@ -464,7 +472,8 @@ std::string ScriptRuntime::hostApi() {
 
 std::vector<FieldInfo> ScriptRuntime::fields(const std::filesystem::path& root, const std::string& script) {
     World none;
-    State s(none, root, {});
+    LevelExpansion nothing;
+    State s(none, nothing, root, {});
     createProgram(s);
     std::string errors;
     const auto* unit = checkBehaviour(s, script, errors);
@@ -497,8 +506,9 @@ std::vector<FieldInfo> ScriptRuntime::fields(const std::filesystem::path& root, 
     return result;
 }
 
-ScriptRuntime::ScriptRuntime(World& world, const std::filesystem::path& root, Log log, PlayScope scope)
-    : state_(std::make_unique<State>(world, root, std::move(log))) {
+ScriptRuntime::ScriptRuntime(const World& world, LevelExpansion& expanded, const std::filesystem::path& root, Log log,
+                             PlayScope scope)
+    : state_(std::make_unique<State>(world, expanded, root, std::move(log))) {
     auto& s = *state_;
     createProgram(s);
     auto* program = s.program.get();
@@ -511,17 +521,17 @@ ScriptRuntime::ScriptRuntime(World& world, const std::filesystem::path& root, Lo
 
     // Run order: scene runners scene by scene, then level runners.
     std::vector<Pending> pending;
-    const auto collect = [&](int scene, const std::vector<Runner>& runners, const std::string& owner) {
-        for (const auto& runner : runners) {
-            s.runners.push_back(&runner);
-            for (const auto& behaviour : runner.behaviours)
-                pending.push_back({scene, s.runners.size() - 1, &behaviour,
-                                   owner + " " + runner.name + " " + behaviour.script});
-        }
+    const auto collect = [&](int scene, const NodePath& prefix, const Runner& runner, const std::string& owner) {
+        s.runners.push_back(&runner);
+        for (const auto& behaviour : runner.behaviours)
+            pending.push_back({scene, prefix, s.runners.size() - 1, &behaviour,
+                               owner + " " + runner.name + " " + behaviour.script});
     };
-    for (std::size_t i = 0; i < world.scenes.size(); ++i)
-        collect(static_cast<int>(i), world.scenes[i].scene.runners, world.scenes[i].path);
-    collect(-1, world.level.runners, "level");
+    // Scene and prefab runners come expanded, one copy per instance (TDDja/06 2).
+    for (std::size_t i = 0; i < expanded.instances.size(); ++i)
+        for (const auto& runner : expanded.instances[i].expansion.runners)
+            collect(static_cast<int>(i), runner.instance, runner.runner, "scene " + std::to_string(expanded.instances[i].id));
+    for (const auto& runner : world.level.runners) collect(-1, {}, runner, "level");
 
     std::map<std::string, const LhatUnit*> units;
     for (const auto& item : pending)
@@ -556,11 +566,22 @@ ScriptRuntime::ScriptRuntime(World& world, const std::filesystem::path& root, Lo
                 if (!lhat_machine_make_string(s.machine.get(), string->data(), string->size(), &written))
                     throw ScriptError("Out of memory");
             } else {
+                // A reference without a scene is relative to the runner's own scene instance and
+                // prefab instance; one naming a scene instance starts from that scene's nodes.
                 const auto& ref = std::get<NodeRef>(value);
-                const auto scenePath = ref.scene.empty() && item.scene >= 0 ? world.scenes[item.scene].path : ref.scene;
-                for (std::size_t i = 0; i < world.scenes.size(); ++i)
-                    if (world.scenes[i].path == scenePath && world.scenes[i].scene.findNode(ref.node))
-                        written = s.handle(s.machine.get(), s.sceneNode, State::nodeBits(i, ref.node));
+                int scene = item.scene;
+                NodePath path = item.prefix;
+                if (ref.scene) {
+                    scene = -1;
+                    path.clear();
+                    for (std::size_t i = 0; i < expanded.instances.size(); ++i)
+                        if (expanded.instances[i].id == ref.scene) scene = static_cast<int>(i);
+                }
+                path.push_back(ref.node);
+                path.insert(path.end(), ref.inner.begin(), ref.inner.end());
+                if (scene >= 0 && ref.node)
+                    if (const auto at = expanded.instances[scene].expansion.find(path); at != Expansion::npos)
+                        written = s.handle(s.machine.get(), s.sceneNode, State::nodeBits(scene, at));
                 // A node that is not loaded leaves the script's default in place.
                 if (lhat_is_nil(written)) continue;
             }

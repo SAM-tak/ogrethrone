@@ -1,6 +1,6 @@
 #pragma once
 
-#include "editor/Level.h"
+#include "editor/Expansion.h"
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -35,7 +35,7 @@ enum class PlayScope {
     Game,
 };
 
-/// Runs a world's L^ scripts for one Play session (TDDja/02, 05).
+/// Runs a world's L^ scripts for one Play session (TDDja/02, 05, 06).
 ///
 /// Construction checks and compiles `main.lh` (when present and the scope is Game) and every
 /// behaviour script, then creates one `Behaviour` instance per behaviour of each
@@ -48,13 +48,16 @@ public:
     /// Receives text the scripts pass to throne.log, and warnings about field values.
     using Log = std::function<void(const std::string&)>;
 
-    /// @param world Level and scenes the scripts read and modify; must outlive the runtime.
-    ///        Scripts never add or remove nodes, runners or scenes.
+    /// @param world The level (for its own runners); must outlive the runtime.
+    /// @param expanded The world's scene instances, expanded; the scripts read and
+    ///        modify these nodes, never the world itself, so re-expanding the world
+    ///        undoes a session. Must outlive the runtime; nodes are never added or removed.
     /// @param root Project directory that script paths are relative to.
     /// @param log Destination of throne.log and of field warnings.
     /// @param scope Whether main.lh runs as well as the runners.
     /// @throws ScriptError when any script is missing, rejected or breaks the contract.
-    ScriptRuntime(World& world, const std::filesystem::path& root, Log log, PlayScope scope);
+    ScriptRuntime(const World& world, LevelExpansion& expanded, const std::filesystem::path& root, Log log,
+                  PlayScope scope);
     /// Releases the L^ machine and program.
     ~ScriptRuntime();
     ScriptRuntime(const ScriptRuntime&) = delete;

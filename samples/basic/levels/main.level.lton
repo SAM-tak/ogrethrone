@@ -1,17 +1,6 @@
 format = "ogrethrone-level",
-runners = {
-    {
-        behaviours = {
-            {
-                fields = {
-                    target = {node = 1, scene = "scenes/main.scene.lton"},
-                },
-                script = "scripts/spin.lh",
-            },
-        },
-        id = 1,
-        name = "SpinningCube",
-    },
+runners = {},
+scenes = {
+    {id = 1, scene = "scenes/main.scene.lton"},
 },
-scenes = {"scenes/main.scene.lton"},
-version = 2,
+version = 3,

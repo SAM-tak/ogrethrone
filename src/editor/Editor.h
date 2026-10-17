@@ -1,7 +1,7 @@
 #pragma once
 
 #include "editor/EditorPlatform.h"
-#include "editor/Level.h"
+#include "editor/Expansion.h"
 #include "editor/Project.h"
 #include "script/ScriptRuntime.h"
 #include <OgreVector3.h>
@@ -10,6 +10,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <tuple>
 #include <string>
 #include <vector>
 
@@ -81,20 +82,47 @@ private:
     void projectsChanged();
     /// Draws the launcher: new, import, and the known projects.
     void launcher();
-    /// OGRE objects that display one scene node.
+    /// OGRE objects that display one node of view_.
     struct RenderObject {
-        std::size_t scene;
-        std::uint32_t id;
+        std::size_t instance, index;
         Ogre::SceneNode* node;
         Ogre::ManualObject* mesh;
         Ogre::HlmsUnlitDatablock* material;
     };
-    /// What the inspector shows: a scene node, or a runner of a scene or of the level.
+    /// Everything the editor edits; one undo step is a copy of it.
+    struct Document {
+        World world;
+        /// Prefabs opened for editing (TDDja/06 6), by path; saved with the level.
+        std::map<std::string, Prefab> prefabs;
+    };
+    /// One step of the drill-down (TDDja/06 6).
+    struct Context {
+        enum class Kind { Level, Scene, Prefab } kind;
+        /// The scene or prefab file; empty for the level.
+        std::string path;
+    };
+    /// What the inspector shows: a node of view_, or a runner.
     struct Selection {
         enum class Kind { None, Node, Runner } kind = Kind::None;
-        /// Index into World::scenes, or -1 for a level runner.
-        int scene = -1;
-        std::uint32_t id = 0;
+        /// Index into view_.instances; -1 for a runner of the level itself.
+        int instance = -1;
+        /// The node's path; for a runner, the prefab instance it came from.
+        NodePath path;
+        /// The runner's ID.
+        std::uint32_t runner = 0;
+    };
+    /// Where an edit of one node is written: the node itself (it belongs to the
+    /// file being edited), or a property override of the instance that contains it.
+    struct NodeTarget {
+        SceneNode* node = nullptr;
+        Overrides* overrides = nullptr;
+        NodePath relative;
+    };
+    /// Where an edit of one runner is written: the runner itself, or field overrides.
+    struct RunnerTarget {
+        Runner* runner = nullptr;
+        Overrides* overrides = nullptr;
+        NodePath instance;
     };
     /// A script's editable fields, refreshed when the file changes.
     struct CachedFields {
@@ -104,7 +132,24 @@ private:
         bool loaded = false;
     };
 
-    /// Recreates all render objects from the world (after load, undo or structural edits).
+    /// The scene or prefab of the current context, or nullptr at the level.
+    Prefab* content();
+    /// Expands what the current context shows into view_, and rebuilds the render
+    /// objects when the node structure changed. Skipped while playing.
+    void refreshView();
+    /// Enters the drill-down step @p context.
+    void enter(Context context);
+    /// Where an edit of node @p path of view instance @p instance goes.
+    NodeTarget targetOf(int instance, const NodePath& path);
+    /// Where an edit of the selected runner goes.
+    RunnerTarget runnerTarget();
+    /// The selected node of view_, or nullptr.
+    const ExpandedNode* selectedNode();
+    /// The selected runner of view_ (or of the level), or nullptr.
+    const Runner* selectedRunner();
+    /// Writes @p value into the selected node through targetOf(); @p changed says which properties.
+    void writeNode(const SceneNode& value, unsigned changed);
+    /// Recreates all render objects from view_.
     void rebuildScene();
     /// Destroys every render object and its material.
     void destroyRenderObjects();
@@ -113,33 +158,32 @@ private:
     /// Records the current world for undo before an edit.
     void checkpoint();
     /// Records @p before for undo when an edit that started from it has finished.
-    void commit(World before);
+    void commit(Document before);
     /// Restores the previous world state, if any.
     void undo();
     /// Reapplies the most recently undone state, if any.
     void redo();
-    /// The selected scene node, or nullptr.
-    SceneNode* selectedNode();
-    /// The selected runner, or nullptr.
-    Runner* selectedRunner();
-    /// The runners of a scene (index) or of the level (-1).
-    RunnerSet& runnersOf(int scene);
-    /// Adds a cube under the selected node, or at the root of the first scene, and selects it.
+    /// Adds a cube to the edited scene or prefab, under the selected node when it is
+    /// one of its own, and selects it.
     void addNode();
-    /// Adds a runner to a scene (index) or the level (-1) and selects it.
-    void addRunner(int scene);
-    /// Loads the scene at newScenePath_ into the level, creating it when the file is absent.
+    /// Adds an instance of the prefab at newPrefabPath_ to the edited scene or prefab.
+    void addInstance();
+    /// Adds a runner to the level (at the Level step) or to the edited scene or prefab.
+    void addRunner();
+    /// Adds an instance of the scene at newScenePath_ to the level, creating the file when absent.
     void addScene();
+    /// Removes scene instance @p id from the level.
+    void removeScene(std::uint32_t id);
     /// Copies the selected node (without children) beside itself and selects the copy.
     void duplicate();
-    /// Deletes the selected node (with its children) or runner.
+    /// Deletes the selected node (with its children) or runner, when the edited file owns it.
     void erase();
     /// Returns the fields of @p script, reading it again when the file has changed.
     const CachedFields& fieldsOf(const std::string& script);
-    /// Replaces the world with the level at levelPath_ and its scenes; undoable.
+    /// Replaces the document with the level at levelPath_ and its scenes; undoable.
     /// @return false on failure, with the reason in fileError_.
     bool open();
-    /// Writes the level to levelPath_ and every loaded scene to its path.
+    /// Writes the level to levelPath_, every loaded scene and every opened prefab.
     /// @return false on failure, with the reason in fileError_.
     bool save();
     /// Handles keyboard shortcuts while no text field has focus.
@@ -148,10 +192,10 @@ private:
     void menu();
     /// Draws the modal open/save dialog requested through showFiles_.
     void fileDialog();
-    /// Enters Play mode: runs the scripts on a copy of the document (TDDja/02 3).
-    /// Rejected scripts are reported in the log and Play is not entered.
+    /// Enters Play mode on the level's expansion (TDDja/02 3, 06 6); scripts change
+    /// only view_, never the document. Rejected scripts are reported in the log.
     void play();
-    /// Leaves Play mode and restores the document as it was before play().
+    /// Leaves Play mode; the next refreshView() shows the document again.
     void stop();
     /// Performs @p action now, or asks first when the document has unsaved changes.
     void requestLeave(Leave action);
@@ -159,18 +203,21 @@ private:
     void leave(Leave action);
     /// Draws the Save / Discard / Cancel prompt requested through confirmClose_.
     void closeDialog();
-    /// Draws the Scene panel: each loaded scene's node hierarchy, with drag and drop reparenting.
+    /// Draws the breadcrumb of the drill-down over the viewport.
+    void breadcrumb();
+    /// Draws the Scene panel: the node hierarchies of view_, with drag and drop
+    /// reparenting of the edited file's own nodes.
     void scenePanel();
-    /// Draws the children of @p parent in scene @p scene as a tree.
-    void nodeTree(std::size_t scene, std::uint32_t parent);
-    /// Draws the Runners panel: the level's runners and each scene's.
+    /// Draws the children of node @p parent (an index, or npos) of view instance @p instance.
+    void nodeTree(std::size_t instance, std::size_t parent);
+    /// Draws the Runners panel: the level's runners and the runners of view_.
     void runnersPanel();
     /// Draws the property panel for the selected node or runner.
     void inspector();
-    /// Draws the node properties.
-    void nodeInspector(SceneNode& node);
-    /// Draws the runner's name and its behaviours with their fields.
-    void runnerInspector(Runner& runner, int scene);
+    /// Draws the selected node's properties, marking and reverting overridden ones.
+    void nodeInspector(const ExpandedNode& node);
+    /// Draws the selected runner's behaviours and their fields.
+    void runnerInspector(const Runner& runner);
     /// Draws the rendered scene and handles camera and picking input.
     void viewport();
     /// Draws the bottom panel listing the project's levels and log messages.
@@ -219,15 +266,21 @@ private:
     char newName_[101] = "", newParent_[512] = "", importPath_[512] = "";
     std::string launcherError_;
     Leave leaving_ = Leave::Exit;
-    World world_;
-    World editStart_;
-    std::vector<World> undo_, redo_;
-    /// Non-null while playing; runs on world_, with the edited state kept in playBackup_.
+    Document doc_, editStart_;
+    std::vector<Document> undo_, redo_;
+    /// The drill-down; the first step is always the level.
+    std::vector<Context> contexts_{{Context::Kind::Level, {}}};
+    Library library_;
+    /// What the current step shows, expanded; the runtime moves its nodes while playing.
+    LevelExpansion view_;
+    /// view_'s node structure (instance, path, parent) when the render objects were built.
+    std::vector<std::tuple<std::size_t, NodePath, std::size_t>> viewShape_;
+    /// Non-null while playing.
     std::unique_ptr<ScriptRuntime> runtime_;
-    World playBackup_;
     Selection selected_;
     std::map<std::string, CachedFields> fieldCache_;
     char newScenePath_[256] = "scenes/new.scene.lton";
+    char newPrefabPath_[256] = "prefabs/new.prefab.lton";
     Ogre::Vector3 target_{0, 0.5f, 0};
     float yaw_ = 0.65f, pitch_ = 0.45f, distance_ = 9.0f;
     unsigned viewportWidth_ = 0, viewportHeight_ = 0;

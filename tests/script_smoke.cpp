@@ -22,12 +22,24 @@ void write(const fs::path& root, const char* path, const char* text) {
     std::ofstream(root / path, std::ios::binary | std::ios::trunc) << text;
 }
 
-/// A world with the example scene and one level runner using @p script.
-throne::World world(const char* script) {
-    throne::World result;
-    result.scenes.push_back({"scenes/main.scene.lton", throne::Scene::example()});
-    auto& runner = result.level.addRunner("Spinner");
-    runner.behaviours.push_back({script, {{"target", throne::NodeRef{"scenes/main.scene.lton", 1}}}});
+/// A world and its expansion, as the editor hands them to a Play session.
+struct Session {
+    throne::World world;
+    throne::LevelExpansion expanded;
+
+    /// Nodes of the first scene instance.
+    std::vector<throne::ExpandedNode>& nodes() { return expanded.instances[0].expansion.nodes; }
+};
+
+/// The example scene placed once, and one level runner using @p script on its first node.
+Session world(const fs::path& root, const char* script) {
+    Session result;
+    result.world.scenes["scenes/main.scene.lton"] = throne::Scene::example();
+    const auto scene = result.world.level.addScene("scenes/main.scene.lton").id;
+    auto& runner = result.world.level.addRunner("Spinner");
+    runner.behaviours.push_back({script, {{"target", throne::NodeRef{scene, 1, {}}}}});
+    throne::Library library(root);
+    result.expanded = throne::expand(result.world, library);
     return result;
 }
 
@@ -35,9 +47,10 @@ throne::World world(const char* script) {
 /// starting or within three frames, or an empty string.
 std::string error(const fs::path& root, const char* script) {
     write(root, "scripts/broken.lh", script);
-    auto broken = world("scripts/broken.lh");
+    auto broken = world(root, "scripts/broken.lh");
     try {
-        throne::ScriptRuntime runtime(broken, root, [](const std::string&) {}, throne::PlayScope::Level);
+        throne::ScriptRuntime runtime(broken.world, broken.expanded, root, [](const std::string&) {},
+                                      throne::PlayScope::Level);
         for (int i = 0; i < 3; ++i) runtime.update(0.1f);
     } catch (const throne::ScriptError& e) {
         return e.what();
@@ -85,46 +98,75 @@ repeat^while^ moved < 3 {
 )";
 }
 
-int main() {
+int main(int argc, char** argv) {
     const auto root = fs::temp_directory_path() / "throne_script_smoke";
     fs::remove_all(root);
     write(root, "scripts/spin.lh", spin);
     write(root, "main.lh", mainScript);
 
     // A field value overrides the default; a field the script lacks is reported and skipped.
-    auto played = world("scripts/spin.lh");
-    auto& fields = played.level.runners[0].behaviours[0].fields;
+    auto played = world(root, "scripts/spin.lh");
+    auto& fields = played.world.level.runners[0].behaviours[0].fields;
     fields["degreesPerSecond"] = 45.0;
     fields["missing"] = 1.0;
     std::vector<std::string> logged;
     try {
-        throne::ScriptRuntime runtime(played, root, [&](const std::string& line) { logged.push_back(line); },
-                                      throne::PlayScope::Game);
+        throne::ScriptRuntime runtime(played.world, played.expanded, root,
+                                      [&](const std::string& line) { logged.push_back(line); }, throne::PlayScope::Game);
         for (int i = 0; i < 10; ++i) runtime.update(0.1f);
         if (!runtime.finished()) return fail("main.lh's coroutine did not finish");
     } catch (const throne::ScriptError& e) {
         return fail(std::string("Valid scripts failed:\n") + e.what());
     }
-    const auto& nodes = played.scenes[0].scene.nodes;
-    if (std::abs(nodes[0].rotation.y - 45) > 0.01f)
-        return fail("Behaviour did not rotate its target node: y=" + std::to_string(nodes[0].rotation.y));
-    if (std::abs(nodes[1].position.x - 5) > 0.01f)
+    const auto& nodes = played.nodes();
+    if (std::abs(nodes[0].node.rotation.y - 45) > 0.01f)
+        return fail("Behaviour did not rotate its target node: y=" + std::to_string(nodes[0].node.rotation.y));
+    if (std::abs(nodes[1].node.position.x - 5) > 0.01f)
         return fail("main.lh did not move Cube 2 once per frame for three frames: x=" +
-                    std::to_string(nodes[1].position.x));
+                    std::to_string(nodes[1].node.position.x));
+    if (played.world.scenes.at("scenes/main.scene.lton").nodes[0].rotation.y != 0)
+        return fail("Play changed the world instead of its expansion");
     if (logged.size() != 2 || logged[0].find("field missing ignored") == std::string::npos ||
         logged[1] != "start Spinner")
         return fail("Expected a skipped-field warning and one start line");
 
     // Playing the level alone runs the runners but not main.lh.
-    auto levelOnly = world("scripts/spin.lh");
+    auto levelOnly = world(root, "scripts/spin.lh");
     try {
-        throne::ScriptRuntime runtime(levelOnly, root, [](const std::string&) {}, throne::PlayScope::Level);
+        throne::ScriptRuntime runtime(levelOnly.world, levelOnly.expanded, root, [](const std::string&) {},
+                                      throne::PlayScope::Level);
         for (int i = 0; i < 10; ++i) runtime.update(0.1f);
     } catch (const throne::ScriptError& e) {
         return fail(std::string("Level play failed:\n") + e.what());
     }
-    if (levelOnly.scenes[0].scene.nodes[1].position.x != 2 || levelOnly.scenes[0].scene.nodes[0].rotation.y < 89)
+    if (levelOnly.nodes()[1].node.position.x != 2 || levelOnly.nodes()[0].node.rotation.y < 89)
         return fail("Level play ran main.lh or skipped the runners");
+
+    // A prefab's runner runs once per instance, each on the node inside its own instance.
+    throne::Prefab spinner;
+    spinner.addNode("Wheel");
+    spinner.addRunner("Spin").behaviours.push_back({"scripts/spin.lh", {{"target", throne::NodeRef{0, 1, {}}}}});
+    spinner.save(root / "prefabs/spinner.prefab.lton");
+    Session prefabs;
+    auto& placed = prefabs.world.scenes["scenes/two.scene.lton"];
+    placed.addNode("A").prefab = "prefabs/spinner.prefab.lton";
+    placed.addNode("B").prefab = "prefabs/spinner.prefab.lton";
+    placed.nodes[1].overrides.fieldsOf({}, 1, 0).fields["degreesPerSecond"] = 45.0;
+    prefabs.world.level.addScene("scenes/two.scene.lton");
+    throne::Library library(root);
+    prefabs.expanded = throne::expand(prefabs.world, library);
+    try {
+        throne::ScriptRuntime runtime(prefabs.world, prefabs.expanded, root, [](const std::string&) {},
+                                      throne::PlayScope::Level);
+        for (int i = 0; i < 10; ++i) runtime.update(0.1f);
+    } catch (const throne::ScriptError& e) {
+        return fail(std::string("Prefab runners failed:\n") + e.what());
+    }
+    const auto& expansion = prefabs.expanded.instances[0].expansion;
+    const auto& wheelA = expansion.nodes[expansion.find({1, 1})].node;
+    const auto& wheelB = expansion.nodes[expansion.find({2, 1})].node;
+    if (std::abs(wheelA.rotation.y - 90) > 0.01f || std::abs(wheelB.rotation.y - 45) > 0.01f)
+        return fail("Prefab runners did not turn their own instance's wheel at their own speed");
 
     const auto described = throne::ScriptRuntime::fields(root, "scripts/spin.lh");
     if (described.size() != 2 || described[0].name != "degreesPerSecond" ||
@@ -160,10 +202,31 @@ int main() {
     const auto project = throne::Project::create(root, "Fresh");
     try {
         throne::World empty;
-        throne::ScriptRuntime runtime(empty, project.root, [](const std::string&) {}, throne::PlayScope::Game);
+        throne::LevelExpansion nothing;
+        throne::ScriptRuntime runtime(empty, nothing, project.root, [](const std::string&) {}, throne::PlayScope::Game);
         runtime.update(0.1f);
     } catch (const throne::ScriptError& e) {
         return fail(std::string("Generated main.lh was rejected:\n") + e.what());
+    }
+
+    // The bundled sample loads and its scene runner spins the scene's own cube.
+    if (argc > 1) {
+        const fs::path sample = argv[1];
+        Session basic;
+        basic.world.level = throne::Level::load(sample / "levels/main.level.lton");
+        for (const auto& instance : basic.world.level.scenes)
+            basic.world.scenes[instance.scene] = throne::Scene::load(sample / instance.scene);
+        throne::Library library(sample);
+        basic.expanded = throne::expand(basic.world, library);
+        try {
+            throne::ScriptRuntime runtime(basic.world, basic.expanded, sample, [](const std::string&) {},
+                                          throne::PlayScope::Level);
+            runtime.update(0.5f);
+        } catch (const throne::ScriptError& e) {
+            return fail(std::string("The sample was rejected:\n") + e.what());
+        }
+        if (std::fabs(basic.nodes()[0].node.rotation.y - 45.0f) > 0.01f)
+            return fail("The sample's runner did not spin its cube");
     }
 
     const auto api = throne::ScriptRuntime::hostApi();
