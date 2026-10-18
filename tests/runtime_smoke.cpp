@@ -20,10 +20,11 @@ int main() {
         }
     }
     throne::PhysicsWorld second;
+    second.setSerial(true);
     for (const auto& expected : first) {
         second.step();
         if (second.position() != expected) {
-            std::fputs("Repeated simulation diverged\n", stderr);
+            std::fputs("Serial and parallel simulation diverged\n", stderr);
             return 1;
         }
     }

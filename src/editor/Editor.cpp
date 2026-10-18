@@ -466,6 +466,7 @@ void Editor::play() {
         // Play runs the open level; playing the whole game (with main.lh) comes later.
         runtime_ = std::make_unique<ScriptRuntime>(
             doc_.world, view_, project_->root, [this](const std::string& line) { log(line); }, PlayScope::Level);
+        renderSnapshot_ = view_;
         log("Play");
     } catch (const ScriptError& error) {
         log(std::string("Play refused:\n") + error.what());
@@ -475,6 +476,7 @@ void Editor::play() {
 void Editor::stop() {
     if (consoleMore_ == runtime_.get()) consoleMore_ = nullptr;
     runtime_.reset();
+    renderSnapshot_.reset();
     log("Stop");
 }
 
@@ -495,7 +497,7 @@ Editor::~Editor() {
     unlit_.destroyDatablock(lineMaterial);
 }
 
-void Editor::frame(float deltaSeconds) {
+bool Editor::frame(float deltaSeconds) {
     platform_.newFrame();
     ImGui::GetIO().DeltaTime = std::max(deltaSeconds, 1.0e-4f);
     ImGui::NewFrame();
@@ -504,15 +506,7 @@ void Editor::frame(float deltaSeconds) {
     if (!project_) {
         launcher();
         gui_->prepareForRender(&scene_);
-        return;
-    }
-    if (runtime_) {
-        try {
-            runtime_->update(deltaSeconds);
-        } catch (const ScriptError& error) {
-            log(error.what());
-            stop();
-        }
+        return root_.renderOneFrame();
     }
     // Drill-down steps change between frames, so no panel sees view_ change under it.
     if (navigate_) {
@@ -533,9 +527,40 @@ void Editor::frame(float deltaSeconds) {
     fileDialog();
     closeDialog();
     replaceDialog();
-    syncTransforms();
-    updateCamera();
-    gui_->prepareForRender(&scene_);
+    bool running = true;
+    std::optional<LevelExpansion> nextSnapshot;
+    physics_.setSerial(doc_.world.level.serialExecution);
+    physicsAccumulator_ += std::clamp(double(deltaSeconds), 0.0, 0.25);
+    const auto engine = [&](const std::string& stage) {
+        if (stage == "SyncRender") {
+            if (runtime_) nextSnapshot = view_;
+        } else if (stage == "Box3D") {
+            while (physicsAccumulator_ >= 1.0 / 60.0) {
+                physics_.step();
+                physicsAccumulator_ -= 1.0 / 60.0;
+            }
+        } else if (stage == "OGRE") {
+            syncTransforms(runtime_ && renderSnapshot_ ? &*renderSnapshot_ : nullptr);
+            updateCamera();
+            gui_->prepareForRender(&scene_);
+            running = root_.renderOneFrame();
+        } else if (stage == "SyncSimulation") {
+            if (nextSnapshot) renderSnapshot_ = std::move(nextSnapshot);
+        }
+        // FetchInput has already collected this frame's OS/ImGui input above.
+        // ApplyPhysics and Animator have no node bindings until physics/animation components exist.
+    };
+    try {
+        if (runtime_) runtime_->update(deltaSeconds, engine);
+        else runStages(ScriptRuntime::schedule(doc_.world, view_), doc_.world.level.serialExecution, engine);
+    } catch (const ScriptError& error) {
+        log(error.what());
+        stop();
+        syncTransforms();
+        gui_->prepareForRender(&scene_);
+        running = root_.renderOneFrame();
+    }
+    return running;
 }
 
 Prefab* Editor::content() {
@@ -764,16 +789,17 @@ void Editor::destroyRenderObjects() {
     sceneRoots_.clear();
 }
 
-void Editor::syncTransforms() {
+void Editor::syncTransforms(const LevelExpansion* snapshot) {
+    const auto& shown = snapshot ? *snapshot : view_;
     for (std::size_t i = 0; i < sceneRoots_.size(); ++i) {
-        const auto& transform = view_.instances[i].transform;
+        const auto& transform = shown.instances[i].transform;
         sceneRoots_[i]->setPosition(toOgre(transform.position));
         sceneRoots_[i]->setOrientation(orientation(transform.rotation));
         sceneRoots_[i]->setScale(toOgre(transform.scale));
     }
     const RenderObject* outlined = nullptr;
     for (const auto& render : renderObjects_) {
-        const auto& expanded = view_.instances[render.instance].expansion.nodes[render.index];
+        const auto& expanded = shown.instances[render.instance].expansion.nodes[render.index];
         const auto& node = expanded.node;
         // A node without a Transform passes its parent's placement on; one without a box draws nothing.
         const auto transform = node.transform.value_or(Transform{});
@@ -1008,11 +1034,18 @@ void assign(NodeOverride& into, const NodeOverride& from) {
     if (from.rotation) into.rotation = from.rotation;
     if (from.scale) into.scale = from.scale;
     if (from.colour) into.colour = from.colour;
+    if (from.behaviours) into.behaviours = from.behaviours;
+    for (const auto& [name, fields] : from.scriptFields)
+        for (const auto& [field, value] : fields) into.scriptFields[name][field] = value;
 }
 
 /// Writes the properties @p from sets into @p into's components, where it has them.
 void assign(SceneNode& into, const NodeOverride& from) {
     if (from.name) into.name = *from.name;
+    if (from.behaviours) into.behaviours = *from.behaviours;
+    for (const auto& [name, fields] : from.scriptFields)
+        if (const auto component = into.scriptComponents.find(name); component != into.scriptComponents.end())
+            for (const auto& [field, value] : fields) component->second.fields[field] = value;
     if (auto& transform = into.transform) {
         if (from.position) transform->position = *from.position;
         if (from.rotation) transform->rotation = *from.rotation;
@@ -1168,6 +1201,16 @@ void Editor::unpack(int instance, NodeId id) {
         for (auto& [name, value] : fields)
             if (auto* ref = std::get_if<NodeRef>(&value); ref && ref->scene == scene) direct(*ref, base);
     };
+    for (std::size_t k = 0; k < inside.size(); ++k) {
+        auto base = expansion.nodes[inside[k]].path;
+        if (!base.empty() && !expansion.nodes[inside[k]].root) base.pop_back();
+        for (auto& attachment : plain[k].behaviours) refs(attachment.fields, 0, base);
+        for (auto& [name, component] : plain[k].scriptComponents) refs(component.fields, 0, base);
+    }
+    for (auto& each : edited->nodes) {
+        for (auto& attachment : each.behaviours) refs(attachment.fields, 0, {});
+        for (auto& [name, component] : each.scriptComponents) refs(component.fields, 0, {});
+    }
     // The instance's runners become the file's, by the instance they came from and their ID.
     std::map<std::pair<std::size_t, std::uint32_t>, std::uint32_t> runnerIds;
     for (const auto& expanded : expansion.runners) {
@@ -1305,6 +1348,13 @@ void Editor::duplicate() {
         if (copy.name.size() <= 250) copy.name += " Copy";
         if (copy.transform) copy.transform->position.x += 1;
         added = std::move(copy);
+        const auto remap = [&](Behaviour& attachment) {
+            for (auto& [name, value] : attachment.fields)
+                if (auto* ref = std::get_if<NodeRef>(&value); ref && !ref->scene && ref->node == original)
+                    ref->node = added.id;
+        };
+        for (auto& attachment : added.behaviours) remap(attachment);
+        for (auto& [name, component] : added.scriptComponents) remap(component);
         // Runners that refer to the node come along, referring to the copy instead
         // (the file's own, and at the level the level's naming this scene instance).
         const auto copyRunners = [&](RunnerSet& owner, std::uint32_t scene) {

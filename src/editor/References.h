@@ -15,6 +15,7 @@ struct Referrer {
     int instance;
     /// The prefab instance inside it the runner came from; empty for the file's own runner.
     NodePath from;
+    /// Zero for an attachment on the node at `from`; otherwise the direct runner ID.
     std::uint32_t runner;
     std::size_t behaviour;
     std::string field;

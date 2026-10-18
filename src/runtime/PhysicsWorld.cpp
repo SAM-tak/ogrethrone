@@ -4,6 +4,17 @@
 namespace throne {
 PhysicsWorld::PhysicsWorld() {
     auto worldDef = b3DefaultWorldDef();
+    worldDef.workerCount = tasks_.size() + 1;
+    worldDef.userTaskContext = this;
+    worldDef.enqueueTask = [](b3TaskCallback* task, void* context, void* user, const char*) -> void* {
+        auto& self = *static_cast<PhysicsWorld*>(user);
+        if (self.serial_ || !self.tasks_.size()) { task(context); return nullptr; }
+        return new std::future<void>(self.tasks_.submit([task, context] { task(context); }));
+    };
+    worldDef.finishTask = [](void* token, void* user) {
+        std::unique_ptr<std::future<void>> future(static_cast<std::future<void>*>(token));
+        static_cast<PhysicsWorld*>(user)->tasks_.finish(*future);
+    };
     world_ = b3CreateWorld(&worldDef);
 
     auto groundDef = b3DefaultBodyDef();

@@ -41,15 +41,19 @@ struct NodeRef {
 /// A value written for one behaviour field, overriding the script's default.
 using FieldValue = std::variant<double, bool, std::string, NodeRef>;
 
-/// One script attached to a runner, with the field values this runner gives it.
+/// One script attachment and its saved field values; also used for custom Component data.
 struct Behaviour {
     /// Project-relative path of a module^ publishing `Behaviour = def^{ ... }`.
     std::string script;
     /// Field name to value; fields not listed keep the script's default.
     std::map<std::string, FieldValue> fields;
+    /// Execution stage for a node attachment.
+    std::string runner = "Update";
+    /// Runner attachments may publish System instead of Behaviour.
+    bool system = false;
 };
 
-/// Something that runs behaviours, independent of the scene hierarchy (TDDja/05).
+/// Direct Behaviour/System attachments grouped into the named execution stage (TDDja/07).
 /// A runner has no transform; it reaches scene nodes only through field values.
 struct Runner {
     /// Unique nonzero ID within the file that holds the runner.
@@ -69,6 +73,10 @@ struct NodeOverride {
     std::optional<Vec3> position, rotation, scale;
     /// BoxPrimitive properties.
     std::optional<std::array<float, 3>> colour;
+    /// Replacement attachment list, including field edits, additions and removals.
+    std::optional<std::vector<Behaviour>> behaviours;
+    /// Field overrides for existing script components; never adds or removes a component.
+    std::map<std::string, std::map<std::string, FieldValue>> scriptFields;
 };
 
 /// Field values an instance gives one behaviour of a runner in its prefab.
@@ -142,6 +150,10 @@ struct SceneNode {
     std::optional<Transform> transform;
     /// Unused by an instance, whose root's comes from the prefab or its overrides.
     std::optional<BoxPrimitive> box;
+    /// Scripts attached to this node, in attachment order.
+    std::vector<Behaviour> behaviours;
+    /// Script-defined component types, keyed by their query name. Each attachment publishes Component.
+    std::map<std::string, Behaviour> scriptComponents;
     /// Project-relative path of the prefab this node instantiates; empty for a plain node.
     std::string prefab;
     /// What this instance changes in the prefab.
@@ -233,6 +245,10 @@ std::uint32_t newRunnerId();
 LhatValue writeOverrides(lton::Writer& out, const Overrides& overrides);
 /// Reads what writeOverrides wrote (nil^ reads as no overrides). @throws lton::Invalid on malformed data.
 Overrides readOverrides(LhatValue value);
+/// Writes node or runner attachments, including their execution stage.
+LhatValue writeBehaviours(lton::Writer& out, const std::vector<Behaviour>& behaviours);
+/// Reads attachments; nil means an empty list.
+std::vector<Behaviour> readBehaviours(LhatValue value);
 /// Writes @p runners as an LTON sequence; shared by prefabs, scenes and levels.
 LhatValue writeRunners(lton::Writer& out, const std::vector<Runner>& runners);
 /// Reads what writeRunners wrote. @throws lton::Invalid on malformed data.

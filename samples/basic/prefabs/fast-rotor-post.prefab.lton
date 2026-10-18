@@ -4,19 +4,15 @@ nodes = {},
 overrides = {
     nodes = {
         {
+            path = {105248190270967814},
+            behaviours = {{script = "scripts/spin.lh", runner = "Update", fields = {degreesPerSecond = 360.0}}},
+        },
+        {
             box = {colour = {0.85, 0.2, 0.2}},
             path = {105248190270967815},
         },
     },
-    runners = {
-        {
-            behaviour = 0,
-            fields = {
-                degreesPerSecond = 360.0,
-            },
-            runner = 1,
-        },
-    },
+    runners = {},
 },
 runners = {},
 version = 3,

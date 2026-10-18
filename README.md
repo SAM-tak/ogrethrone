@@ -216,45 +216,64 @@ game's entry point and organizer (which levels to play, in what order); new
 projects get a placeholder one. It is a plain script (no `module^`); an `await^`
 at its top level makes it a coroutine that the whole-game Play will resume once
 per frame until it ends. Level playback from it (`throne.playLevel`) is still
-being designed (TDDja/02 4.1). A runner holds any number
-of behaviours. Each behaviour names a `module^` that publishes a definition called
-`Behaviour`, and gets its own instance per runner:
+being designed (TDDja/02 4.1).
+
+Nodes hold any number of Behaviour attachments, each naming its script, execution
+stage (default `Update`) and exported field values. Each attachment gets a fresh
+instance for each scene/prefab instance. A script publishes `Behaviour = def^{ ... }`:
 
 ```lhat
 module^ samples.spin
 import^ throne
-
-public^let^Behaviour = def^{
-    self^{
-        @export target : throne.SceneNode|nil^ = nil^,
-        @export degreesPerSecond = 90,
-    },
-    start = p^self^, runner:throne.Runner { throne.log("hello " .. runner.name()) },
-    update = p^self^, runner:throne.Runner, dt:number^ {
-        if^ self^.target != nil^ {
-            let^ t = self^.target.transform()
-            if^ t != nil^ {
-                var^ r = t.rotation()
-                r.y := r.y + self^.degreesPerSecond * dt
-                t.setRotation(r)
-            }
+public^let^ Behaviour = def^{
+    self^{ @export degreesPerSecond = 90 },
+    update = p^self^, node:throne.SceneNode, dt:number^ {
+        let^ t = node.transform()
+        if^ t != nil^ {
+            t.setRotation(t.rotation() + throne.vec3(0, self^.degreesPerSecond * dt, 0))
         }
     },
 }
 ```
 
-The `self^{ ... }` fields marked `@export` are what the Inspector shows for that
-behaviour and what a runner stores (other fields are the script's own): number,
-bool and string fields are edited directly, and `throne.SceneNode` fields pick a
-node: a level runner from any scene instance, a scene or prefab runner from its
-own hierarchy (each prefab instance gets its own copy of the prefab's runners,
-pointing into that instance). A runner stores only the values that differ from the
-script's defaults (Reset removes one); a value whose field is gone or has another
-type is skipped with a warning in the log.
+`start(node)` and `update(node, dt)` are optional. `start` runs once, immediately
+before the attachment's first update in its chosen stage. Direct runner attachments
+remain available for orchestration; their callbacks receive `throne.Runner` instead.
+Within a stage, direct attachments run first (scene runners, then level runners),
+followed by node attachments in scene-instance order and depth-first hierarchy order.
 
-`start` and `update` are optional; when present their signatures are checked
-before Play starts. Order per frame: each scene's runners, then the level's
-runners; every `start` runs once before the first `update`.
+The Inspector edits exported number, bool, string and node-reference fields. Other
+Behaviour fields remain private. Reset removes an override; missing or mistyped
+fields are ignored with a warning. Prefab instances can replace their Behaviour list,
+including editing fields, adding attachments, and removing them.
+
+The level owns the execution schedule. The Runners panel shows engine stages and
+user stages together, expands their attachments in execution order, adds user stages,
+and moves them between the fixed engine stages. The default schedule is:
+
+```text
+FetchInput -> ApplyPhysics -> Update -> SyncRender
+           -> [OGRE / Box3D / Animator] -> SyncSimulation
+```
+
+OGRE stays on the main thread; the engine group joins before the next stage. Serial
+mode uses the same barriers and render snapshots. During Play, drawing uses the
+previous frame's snapshot, so direct Behaviour changes appear one frame later.
+Box3D uses a bounded native task pool. Physics-body bindings and animation assets
+are not implemented yet; ApplyPhysics and Animator currently have no scene components
+to process, and Box3D advances the bootstrap world.
+
+A script-defined component publishes `Component = def^{ self^{ ... } }`. Attach it
+under `components.scripts`, keyed by its query name, with `script` and `fields`.
+It is constructed separately for every node. All supported data fields are editable
+without `@export`. Instances can override existing component fields.
+
+A direct runner attachment with `system = true^` publishes `System` instead of
+`Behaviour`. Its optional callbacks receive the runner. It can iterate
+`throne.query("Transform", "Spin")`, which returns nodes having every named component.
+`node.component("Spin")` returns that script component as `any^`; narrow it with
+`fits^` and the required script's `Component` type. See
+[`spin-system.lh`](samples/basic/scripts/spin-system.lh) for a complete example.
 
 The `throne` module provides:
 
@@ -271,7 +290,15 @@ The `throne` module provides:
   about X, then Y, then Z, and scale is kept at 0.001 or more.
 - `throne.BoxPrimitive`: `colour()` and `setColour(v)`, kept in [0, 1].
 - A component handle whose node or component is gone panics.
-- `throne.Runner`: `name()`; passed to `start` and `update`.
+- `throne.Runner`: `name()`; passed to direct runner attachments and Systems.
+- `throne.runner(name)`: a user stage handle, or nil. A node's
+  `setBehaviourRunner(index, runner)` moves its zero-based attachment from the next
+  frame without repeating `start`. Engine stages and parallel members are refused.
+- `throne.query(names...)`: a snapshot list in scene-instance/hierarchy order;
+  no names matches all nodes, an unknown name matches none. Built-in names are
+  `Transform` and `BoxPrimitive`; custom names come from `components.scripts`.
+- `node.component(name)`: a custom Component instance, or nil. Built-in components
+  retain their typed getters.
 - `throne.find(name)` (the first node with that name, scene by scene),
   `throne.log(text)` and `throne.time()` (seconds since Play).
 
@@ -298,14 +325,11 @@ without opening a window:
 
 The file defaults to `lhat-host.json` in the working directory.
 
-In [`samples/basic`](samples/basic), the scene's SpinningCube runner gives
-[`spin.lh`](samples/basic/scripts/spin.lh) the SpinningCube node as its `target`.
-The scene also places [`rotor-post`](samples/basic/prefabs/rotor-post.prefab.lton),
-a prefab whose own runner spins its Hub (its tower's colour overridden), and an
-instance of its variant [`fast-rotor-post`](samples/basic/prefabs/fast-rotor-post.prefab.lton),
-which makes the blade red and spins at 360 degrees a second.
-The design is recorded in [TDDja/02-scripting.md](TDDja/02-scripting.md),
-[TDDja/05-runner.md](TDDja/05-runner.md) and [TDDja/06-prefab.md](TDDja/06-prefab.md).
+In [`samples/basic`](samples/basic), [`spin.lh`](samples/basic/scripts/spin.lh)
+is attached directly to SpinningCube and the rotor prefab's Hub. The fast variant
+replaces its Hub attachment with a 360-degree-per-second version. Cube 2 demonstrates
+a script-defined Spin component processed by the level's Update System.
+The design is recorded in [TDDja/07-component.md](TDDja/07-component.md).
 
 ## Audio
 

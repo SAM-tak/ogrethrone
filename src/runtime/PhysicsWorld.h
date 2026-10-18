@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/Math.h"
+#include "runtime/TaskPool.h"
 #include <box3d/box3d.h>
 
 namespace throne {
@@ -16,10 +17,14 @@ public:
 
     /// Advances the simulation by a fixed 1/60 s step with 4 sub-steps.
     void step();
+    /// Forces Box3D task callbacks to run inline for deterministic debugging.
+    void setSerial(bool serial) { serial_ = serial; }
     /// Returns the falling box's world position.
     Vec3 position() const;
 
 private:
+    TaskPool tasks_;
+    bool serial_ = false;
     b3WorldId world_;
     b3BodyId box_;
 };

@@ -50,7 +50,7 @@ endif()
 
 # Levels, projects and the project list: the editor's LTON data, without OGRE.
 add_library(throne_data STATIC src/editor/Lton.cpp src/editor/Scene.cpp src/editor/Level.cpp
-    src/editor/Expansion.cpp src/editor/Project.cpp src/editor/Lton.h src/editor/Scene.h src/editor/Level.h
+    src/editor/Expansion.cpp src/editor/Project.cpp src/runtime/FramePipeline.cpp src/runtime/FramePipeline.h src/editor/Lton.h src/editor/Scene.h src/editor/Level.h
     src/editor/Expansion.h src/editor/Project.h src/core/Math.h src/core/Ids.h)
 target_include_directories(throne_data PUBLIC src)
 # stdlib/*.h are included by path relative to the L^ source root.
@@ -71,6 +71,13 @@ add_executable(throne_script_smoke tests/script_smoke.cpp)
 target_link_libraries(throne_script_smoke PRIVATE throne_script)
 if(BUILD_TESTING)
     add_test(NAME script_smoke COMMAND throne_script_smoke "${PROJECT_SOURCE_DIR}/samples/basic")
+endif()
+
+add_executable(throne_ecs_smoke tests/ecs_smoke.cpp)
+target_link_libraries(throne_ecs_smoke PRIVATE throne_script)
+if(BUILD_TESTING)
+    add_test(NAME ecs_smoke COMMAND throne_ecs_smoke)
+    set_tests_properties(ecs_smoke PROPERTIES TIMEOUT 30)
 endif()
 
 if(THRONE_BUILD_GRAPHICS)

@@ -35,14 +35,10 @@ enum class PlayScope {
     Game,
 };
 
-/// Runs a world's L^ scripts for one Play session (TDDja/02, 05, 06).
-///
-/// Construction checks and compiles `main.lh` (when present and the scope is Game) and every
-/// behaviour script, then creates one `Behaviour` instance per behaviour of each
-/// runner and applies the runner's field values to it. Scripts see the `throne`
-/// module (Vec3, SceneNode, Runner, find, log, time) and `std.math`. Each session
-/// owns a fresh L^ program and machine, so edited scripts take effect the next
-/// time Play starts.
+/// Runs a world's L^ node Behaviours, direct runner attachments and Systems.
+/// Each Play checks and compiles its scripts, then constructs isolated Behaviour
+/// and Component instances for every expanded scene/prefab instance. All VM calls
+/// stay on the calling thread; native engine callbacks may run in the parallel group.
 class ScriptRuntime {
 public:
     /// Receives text the scripts pass to throne.log, and warnings about field values.
@@ -63,12 +59,15 @@ public:
     ScriptRuntime(const ScriptRuntime&) = delete;
     ScriptRuntime& operator=(const ScriptRuntime&) = delete;
 
-    /// Runs one frame. The first call runs main.lh (Game scope) and every `start`;
-    /// each call then resumes main.lh's coroutine and runs every `update`, scene
-    /// runners (scene by scene) before level runners.
-    /// @throws ScriptError on a run-time failure or a frame over budget; the
-    ///         runtime must not be used afterwards.
+    /// Runs main.lh (Game scope) and the level schedule. Within a user stage,
+    /// direct attachments precede node attachments in scene-instance/hierarchy order.
+    /// A start runs once, before its attachment's first update in its selected stage.
+    /// @throws ScriptError on a run-time failure or a frame over budget.
     void update(float deltaSeconds);
+    /// Runs engine callbacks at the same barriers as script stages; OGRE stays on this thread.
+    void update(float deltaSeconds, const std::function<void(const std::string&)>& engine);
+    /// Effective level schedule, including direct runners declared in scenes or prefabs.
+    static std::vector<ExecutionStage> schedule(const World& world, const LevelExpansion& expanded);
     /// True once main.lh has run to its end (Game scope only).
     bool finished() const;
 
@@ -90,10 +89,11 @@ public:
     /// Returns the host API scripts can use (the `throne` module and `std.math`) as
     /// the JSON the L^ language server reads from `lhat-host.json`.
     static std::string hostApi();
-    /// Returns the editable fields of the `Behaviour` published by @p script, in
-    /// name order. Fields of other types are not listed.
+    /// Returns editable fields of Behaviour, System or Component, in name order.
+    /// Behaviour/System fields require @export; Component data fields do not.
     /// @throws ScriptError when the script is missing, rejected or publishes no Behaviour.
-    static std::vector<FieldInfo> fields(const std::filesystem::path& root, const std::string& script);
+    static std::vector<FieldInfo> fields(const std::filesystem::path& root, const std::string& script,
+                                         std::string symbol = {});
 
     /// Session state shared with the host functions; opaque outside ScriptRuntime.cpp.
     struct State;

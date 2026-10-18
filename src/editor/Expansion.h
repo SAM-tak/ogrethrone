@@ -75,6 +75,8 @@ struct Expansion {
     /// Index of the node at @p path (see NodePath), or npos. Each ID is looked for
     /// below the node found for the one before it; the first match in order wins.
     std::size_t find(const NodePath& path) const;
+    /// Depth-first node indices, parents first and siblings in their stored order.
+    std::vector<std::size_t> hierarchy() const;
 };
 
 /// Expands @p content; a variant expands its base, the base's root at the empty

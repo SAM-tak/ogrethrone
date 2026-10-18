@@ -125,6 +125,10 @@ void apply(Expansion& out, const NodePath& prefix, const Overrides& overrides, s
         if (at == Expansion::npos) continue;  // The prefab no longer has that node.
         auto& node = out.nodes[at].node;
         if (entry.name) node.name = *entry.name;
+        if (entry.behaviours) node.behaviours = *entry.behaviours;
+        for (const auto& [name, fields] : entry.scriptFields)
+            if (const auto component = node.scriptComponents.find(name); component != node.scriptComponents.end())
+                for (const auto& [field, value] : fields) component->second.fields[field] = value;
         if (auto& transform = node.transform) {
             if (entry.position) transform->position = *entry.position;
             if (entry.rotation) transform->rotation = *entry.rotation;
@@ -205,6 +209,21 @@ std::size_t Expansion::find(const NodePath& path) const {
         at = next;
     }
     return at;
+}
+
+std::vector<std::size_t> Expansion::hierarchy() const {
+    std::vector<std::vector<std::size_t>> children(nodes.size() + 1);
+    for (std::size_t i = 0; i < nodes.size(); ++i)
+        children[nodes[i].parent == npos ? nodes.size() : nodes[i].parent].push_back(i);
+    std::vector<std::size_t> result, stack;
+    stack.assign(children.back().rbegin(), children.back().rend());
+    while (!stack.empty()) {
+        const auto i = stack.back();
+        stack.pop_back();
+        result.push_back(i);
+        stack.insert(stack.end(), children[i].rbegin(), children[i].rend());
+    }
+    return result;
 }
 
 Expansion expand(const Prefab& content, Library& library, const std::string& self) {

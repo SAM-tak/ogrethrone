@@ -23,11 +23,15 @@ constexpr std::int64_t frameBudget = 10'000'000;
 using Machine = std::unique_ptr<LhatMachine, decltype(&lhat_machine_dispose)>;
 using Program = std::unique_ptr<LhatProgram, decltype(&lhat_program_free)>;
 
-/// One behaviour of one runner: its instance and the throne.Runner handle passed to it.
+/// One attachment: its VM instance and its SceneNode or Runner callback argument.
 struct Instance {
     std::string what;
     LhatValue instance, runner;
     bool start, update;
+    std::string stage;
+    bool started = false;
+    int scene = -1;
+    std::size_t node = Expansion::npos, attachment = 0;
 };
 
 /// A behaviour waiting to be instantiated, with where it came from.
@@ -39,6 +43,10 @@ struct Pending {
     std::size_t runner;
     const Behaviour* behaviour;
     std::string what;
+    std::size_t node = Expansion::npos;
+    std::string stage;
+    std::string symbol = "Behaviour";
+    std::string component;
 };
 
 /// Returns a number argument as a double, accepting integers and reals.
@@ -96,6 +104,9 @@ struct ScriptRuntime::State {
     std::vector<Instance> instances;
     /// Runners in run order; a throne.Runner handle is an index into this.
     std::vector<const Runner*> runners;
+    std::vector<ExecutionStage> stages;
+    std::vector<Runner> stageRunners;
+    std::map<std::pair<std::uintptr_t, std::string>, LhatValue> components;
     double time = 0;
 
     State(const World& world, LevelExpansion& expanded, std::filesystem::path root, Log log)
@@ -335,6 +346,52 @@ THRONE_HOST(runnerName, {
     if (lhat_machine_make_string(machine, name.data(), name.size(), &answers[0])) *count = 1;
 })
 
+/// throne.runner(name): finds a serial user execution stage.
+THRONE_HOST(findRunner, {
+    answers[0] = lhat_nil();
+    *count = 1;
+    const auto name = text(arguments[0]);
+    for (const auto& stage : s.stages) {
+        if (stage.name != name || !stage.parallel.empty() || name == "FetchInput" || name == "ApplyPhysics" ||
+            name == "SyncRender" || name == "SyncSimulation") continue;
+        for (std::size_t i = 0; i < s.runners.size(); ++i)
+            if (s.runners[i]->name == name) {
+                answers[0] = s.handle(machine, s.runner, i);
+                return;
+            }
+    }
+})
+/// SceneNode.setBehaviourRunner(index, runner): changes an attachment from the next frame.
+THRONE_HOST(moveBehaviour, {
+    auto* node = s.target(machine, arguments[0]);
+    if (!node) return;
+    const double index = number(arguments[1]);
+    const auto runner = reinterpret_cast<std::uintptr_t>(lhat_hostdata_pointer(arguments[2], s.runner));
+    if (!std::isfinite(index) || index < 0 || std::floor(index) != index || index >= node->behaviours.size() ||
+        runner >= s.runners.size()) {
+        lhat_machine_panic_text(machine, "Invalid behaviour index or Runner");
+        return;
+    }
+    const auto& name = s.runners[runner]->name;
+    const auto valid = std::find_if(s.stages.begin(), s.stages.end(), [&](const ExecutionStage& stage) {
+        return stage.name == name && stage.parallel.empty();
+    });
+    if (valid == s.stages.end() || name == "FetchInput" || name == "ApplyPhysics" ||
+        name == "SyncRender" || name == "SyncSimulation") {
+        lhat_machine_panic_text(machine, "Behaviour requires a user Runner");
+        return;
+    }
+    node->behaviours[static_cast<std::size_t>(index)].runner = name;
+})
+/// SceneNode.component(name): returns the per-node script instance, or nil.
+THRONE_HOST(scriptComponent, {
+    if (!s.target(machine, arguments[0])) return;
+    const auto bits = reinterpret_cast<std::uintptr_t>(lhat_hostdata_pointer(arguments[0], s.sceneNode));
+    const auto found = s.components.find({bits, std::string(text(arguments[1]))});
+    answers[0] = found == s.components.end() ? lhat_nil() : found->second;
+    *count = 1;
+})
+
 /// throne.find(name): the first scene node with that name, scene by scene, or nil^.
 THRONE_HOST(find, {
     const auto name = text(arguments[0]);
@@ -369,6 +426,50 @@ void print(LhatMachine*, void* context, const LhatValue* arguments, std::size_t 
     state(context).log(line);
 }
 
+/// throne.query(names...): a stable snapshot of nodes having every named component.
+void query(LhatMachine* machine, void* context, const LhatValue* arguments, std::size_t argumentCount,
+           LhatValue* answers, int* count) {
+    auto& s = state(context);
+    LhatValue list;
+    if (!lhat_machine_make_table(machine, &list)) return;
+    // Root the result while allocating its handles.
+    const auto slot = s.rootCount++;
+    bool refusedRoot = false;
+    if (!lhat_machine_table_set(machine, s.roots, lhat_integer(slot), list, &refusedRoot) || refusedRoot) return;
+    struct RootGuard {
+        State& s;
+        LhatInteger slot;
+        ~RootGuard() {
+            bool refused = false;
+            lhat_machine_table_set(s.machine.get(), s.roots, lhat_integer(slot), lhat_nil(), &refused);
+            --s.rootCount;
+        }
+    } guard{s, slot};
+    auto* table = reinterpret_cast<LhatTable*>(lhat_as_object(list));
+    LhatInteger index = 0;
+    for (std::size_t scene = 0; scene < s.expanded.instances.size(); ++scene) {
+        const auto& nodes = s.expanded.instances[scene].expansion.nodes;
+        for (const auto n : s.expanded.instances[scene].expansion.hierarchy()) {
+            const auto& node = nodes[n].node;
+            bool matches = true;
+            for (std::size_t i = 0; i < argumentCount; ++i) {
+                const auto name = text(arguments[i]);
+                matches = matches && (name == "Transform" ? bool(node.transform) :
+                    name == "BoxPrimitive" ? bool(node.box) : node.scriptComponents.count(std::string(name)) != 0);
+            }
+            if (!matches) continue;
+            const auto handle = s.handle(machine, s.sceneNode, State::nodeBits(scene, n));
+            bool refused = false;
+            if (lhat_is_nil(handle) || !lhat_machine_table_set(machine, table, lhat_integer(index++), handle, &refused) || refused) {
+                lhat_machine_panic_text(machine, "Out of memory building query");
+                return;
+            }
+        }
+    }
+    answers[0] = list;
+    *count = 1;
+}
+
 /// Registers the throne module: Vec3, SceneNode, Runner and the free functions.
 bool registerThrone(LhatProgram* program, State& s) {
     s.vec3 = lhat_register_hostvalue_type(program, moduleName, "Vec3", sizeof(Vec3));
@@ -400,6 +501,8 @@ bool registerThrone(LhatProgram* program, State& s) {
         {"SceneNode", "name", "f^self^ -> string^;", nodeName},
         {"SceneNode", "valid", "f^self^ -> bool^;", nodeValid},
         {"SceneNode", "transform", "f^self^ -> throne.Transform|nil^;", nodeComponent<Transform, &SceneNode::transform>},
+        {"SceneNode", "component", "f^self^, string^ -> any^;", scriptComponent},
+        {"SceneNode", "setBehaviourRunner", "p^self^, number^, throne.Runner;", moveBehaviour},
         {"SceneNode", "box", "f^self^ -> throne.BoxPrimitive|nil^;", nodeComponent<BoxPrimitive, &SceneNode::box>},
         {"Transform", "position", "f^self^ -> throne.Vec3;", transformGet<0>},
         {"Transform", "rotation", "f^self^ -> throne.Vec3;", transformGet<1>},
@@ -411,6 +514,8 @@ bool registerThrone(LhatProgram* program, State& s) {
         {"BoxPrimitive", "setColour", "p^self^, throne.Vec3;", boxSetColour},
         {"Runner", "name", "f^self^ -> string^;", runnerName},
         {nullptr, "vec3", "f^number^, number^, number^ -> throne.Vec3;", vecNew},
+        {nullptr, "query", "f^...:string^ -> t^{throne.SceneNode[]};", query},
+        {nullptr, "runner", "f^string^ -> throne.Runner|nil^;", findRunner},
         {nullptr, "find", "f^string^ -> throne.SceneNode|nil^;", find},
         {nullptr, "log", "p^string^;", log},
         {nullptr, "time", "f^ -> number^;", time},
@@ -459,14 +564,14 @@ bool publishes(const LhatUnit* unit, std::string_view name) {
 }
 
 /// Whether the instances of @p unit's Behaviour have a member @p name of type @p type.
-bool behaviourHas(const LhatUnit* unit, const std::string& name, const char* type) {
-    return lhat_unit_export_conforms(unit, "Behaviour", ("t^{ self^{ " + name + " : " + type + " } }").c_str());
+bool behaviourHas(const LhatUnit* unit, const std::string& name, const char* type, const std::string& symbol = "Behaviour") {
+    return lhat_unit_export_conforms(unit, symbol.c_str(), ("t^{ self^{ " + name + " : " + type + " } }").c_str());
 }
 
 /// Whether field @p name of @p unit's Behaviour is written with @export.
-bool exported(const LhatUnit* unit, const std::string& name) {
-    for (std::size_t i = 0, count = lhat_unit_annotation_count(unit, "Behaviour", name.c_str()); i < count; ++i) {
-        const auto annotation = lhat_unit_annotation(unit, "Behaviour", name.c_str(), i);
+bool exported(const LhatUnit* unit, const std::string& name, const std::string& symbol = "Behaviour") {
+    for (std::size_t i = 0, count = lhat_unit_annotation_count(unit, symbol.c_str(), name.c_str()); i < count; ++i) {
+        const auto annotation = lhat_unit_annotation(unit, symbol.c_str(), name.c_str(), i);
         if (std::string_view(annotation.name, annotation.name_length) == "export") return true;
     }
     return false;
@@ -480,20 +585,26 @@ void createProgram(State& s) {
 }
 
 /// Checks @p path as a behaviour script, adding contract problems to @p errors.
-const LhatUnit* checkBehaviour(State& s, const std::string& path, std::string& errors) {
+const LhatUnit* checkBehaviour(State& s, const std::string& path, std::string& errors, int node = -1, const std::string& symbol = "Behaviour") {
     const auto* unit = lhat_program_check(s.program.get(), path.c_str());
     if (!unit || !lhat_unit_ok(unit)) return unit;
     const auto problem = [&](const char* text) { errors += path + ": " + text + "\n"; };
     if (!lhat_unit_module_name(unit)) problem("must declare module^");
-    if (!publishes(unit, "Behaviour")) {
-        problem("must publish Behaviour = def^{ ... }");
+    if (!publishes(unit, symbol)) {
+        errors += path + ": must publish " + symbol + " = def^{ ... }\n";
         return unit;
     }
-    if (!lhat_unit_export_conforms(unit, "Behaviour", "t^{ new : f^ -> any^; }")) problem("Behaviour must be a def^");
-    if (behaviourHas(unit, "start", "any^") && !behaviourHas(unit, "start", "p^self^, throne.Runner;"))
-        problem("Behaviour.start must be p^self^, throne.Runner;");
-    if (behaviourHas(unit, "update", "any^") && !behaviourHas(unit, "update", "p^self^, throne.Runner, number^;"))
-        problem("Behaviour.update must be p^self^, throne.Runner, number^;");
+    if (!lhat_unit_export_conforms(unit, symbol.c_str(), "t^{ new : f^ -> any^; }"))
+        errors += path + ": " + symbol + " must be a def^\n";
+    if (symbol == "Component") return unit;
+    const auto start = node == 1 ? "p^self^, throne.SceneNode;" : "p^self^, throne.Runner;";
+    const auto update = node == 1 ? "p^self^, throne.SceneNode, number^;" : "p^self^, throne.Runner, number^;";
+    if (behaviourHas(unit, "start", "any^", symbol) && !behaviourHas(unit, "start", start, symbol) &&
+        !(node == -1 && behaviourHas(unit, "start", "p^self^, throne.SceneNode;", symbol)))
+        errors += path + ": " + symbol + ".start must be " + start + "\n";
+    if (behaviourHas(unit, "update", "any^", symbol) && !behaviourHas(unit, "update", update, symbol) &&
+        !(node == -1 && behaviourHas(unit, "update", "p^self^, throne.SceneNode, number^;", symbol)))
+        errors += path + ": " + symbol + ".update must be " + update + "\n";
     return unit;
 }
 
@@ -518,9 +629,9 @@ void startMachine(State& s) {
 }
 
 /// Runs @p unit and returns its published Behaviour definition, kept alive.
-LhatValue definition(State& s, const LhatUnit* unit, const std::string& path) {
+LhatValue definition(State& s, const LhatUnit* unit, const std::string& path, const std::string& symbol = "Behaviour") {
     const auto exports = s.check(lhat_run(s.machine.get(), lhat_unit_proto(unit)), path);
-    return s.keep(lhat_table_get_bytes(reinterpret_cast<const LhatTable*>(lhat_as_object(exports)), "Behaviour", 9));
+    return s.keep(lhat_table_get_bytes(reinterpret_cast<const LhatTable*>(lhat_as_object(exports)), symbol.data(), symbol.size()));
 }
 }
 
@@ -535,29 +646,32 @@ std::string ScriptRuntime::hostApi() {
     return json;
 }
 
-std::vector<FieldInfo> ScriptRuntime::fields(const std::filesystem::path& root, const std::string& script) {
+std::vector<FieldInfo> ScriptRuntime::fields(const std::filesystem::path& root, const std::string& script, std::string symbol) {
     World none;
     LevelExpansion nothing;
     State s(none, nothing, root, {});
     createProgram(s);
     std::string errors;
-    const auto* unit = checkBehaviour(s, script, errors);
+    const auto* checked = lhat_program_check(s.program.get(), script.c_str());
+    if (symbol.empty()) symbol = checked && publishes(checked, "Behaviour") ? "Behaviour" :
+        checked && publishes(checked, "System") ? "System" : "Component";
+    const auto* unit = checkBehaviour(s, script, errors, -1, symbol);
     diagnostics(s.program.get(), errors);
     if (!errors.empty()) throw ScriptError(errors);
     compile(s);
-    const auto* type = lhat_unit_export_type(unit, "Behaviour");
-    if (!type || !type->instance) throw ScriptError(script + ": Behaviour must be a def^");
+    const auto* type = lhat_unit_export_type(unit, symbol.c_str());
+    if (!type || !type->instance) throw ScriptError(script + ": " + symbol + " must be a def^");
     // The defaults are what a fresh instance holds.
     startMachine(s);
     const auto instance = s.keep(s.check(
-        lhat_machine_call_member(s.machine.get(), definition(s, unit, script), "new", 3, nullptr, 0), script + " new"));
+        lhat_machine_call_member(s.machine.get(), definition(s, unit, script, symbol), "new", 3, nullptr, 0), script + " new"));
     const auto* table = reinterpret_cast<const LhatTable*>(lhat_as_object(instance));
     std::vector<FieldInfo> result;
     for (std::size_t i = 0; i < type->instance->member_count; ++i) {
         const auto& member = type->instance->members[i];
         if (!member.type) continue;
         const std::string name(member.name->text, member.name->length);
-        if (!exported(unit, name)) continue;  // The script's own, not the Inspector's.
+        if (symbol != "Component" && !exported(unit, name, symbol)) continue;  // The script's own, not the Inspector's.
         const auto value = lhat_table_get_bytes(table, name.data(), name.size());
         bool node = member.type->kind == LHAT_TYPE_RT_HOSTDATA && member.type->hostdata_tag == s.sceneNode;
         for (std::size_t k = 0; member.type->kind == LHAT_TYPE_RT_UNION && k < member.type->part_count; ++k)
@@ -576,6 +690,8 @@ ScriptRuntime::ScriptRuntime(const World& world, LevelExpansion& expanded, const
                              PlayScope scope)
     : state_(std::make_unique<State>(world, expanded, root, std::move(log))) {
     auto& s = *state_;
+    try { s.stages = schedule(world, expanded); }
+    catch (const std::exception& error) { throw ScriptError(error.what()); }
     createProgram(s);
     auto* program = s.program.get();
 
@@ -591,7 +707,7 @@ ScriptRuntime::ScriptRuntime(const World& world, LevelExpansion& expanded, const
         s.runners.push_back(&runner);
         for (const auto& behaviour : runner.behaviours)
             pending.push_back({scene, prefix, s.runners.size() - 1, &behaviour,
-                               owner + " " + runner.name + " " + behaviour.script});
+                               owner + " " + runner.name + " " + behaviour.script, Expansion::npos, runner.name, behaviour.system ? "System" : "Behaviour"});
     };
     // Scene and prefab runners come expanded, one copy per instance (TDDja/06 2).
     for (std::size_t i = 0; i < expanded.instances.size(); ++i)
@@ -599,10 +715,39 @@ ScriptRuntime::ScriptRuntime(const World& world, LevelExpansion& expanded, const
             collect(static_cast<int>(i), runner.instance, runner.runner, "scene " + std::to_string(expanded.instances[i].id));
     for (const auto& runner : world.level.runners) collect(-1, {}, runner, "level");
 
+    for (std::size_t scene = 0; scene < expanded.instances.size(); ++scene) {
+        const auto& nodes = expanded.instances[scene].expansion.nodes;
+        for (const auto n : expanded.instances[scene].expansion.hierarchy()) {
+            auto prefix = nodes[n].path;
+            if (!prefix.empty() && !nodes[n].root) prefix.pop_back();
+            for (const auto& behaviour : nodes[n].node.behaviours)
+                pending.push_back({static_cast<int>(scene), prefix, 0, &behaviour,
+                                   nodes[n].node.name + " " + behaviour.script, n, behaviour.runner});
+        }
+    }
+    for (std::size_t scene = 0; scene < expanded.instances.size(); ++scene) {
+        const auto& nodes = expanded.instances[scene].expansion.nodes;
+        for (const auto n : expanded.instances[scene].expansion.hierarchy()) {
+            auto prefix = nodes[n].path;
+            if (!prefix.empty() && !nodes[n].root) prefix.pop_back();
+            for (const auto& [name, component] : nodes[n].node.scriptComponents)
+                pending.push_back({static_cast<int>(scene), prefix, 0, &component,
+                    nodes[n].node.name + " " + name, n, "", "Component", name});
+        }
+    }
     std::map<std::string, const LhatUnit*> units;
     for (const auto& item : pending)
-        if (!units.count(item.behaviour->script))
-            units[item.behaviour->script] = checkBehaviour(s, item.behaviour->script, errors);
+        units[item.behaviour->script + "#" + item.symbol] = checkBehaviour(s, item.behaviour->script, errors,
+            item.node != Expansion::npos, item.symbol);
+    for (const auto& item : pending) {
+        if (item.symbol == "Component") continue;
+        const auto found = std::find_if(s.stages.begin(), s.stages.end(), [&](const ExecutionStage& stage) {
+            return stage.name == item.stage && stage.parallel.empty();
+        });
+        if (found == s.stages.end() || item.stage == "FetchInput" || item.stage == "ApplyPhysics" ||
+            item.stage == "SyncRender" || item.stage == "SyncSimulation")
+            errors += item.what + ": unknown or engine-owned Runner " + item.stage + "\n";
+    }
     diagnostics(program, errors);
     if (!errors.empty()) throw ScriptError(errors);
     compile(s);
@@ -610,19 +755,30 @@ ScriptRuntime::ScriptRuntime(const World& world, LevelExpansion& expanded, const
 
     if (mainUnit) s.mainProto = lhat_unit_proto(mainUnit);
     std::map<std::string, LhatValue> definitions;
-    for (const auto& [path, unit] : units) definitions[path] = definition(s, unit, path);
+    for (const auto& [key, unit] : units) {
+        const auto split = key.rfind('#');
+        definitions[key] = definition(s, unit, key.substr(0, split), key.substr(split + 1));
+    }
+    s.stageRunners.reserve(s.stages.size());
+    for (const auto& stage : s.stages) {
+        s.stageRunners.push_back({0, stage.name, {}});
+        s.runners.push_back(&s.stageRunners.back());
+    }
     std::vector<LhatValue> runnerHandles;
     for (std::size_t i = 0; i < s.runners.size(); ++i) runnerHandles.push_back(s.keep(s.handle(s.machine.get(), s.runner, i)));
 
     for (const auto& item : pending) {
         const auto& path = item.behaviour->script;
-        const auto* unit = units[path];
+        const auto key = path + "#" + item.symbol;
+        const auto* unit = units[key];
         const auto instance = s.keep(s.check(
-            lhat_machine_call_member(s.machine.get(), definitions[path], "new", 3, nullptr, 0), item.what + " new"));
+            lhat_machine_call_member(s.machine.get(), definitions[key], "new", 3, nullptr, 0), item.what + " new"));
         auto* table = reinterpret_cast<LhatTable*>(lhat_as_object(instance));
         for (const auto& [name, value] : item.behaviour->fields) {
-            if (!behaviourHas(unit, name, fieldType(value)) || !exported(unit, name)) {
-                s.log(item.what + ": field " + name + " ignored (the script has no @export " + fieldType(value) +
+            if (!behaviourHas(unit, name, fieldType(value), item.symbol) ||
+                (item.symbol != "Component" && !exported(unit, name, item.symbol))) {
+                s.log(item.what + ": field " + name + " ignored (the script has no " +
+                      (item.symbol == "Component" ? std::string() : std::string("@export ")) + fieldType(value) +
                       " field of that name)");
                 continue;
             }
@@ -658,8 +814,15 @@ ScriptRuntime::ScriptRuntime(const World& world, LevelExpansion& expanded, const
                 !lhat_machine_table_set(s.machine.get(), table, key, written, &refused) || refused)
                 throw ScriptError(item.what + ": could not set field " + name);
         }
-        s.instances.push_back({item.what, instance, runnerHandles[item.runner], behaviourHas(unit, "start", "any^"),
-                               behaviourHas(unit, "update", "any^")});
+        if (item.symbol == "Component") {
+            s.components[{State::nodeBits(item.scene, item.node), item.component}] = instance;
+            continue;
+        }
+        s.instances.push_back({item.what, instance, item.node == Expansion::npos ? runnerHandles[item.runner]
+            : s.keep(s.handle(s.machine.get(), s.sceneNode, State::nodeBits(item.scene, item.node))),
+            behaviourHas(unit, "start", "any^", item.symbol), behaviourHas(unit, "update", "any^", item.symbol), item.stage, false, item.scene, item.node,
+            item.node == Expansion::npos ? 0 : static_cast<std::size_t>(item.behaviour -
+                expanded.instances[item.scene].expansion.nodes[item.node].node.behaviours.data())});
     }
 }
 
@@ -691,7 +854,25 @@ void ScriptRuntime::dropInput() {
     if (state_->prompt) lhat_prompt_drop(state_->prompt.get());
 }
 
-void ScriptRuntime::update(float deltaSeconds) {
+std::vector<ExecutionStage> ScriptRuntime::schedule(const World& world, const LevelExpansion& expanded) {
+    auto stages = world.level.stages;
+    const auto add = [&](const Runner& runner) {
+        if (runner.name == "OGRE" || runner.name == "Box3D" || runner.name == "Animator") return;
+        if (std::none_of(stages.begin(), stages.end(), [&](const ExecutionStage& stage) { return stage.name == runner.name; })) {
+            const auto at = std::find_if(stages.begin(), stages.end(), [](const ExecutionStage& stage) { return stage.name == "SyncRender"; });
+            stages.insert(at, {runner.name, {}});
+        }
+    };
+    for (const auto& scene : expanded.instances)
+        for (const auto& runner : scene.expansion.runners) add(runner.runner);
+    for (const auto& runner : world.level.runners) add(runner);
+    validateStages(stages);
+    return stages;
+}
+
+void ScriptRuntime::update(float deltaSeconds) { update(deltaSeconds, {}); }
+
+void ScriptRuntime::update(float deltaSeconds, const std::function<void(const std::string&)>& engine) {
     auto& s = *state_;
     if (!s.started) {
         s.started = true;
@@ -701,8 +882,7 @@ void ScriptRuntime::update(float deltaSeconds) {
             if (lhat_is_object_kind(result, LHAT_OBJECT_COROUTINE)) s.game = s.keep(result);
             else s.finished = true;
         }
-        for (const auto& instance : s.instances)
-            if (instance.start) s.call(instance.instance, "start", &instance.runner, 1, instance.what);
+
     }
     s.time += deltaSeconds;
     const LhatValue dt = lhat_real(deltaSeconds);
@@ -710,9 +890,22 @@ void ScriptRuntime::update(float deltaSeconds) {
         s.check(lhat_machine_resume(s.machine.get(), s.game, nullptr, 0), mainPath);
         s.finished = lhat_machine_coroutine_done(s.game);
     }
-    for (const auto& instance : s.instances) {
-        const LhatValue arguments[2] = {instance.runner, dt};
-        if (instance.update) s.call(instance.instance, "update", arguments, 2, instance.what);
-    }
+    for (auto& instance : s.instances)
+        if (instance.node != Expansion::npos)
+            instance.stage = s.expanded.instances[instance.scene].expansion.nodes[instance.node].node.behaviours[instance.attachment].runner;
+    runStages(s.stages, s.world.level.serialExecution || !engine, [&](const std::string& stage) {
+        if (engine) engine(stage);
+        // No VM access on worker threads: parallel members contain engine callbacks only.
+        if (stage == "Box3D" || stage == "Animator" || stage == "OGRE") return;
+        for (auto& instance : s.instances) {
+            if (instance.stage != stage) continue;
+            if (!instance.started) {
+                instance.started = true;
+                if (instance.start) s.call(instance.instance, "start", &instance.runner, 1, instance.what);
+            }
+            const LhatValue arguments[2] = {instance.runner, dt};
+            if (instance.update) s.call(instance.instance, "update", arguments, 2, instance.what);
+        }
+    });
 }
 }

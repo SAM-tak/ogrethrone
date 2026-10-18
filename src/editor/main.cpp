@@ -90,23 +90,15 @@ int main(int argc, char** argv) {
             Colibri::LogListener guiLog;
             Colibri::ColibriListener guiPlatform;
             Colibri::ColibriManager gui(&guiLog, &guiPlatform);
-            throne::PhysicsWorld physics;
             auto previous = std::chrono::steady_clock::now();
-            double accumulator = 0.0;
             unsigned frames = 0;
             bool running = true;
             // One frame; also run from the window hook while a move or resize blocks the loop.
             const auto step = [&] {
                 const auto now = std::chrono::steady_clock::now();
                 const double elapsed = std::min(0.25, std::chrono::duration<double>(now - previous).count());
-                accumulator += elapsed;
                 previous = now;
-                editor.frame(static_cast<float>(elapsed));
-                while (accumulator >= 1.0 / 60.0) {
-                    physics.step();
-                    accumulator -= 1.0 / 60.0;
-                }
-                running = root.renderOneFrame();
+                running = editor.frame(static_cast<float>(elapsed));
                 ++frames;
             };
             editor.platform().modalFrame = [&] {
@@ -115,6 +107,8 @@ int main(int argc, char** argv) {
             while (running && !window->isClosed() && !editor.shouldClose() && (!smoke || frames < 3)) {
                 Ogre::WindowEventUtilities::messagePump();
                 if (window->isClosed()) break;
+                if (smoke && frames == 1) ImGui::GetIO().AddKeyEvent(ImGuiKey_F5, true);
+                if (smoke && frames == 2) ImGui::GetIO().AddKeyEvent(ImGuiKey_F5, false);
                 step();
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }

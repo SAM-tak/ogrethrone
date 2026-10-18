@@ -54,7 +54,7 @@ node.box()                     // throne.BoxPrimitive|nil^（colour() / setColou
 
 ［補足］`prefab`・`overrides` は編集のための構造で、Component ではない（Unity でもプレハブの仕組みは Component ではない）。
 
-ノードの形式は次のとおりとする（後方互換は持たない。シーンは version 2、プレハブは version 3）。`behaviours` は段階 2 で足す。
+ノードの形式は次のとおりとする（後方互換は持たない。シーンは version 2、プレハブは version 3）。`behaviours` は段階 2 で実装済み。
 
 ```lton
 {
@@ -79,9 +79,9 @@ node.box()                     // throne.BoxPrimitive|nil^（colour() / setColou
 
 ## 4. ノードの Behaviour
 
-［提案］ノードの `behaviours` に、Behaviour をいくつでも付けられる。各 Behaviour は、スクリプト、走る Runner の名前、欄の値を持つ。
+ノードの `behaviours` に、Behaviour をいくつでも付けられる。各 Behaviour は、スクリプト、走る Runner の名前、欄の値を持つ。
 
-［提案］ノードに付いた Behaviour の対象は、そのノード自身とする。`start`・`update` には、Runner ではなくそのノードが渡る。
+ノードに付いた Behaviour の対象は、そのノード自身とする。`start`・`update` には、Runner ではなくそのノードが渡る。
 
 ```lhat
 start = p^self^, node:throne.SceneNode { ... },
@@ -90,21 +90,21 @@ update = p^self^, node:throne.SceneNode, dt:number^ { ... },
 
 ［補足］これで、ノードを複製すると Behaviour も付いてくる。今のように、複製に合わせて Runner を複製する必要はなくなる。Inspector では、ノードの Component と Behaviour が並んで見える。
 
-［提案］プレハブのノードに付いた Behaviour は、インスタンスごとに 1 つずつ生まれる（今のプレハブの Runner と同じ）。インスタンスは、Behaviour の欄の値を上書きでき、Behaviour を足したり消したりできる。
+プレハブのノードに付いた Behaviour は、インスタンスごとに 1 つずつ生まれる（今のプレハブの Runner と同じ）。インスタンスは、Behaviour の欄の値を上書きでき、Behaviour を足したり消したりできる。
 
-［提案］今の、Runner が直接持つ Behaviour（`target` の欄で特定のノードを指すもの）は残す。演出や進行役のように、特定のノードを外から動かす処理に使う（2 節のオブジェクト指向の側）。
+今の、Runner が直接持つ Behaviour（`target` の欄で特定のノードを指すもの）は残す。演出や進行役のように、特定のノードを外から動かす処理に使う（2 節のオブジェクト指向の側）。
 
 ## 5. 実行の段
 
-［提案］Runner は、実行の段の並びになる。レベル全体で 1 本の並びを持ち、上から順に実行する。
+Runner は、実行の段の並びになる。レベル全体で 1 本の並びを持ち、上から順に実行する。
 
-- エンジンの Runner（System）: FetchInput、ApplyPhysics など。名前を持ち、消せない。並び替えられるかは ECS-02。
+- エンジンの Runner（System）: FetchInput、ApplyPhysics など。名前を持ち、消せない。［補足］現実装では、エンジンの段どうしの順番は固定し、ユーザーの段は、その間と並行の組の前後に移せる。入力取得は必ず先頭とする。
 - ユーザーの Runner: 名前を付けて、並びの好きな位置に足せる。初めから `Update` を 1 つ置く。
 - 並行の組: 複数の Runner を、同時に走る 1 つの段として並べる（2 節の OGRE / Box3D / Animator）。
 
-［提案］ノードの Behaviour は、指定した Runner の段で走る。同じ段の中では、レベルのシーンインスタンスの順、その中のノードの階層の順（親が先、兄弟は上から）で走る。この順は Runners パネルで、段ごとに展開して見られる。
+ノードの Behaviour は、指定した Runner の段で走る。同じ段の中では、レベルのシーンインスタンスの順、その中のノードの階層の順（親が先、兄弟は上から）で走る。この順は Runners パネルで、段ごとに展開して見られる。
 
-［提案］Runner が直接持つ Behaviour（4 節の最後）も、その Runner の段で走る。段の中では、ノードの Behaviour より先に走る。
+Runner が直接持つ Behaviour（4 節の最後）も、その Runner の段で走る。段の中では、ノードの Behaviour より先に走る。
 
 ［補足］L^ のマシンは 1 つのスレッドで動くので、Behaviour は並行の組の中では走らせられない。並行の組の前後の段に差し込む。
 
@@ -119,7 +119,7 @@ update = p^self^, node:throne.SceneNode, dt:number^ { ... },
 
 ［補足］1 つの写しの中の値は、どれも同じ時点に確定したものなので、組み合わせがずれて見えることはない。遅れが増えるだけである。アニメーションが物理の結果を使う場合（足の IK、ラグドール）は、1 つ前のフレームの物理を見る。
 
-［提案］並行の組は、スイッチ 1 つで直列にも走らせられるようにする（デバッグと再現性の確認のため）。直列にしても写しの受け渡しは同じにして、遅れのフレーム数を変えない。そうすれば、直列と並行で結果が変わらない。
+並行の組は、スイッチ 1 つで直列にも走らせられるようにする（デバッグと再現性の確認のため）。直列にしても写しの受け渡しは同じにして、遅れのフレーム数を変えない。そうすれば、直列と並行で結果が変わらない。
 
 ### 5.2. スレッドとジョブ
 
@@ -134,37 +134,73 @@ Box3D には、C++ の小さなスレッドプールを渡す（Box3D はホス�
 
 ［補足］C++ のプールと std.task のプールのスレッドの数は、合わせてコア数に収まるように決める（取り合いを避けるため）。
 
-［提案］スクリプトから差し込むには、`throne` に Runner を名前で引く API と、Behaviour の段を変える API を足す（具体形は ECS-03）。
+［補足］現在の実装では、スクリプトからは `throne.runner(name)` でユーザーの段を引く（`throne.Runner|nil^`）。ノードの `setBehaviourRunner(index, runner)` で付いている Behaviour の段を変更する。index は 0 から始める。変更は次のフレームから効き、`start` は再実行しない。存在しない段・エンジン段・並行の組には差し込めない。
+
+### 5.3. 現在のエンジンとの結線
+
+［補足］現在の実装では、レベルの `stages` に段の順番を保存する。既定は FetchInput → ApplyPhysics → Update → SyncRender → Parallel（OGRE / Box3D / Animator）→ SyncSimulation。段を持たない直接の Runner は、その名前のユーザー段を SyncRender の前に作る。同じ名前の Runner は同じ段で走る。
+
+入力は UI の構築前に取得し、Behaviour と System はユーザー段で実行する。SyncRender で次フレームの描画用の写しを作り、OGRE は前フレームの写しをメインスレッドで描画する。Box3D は別スレッドで既存の固定刻みの世界を進め、内部タスクには待機中も子タスクを実行できる C++ プールを渡す。並行の組の後では、全ワーカーの終了を待ってから次の段へ進む。処理に失敗しても全ワーカーを回収してからエラーを返す。
+
+［補足］現時点ではシーンと物理ボディを結ぶ Component、アニメーションクリップ／スケルトンの Component は存在しない。ApplyPhysics と Animator の段は処理対象がないため空であり、Box3D は従来の起動確認用の世界を進める。段階 3 はこれらの実行段・同期・並行実行基盤を実装したもので、ボディやアニメーションのアセット形式を新設するものではない。物理・アニメーションのノードへの反映と、std.task を使うアニメーションの実装・性能評価は、その Component を導入するときに行う（ECS-07）。
 
 ## 6. System
 
-［提案］L^ スクリプトでも System を定義できる。System は Runner の段に置き、照会に合うノードを処理する。
+L^ スクリプトでも System を定義できる。System は Runner の段に置き、照会に合うノードを処理する。
 
 ```lhat
-for^ node in throne.query("Transform", "Spin") { ... }
+for^ _^, node in^ throne.query("Transform", "Spin") { ... }
 ```
 
-［補足］スクリプトで Component の型を定義する方法が要る。今の Behaviour の `self^{ ... }` の欄の定義に近い形が使える（ECS-04）。
+［補足］現在の実装では、Component のスクリプトは `public^let^ Component = def^{ self^{ ... } }` を公開する。ノードごとに `new()` して別々の状態を持つ。保存できる欄は number・bool・string・SceneNode 参照で、Component の欄には `@export` は不要とする。ノードの `components.scripts` に照会名をキーとして `{ script = "...", fields = {...} }` を保存する。
+
+```lhat
+# scripts/spin-component.lh
+module^ game.spinComponent
+public^let^ Component = def^{ self^{ degreesPerSecond = 90 } }
+```
+
+［補足］現在の実装では、System は Runner の直接のスクリプトとして保存する。`system = true^` を指定したスクリプトは `Behaviour` の代わりに `System = def^{ ... }` を公開する。`start`・`update` の引数は直接の Behaviour と同じ Runner とする。System の編集用の欄は Behaviour と同じ `@export` を使う。
+
+```lhat
+module^ game.spinSystem
+import^ throne
+let^ spin = require^ "spin-component.lh"
+public^let^ System = def^{
+    update = p^self^, runner:throne.Runner, dt:number^ {
+        for^ _^, node in^ throne.query("Transform", "Spin") {
+            let^ data = node.component("Spin")
+            if^ data fits^ spin.Component {
+                let^ t = node.transform()
+                if^ t != nil^ {
+                    t.setRotation(t.rotation() + throne.vec3(0, data.degreesPerSecond * dt, 0))
+                }
+            }
+        }
+    },
+}
+```
+
+`query` は指定したすべての Component を持つノードの写しの一覧を返す。引数なしなら全ノード、未知の名前なら空の一覧。順番はシーンインスタンス順、その中の階層順。`Transform`・`BoxPrimitive` は組み込み名で、それ以外は `components.scripts` のキーとする。`node.component(name)` はスクリプト定義 Component のインスタンス（`any^`、無ければ `nil^`）を返し、`fits^` で型を絞って使う。組み込み Component は引き続き型付きの `transform()`・`box()` で取得する。
+
+プレハブのスクリプト定義 Component の欄は `overrides.nodes[].scripts` で上書きする。上書きは元の Component がある場合のみ効く。Component の追加・削除は通常ノードのみ可能とする。ノードの Behaviour の上書きは `overrides.nodes[].behaviours` に一覧を保存する。空の一覧は全削除、省略は継承を意味する。
 
 ## 7. 段階
 
-［提案］次の順で進める。
+次の順で実装した。
 
 1. Component への整理: ノードの欄を `Transform` と `BoxPrimitive` に分け、形式・上書き・Inspector を Component の単位にする。（実装済み）
-2. ノードの Behaviour: ノードに Behaviour を付け、ノードを対象に走らせる。Runner は段として、ユーザーの Runner（`Update`）から始める。
-3. エンジンの Runner: FetchInput・ApplyPhysics・描画などを段として並べる。並行の組を入れる。
-4. System と Component の型をスクリプトで定義する。
+2. ノードの Behaviour: ノードの保存・実行、プレハブの上書き、Inspector、段の変更 API。（実装済み）
+3. エンジンの Runner: レベルの段の保存、Runners 表示・並べ替え、並行の組、直列切替、描画の写し、Box3D のタスクプール。（実装済み）
+4. System と Component の型をスクリプトで定義する。型の検査・生成・欄の保存、照会、Inspector、サンプルを含む。（実装済み）
 
 ## 8. 未決事項
 
-- **ECS-02**: エンジンの Runner の並びを、ユーザーが並び替えられるか（固定か）。
-- **ECS-03**: スクリプトから Runner を引き、Behaviour の段を変える API の形。
-- **ECS-04**: スクリプトで Component の型を定義する方法と、System の照会の API の形。
-- **ECS-05**: Runner の並びは、レベルごとに持つか、プロジェクトに 1 本持つか。
-- **ECS-06**: 直列への切り替えで、std.task のタスクを 1 つずつ最後まで走らせる方法（std.task に足すか、throne がタスクにせず順に呼ぶか）。
 - **ECS-07**: アニメーションを L^ のジョブで回したときの、ループと小分けの呼び出しのコストが、アニメーションの量に見合うか（試作で測る）。
 
 ## 改定履歴（要約）
 
 - 初版。
 - ECS-01（並行の組の同期と遅れ）を決定: 案 B を採り、描画は 2 フレーム遅れを標準とした（5.1）。Box3D には C++ のスレッドプールを渡すことにした（5.2）。
+
+- 段階 2〜4 を実装。ECS-02 はエンジン順固定、ECS-03 は Runner 取得とノードの段変更、ECS-04 は Component/System の def^ と名前による照会、ECS-05 はレベル単位、ECS-06 はホスト側の順次呼び出しで具体化した。

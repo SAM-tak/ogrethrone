@@ -1,6 +1,7 @@
 #pragma once
 
 #include "editor/Scene.h"
+#include "runtime/FramePipeline.h"
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -24,6 +25,10 @@ struct Level : RunnerSet {
     /// Scene instances loaded when the level starts, in order.
     std::vector<SceneInstance> scenes;
     std::uint32_t nextSceneId = 1;
+    /// One level-wide execution schedule; engine barriers are fixed.
+    std::vector<ExecutionStage> stages = defaultStages();
+    /// Debug mode preserves snapshots and barriers while running group members in order.
+    bool serialExecution = false;
 
     /// Appends an instance of the scene at @p path and returns it.
     SceneInstance& addScene(const std::string& path);

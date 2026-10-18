@@ -5,6 +5,7 @@
 #include "editor/References.h"
 #include "editor/Project.h"
 #include "script/ScriptRuntime.h"
+#include "runtime/PhysicsWorld.h"
 #include <OgreVector3.h>
 #include <imgui.h>
 #include <filesystem>
@@ -63,8 +64,9 @@ public:
     Editor(const Editor&) = delete;
     Editor& operator=(const Editor&) = delete;
 
-    /// Builds the UI and updates the scene; call once before each Root::renderOneFrame().
-    void frame(float deltaSeconds);
+    /// Builds the UI and runs a complete frame, including main-thread OGRE rendering.
+    /// Returns false when the renderer requests shutdown.
+    bool frame(float deltaSeconds);
     /// True once the user chose to close (File > Exit or the window's close button),
     /// after resolving unsaved changes.
     bool shouldClose() const { return close_; }
@@ -175,7 +177,7 @@ private:
     /// Destroys every render object and its material.
     void destroyRenderObjects();
     /// Copies node transforms and colours to the render objects and the selection outline.
-    void syncTransforms();
+    void syncTransforms(const LevelExpansion* snapshot = nullptr);
     /// Records the current world for undo before an edit.
     void checkpoint();
     /// Records @p before for undo when an edit that started from it has finished.
@@ -229,7 +231,7 @@ private:
     /// Deletes the selected node (with its children) or runner, when the edited file owns it.
     void erase();
     /// Returns the fields of @p script, reading it again when the file has changed.
-    const CachedFields& fieldsOf(const std::string& script);
+    const CachedFields& fieldsOf(const std::string& script, const std::string& symbol);
     /// Replaces the document with the level at levelPath_ and its scenes; undoable.
     /// @return false on failure, with the reason in fileError_.
     bool open();
@@ -349,6 +351,10 @@ private:
     Library library_;
     /// What the current step shows, expanded; the runtime moves its nodes while playing.
     LevelExpansion view_;
+    /// Completed render snapshot from the preceding frame.
+    std::optional<LevelExpansion> renderSnapshot_;
+    PhysicsWorld physics_;
+    double physicsAccumulator_ = 0;
     /// Which runner fields refer to each node of view_; rebuilt with it.
     References references_;
     /// view_'s node structure (instance, path, parent) when the render objects were built.

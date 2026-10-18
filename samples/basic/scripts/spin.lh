@@ -1,28 +1,13 @@
-# Sample behaviour: the scene's "SpinningCube" runner points `target` at the
-# SpinningCube scene node, so that node turns while playing (F5).
-module^samples.spin
-import^throne
+# A node attachment: each scene or prefab instance gets its own Behaviour.
+module^ samples.spin
+import^ throne
 
-public^let^Behaviour = def^{
-    self^{
-        @export target : throne.SceneNode|nil^ = nil^,
-        @export degreesPerSecond = 90,
-        _transform : throne.Transform|nil^ = nil^
-    },
-
-    start = p^self^, runner:throne.Runner {
-        self^._transform := self^.target?.transform()
-        if^self^._transform? {
-            print("has valid transform")
-        }
-        print("started")
-    },
-
-    update = p^self^, runner:throne.Runner, dt:number^{
-        if^self^._transform? {
-            var^ r = self^._transform.rotation()
-            r.y := r.y + self^.degreesPerSecond * dt
-            self^._transform.setRotation(r)
+public^let^ Behaviour = def^{
+    self^{ @export degreesPerSecond = 90 },
+    update = p^self^, node:throne.SceneNode, dt:number^ {
+        let^ t = node.transform()
+        if^ t != nil^ {
+            t.setRotation(t.rotation() + throne.vec3(0, self^.degreesPerSecond * dt, 0))
         }
     },
 }
