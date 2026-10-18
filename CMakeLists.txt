@@ -73,7 +73,7 @@ endif()
 if(THRONE_BUILD_GRAPHICS)
     # ImGuizmo is compiled here against the ImGui core that OgreNextImgui builds.
     add_executable(ogrethrone src/editor/main.cpp src/editor/Editor.cpp src/editor/EditorPanels.cpp
-        src/editor/EditorPlatform.cpp third_party/imguizmo/src/ImGuizmo.cpp)
+        src/editor/EditorPlatform.cpp src/editor/References.cpp third_party/imguizmo/src/ImGuizmo.cpp)
     if(WIN32)
         # The application icon and the manifest (visual styles, per-monitor DPI, UTF-8).
         target_sources(ogrethrone PRIVATE media/ogrethrone.rc media/ogrethrone.manifest)

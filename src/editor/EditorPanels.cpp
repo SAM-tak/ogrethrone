@@ -343,6 +343,21 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
              [&] { layer->colour.reset(); });
     if (changed) writeNode(value, changed);
 
+    // The runner fields that refer to this node; clicking one selects its runner.
+    const auto& nodes = view_.instances[selected_.instance].expansion.nodes;
+    if (const auto found = references_.find({static_cast<std::size_t>(selected_.instance), &expanded - nodes.data()});
+        found != references_.end()) {
+        ImGui::Separator();
+        ImGui::TextUnformatted("Referenced by");
+        for (std::size_t i = 0; i < found->second.size(); ++i) {
+            const auto referrer = found->second[i];
+            ImGui::PushID(static_cast<int>(i));
+            if (ImGui::Selectable(referrer.label.c_str()))
+                selected_ = {Selection::Kind::Runner, referrer.instance, referrer.from, referrer.runner};
+            ImGui::PopID();
+        }
+    }
+
     if (!expanded.node.prefab.empty()) {
         ImGui::Separator();
         ImGui::Text("Instance of %s", expanded.node.prefab.c_str());

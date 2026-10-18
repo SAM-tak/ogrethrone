@@ -555,6 +555,7 @@ void Editor::refreshView() {
     } else {
         view_ = expand(doc_.world, library_);
     }
+    references_ = findReferences(view_, content() ? nullptr : &doc_.world.level);
     decltype(viewShape_) shape;
     for (std::size_t i = 0; i < view_.instances.size(); ++i)
         for (const auto& node : view_.instances[i].expansion.nodes) shape.emplace_back(i, node.path, node.parent);
@@ -1275,13 +1276,39 @@ void Editor::duplicate() {
     if (!target.node || target.addedTo || isPrefabRoot(target.node->id)) return;
     try {
         auto before = doc_;
+        auto* file = fileOf(selected_.instance);
         auto copy = *target.node;
-        auto& added = fileOf(selected_.instance)->addNode(copy.name, copy.parent);
+        const auto original = copy.id;
+        auto& added = file->addNode(copy.name, copy.parent);
         copy.id = added.id;
         if (copy.name.size() <= 250) copy.name += " Copy";
         copy.position.x += 1;
         added = std::move(copy);
-        selected_.path = {added.id};
+        // Runners that refer to the node come along, referring to the copy instead
+        // (the file's own, and at the level the level's naming this scene instance).
+        const auto copyRunners = [&](RunnerSet& owner, std::uint32_t scene) {
+            for (std::size_t i = 0, count = owner.runners.size(); i < count; ++i) {
+                auto runner = owner.runners[i];
+                bool refers = false;
+                for (auto& behaviour : runner.behaviours)
+                    for (auto& [name, value] : behaviour.fields)
+                        if (auto* ref = std::get_if<NodeRef>(&value); ref && ref->scene == scene && ref->node == original) {
+                            ref->node = added.id;
+                            refers = true;
+                        }
+                if (!refers) continue;
+                auto& made = owner.addRunner(runner.name);
+                runner.id = made.id;
+                if (runner.name.size() <= 250) runner.name += " Copy";
+                made = std::move(runner);
+            }
+        };
+        const auto copied = added.id;
+        copyRunners(*file, 0);
+        if (!content())
+            if (const auto* placed = doc_.world.level.findScene(view_.instances[selected_.instance].id))
+                copyRunners(doc_.world.level, placed->id);
+        selected_.path = {copied};
         commit(std::move(before));
     } catch (const std::exception& error) {
         log(error.what());
@@ -1322,6 +1349,13 @@ void Editor::erase() {
         if (isPrefabRoot(selected_.path[0])) {
             log("A prefab keeps its root node");
             return;
+        }
+        if (const auto* node = selectedNode()) {
+            const auto& nodes = view_.instances[selected_.instance].expansion.nodes;
+            const auto found = references_.find({static_cast<std::size_t>(selected_.instance), node - nodes.data()});
+            if (found != references_.end())
+                for (const auto& referrer : found->second)
+                    log("Deleted " + node->node.name + ", which " + referrer.label + " referred to");
         }
         checkpoint();
         fileOf(selected_.instance)->removeNode(selected_.path[0]);

@@ -108,6 +108,8 @@ instance's runner or a node inside it selected adds one to that instance, and
 Delete on an instance's runner records its removal. Inside a scene or prefab, Add
 Instance places the prefab named next to it, creating one with a root node when
 the file does not exist yet; double-click the new instance node to fill the prefab.
+A node's Inspector lists the runner fields that refer to it (Referenced by);
+clicking one selects that runner.
 Apply in the Inspector writes all of an instance's overrides into its prefab.
 Unpack in the Inspector replaces an instance with plain nodes holding what it
 shows, nested instances included, and copies its runners into the file.
@@ -121,7 +123,8 @@ Ctrl+S saves the level, its scenes and every opened prefab.
 Right-drag orbits, middle-drag pans, the wheel zooms, left-click selects a node
 and `F` frames it. The selected node shows an ImGuizmo gizmo: W, E and R (or the
 viewport toolbar) switch between move, rotate and scale, and Local switches between
-the node's own axes and the world's; one drag is one undo step. Ctrl+Z/Ctrl+Y undo/redo, Ctrl+D duplicates a node, Delete
+the node's own axes and the world's; one drag is one undo step. Ctrl+Z/Ctrl+Y undo/redo, Ctrl+D duplicates a node (with copies of
+the runners that refer to it, referring to the copy), Delete
 removes the selected node or runner, Ctrl+S saves the level and its scenes and
 Ctrl+O opens a level. New and Open are undoable; closing the window or the project with
 unsaved changes asks to save or discard them (on Windows this also covers the

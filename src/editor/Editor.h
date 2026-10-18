@@ -2,6 +2,7 @@
 
 #include "editor/EditorPlatform.h"
 #include "editor/Expansion.h"
+#include "editor/References.h"
 #include "editor/Project.h"
 #include "script/ScriptRuntime.h"
 #include <OgreVector3.h>
@@ -348,6 +349,8 @@ private:
     Library library_;
     /// What the current step shows, expanded; the runtime moves its nodes while playing.
     LevelExpansion view_;
+    /// Which runner fields refer to each node of view_; rebuilt with it.
+    References references_;
     /// view_'s node structure (instance, path, parent) when the render objects were built.
     std::vector<std::tuple<std::size_t, NodePath, std::size_t>> viewShape_;
     /// Non-null while playing.
