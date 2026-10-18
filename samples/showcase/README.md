@@ -1,7 +1,7 @@
 # OGRE lighting and material showcases
 
-Three editable Throne levels port the scene layouts and lighting from the pinned
-OGRE-Next `Forward3D`, `PbsMaterials` and `AreaApproxLights` samples.
+Four editable Throne levels port the scene layouts and lighting from the pinned
+OGRE-Next `Forward3D`, `PbsMaterials`, `AreaApproxLights` and `ParticleFX2` samples.
 
 Open this folder from the project launcher, or run from the repository root:
 
@@ -21,10 +21,42 @@ The project opens **Area Lights**. Click a file in **Browser > Levels** to switc
   64 pillars, 16 animated cubes, and two spotlights. Use **Lighting > Forward3D /
   Forward Clustered** and **Show Clusters** to compare light assignment. Both
   methods aim to produce the same lighting; their difference is culling cost.
+- `particlefx2.level.lton`: the purple fountain, rising aureola rings, PBS smoke,
+  rotating Unlit smoke and PBS sphere particles. A marble platform and marker
+  reproduce the original ten-second motion. The opening view frames the larger
+  particle layout; fly closer to inspect individual effects.
 
-F5 starts/stops the rotation behaviours. Pause suspends/resumes Play. These
-editor shortcuts replace the standalone samples' function-key controls.
+F5 starts/stops the rotation and particle-platform behaviours. Pause suspends or
+resumes Play. These editor shortcuts replace the standalone samples' function-key controls.
 Viewport navigation remains available while paused.
+
+Particles animate in edit mode by default. **Particles > Preview in Edit Mode**
+toggles this preview; **Restart** clears existing particles and starts emission
+again. Play starts fresh particle pools, Pause freezes emission, positions and
+lifetimes, and Stop clears the Play particles and restores the authored platform
+poses. Edit preview resumes after Stop when enabled.
+
+**Particles > Alpha Blending / Alpha Hashing** compares conventional transparency
+with the sample's order-independent alpha hashing. The viewport is single-sampled,
+so the standalone demo's additional MSAA alpha-to-coverage mode is not offered.
+Statistics includes system counts and an approximate particle count (SIMD slots).
+
+A **Particle System** component selects a template by name and has an Enabled flag.
+An empty Particle Script uses the five built-in showcase templates; a nonempty
+project-relative `.particle2` path loads definitions and associated materials and
+textures from that directory. Template names must be unique across loaded files.
+Editing a template/enable flag restarts the particle pools. Components round-trip
+through scenes and prefab overrides; `throne.query("ParticleSystem")` finds their
+nodes, and `node.particleSystem()` returns the component handle.
+
+The built-in definitions in `media/particles/Showcase.particle2` preserve the OGRE
+sample values but flatten smoke inheritance so Scaler, Rotator and ColourImage
+remain separate affectors. Leading `+` signs on colour-fader rates are omitted
+for the pinned charconv parser; their numeric values are unchanged. Original
+textures/materials are reused from the
+pinned OGRE media. The ring image uses luminance plus alpha; its RG channels are
+swizzled to grayscale RGB and alpha for the STBI decoder. The standalone sample's static marble billboard is represented
+by a vertical plane; the actual particle effects use OGRE ParticleFX2 billboards.
 
 Select a node in Scene and edit its **Light** or **PBS Material** in Inspector.
 Both components support save/load, undo and prefab property overrides. Light
@@ -59,8 +91,15 @@ ctest --preset windows-release -R showcase_data_smoke
 out/build/windows-clang-ninja/bin/Release/ogrethrone.exe --smoke-showcases
 ```
 
-The Vulkan check opens all three levels, validates light counts, switches culling
+The Vulkan check opens all four levels, validates light counts, switches culling
 and area-light models, and checks Play/Pause/Stop against viewport captures in
 `out/showcase-captures/`. Directional shadows are disabled for pose comparisons
-because cascade fitting can change edge samples. See [NOTICE.md](NOTICE.md) for
+because cascade fitting can change edge samples. Particle checks also inspect
+live CPU positions/lifetimes while paused, isolate each of the five effects to
+verify visible pixels and transparent ring corners, compare blending modes, and exercise
+preview toggling, Stop cleanup and level re-entry. See [NOTICE.md](NOTICE.md) for
 source and asset attribution.
+The particle checks also capture the actual ImGui viewport presentation with
+shadows enabled and compare its scene pixels with the render target in both
+blending modes. This catches accidental reuse of particle alpha when displaying
+the already composited scene image.

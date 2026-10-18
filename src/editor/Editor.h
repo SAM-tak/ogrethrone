@@ -14,6 +14,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <tuple>
 #include <string>
 #include <vector>
@@ -33,6 +34,7 @@ class HlmsPbs;
 class HlmsPbsDatablock;
 class Light;
 class AtmosphereNpr;
+class ParticleSystem2;
 class HlmsUnlit;
 class HlmsUnlitDatablock;
 }
@@ -80,7 +82,7 @@ public:
         double frameMs = 0, uiMs = 0, scriptMs = 0, snapshotMs = 0;
         double physicsApplyMs = 0, physicsPrepareMs = 0, physicsStepMs = 0;
         double renderSyncMs = 0, renderMs = 0, waitMs = 0;
-        std::size_t nodes = 0, bodies = 0;
+        std::size_t nodes = 0, bodies = 0, particleSystems = 0, particles = 0;
     };
     /// The last completed frame, for profiling without FPS averaging or fixed-delta assumptions.
     const FrameTimings& frameTimings() const { return timings_; }
@@ -98,6 +100,10 @@ public:
     void setClusterDebug(bool enabled) { doc_.world.level.rendering.debugClusters=enabled; }
     /// Preview override: -1 authored, 0 textured approximation, 1 LTC.
     void setAreaLightModel(int model) { areaLightModel_=model; }
+    /// Enables live particle previews outside Play; changing this resets the preview.
+    void setParticlePreview(bool enabled) { particlePreview_=enabled; }
+    /// Preview blending for smoke: 0 alpha blending, 1 alpha hashing.
+    void setParticleBlending(int mode) { particleBlending_=mode; }
     /// Whether a Play session currently owns the expanded world.
     bool playing() const { return runtime_ != nullptr; }
     /// Whether Play is suspended while viewport navigation and rendering remain active.
@@ -146,6 +152,8 @@ private:
         Ogre::HlmsUnlitDatablock* emitterMaterial = nullptr;
         std::optional<PbsMaterial> surface;
         PrimitiveShape emitterShape;
+        Ogre::ParticleSystem2* particles = nullptr;
+        std::optional<ParticleSystemComponent> particleConfig;
 
     };
     /// Everything the editor edits; one undo step is a copy of it.
@@ -229,6 +237,12 @@ private:
     void syncLighting();
     /// Loads one project texture with a project-qualified cache key; masks share an R8 pool.
     Ogre::TextureGpu* projectTexture(const std::string& path, int kind, bool mask = false);
+    /// Loads the standard ParticleFX2 resources and any project particle definitions.
+    void loadParticleResources(const std::string& script);
+    /// Reconciles particle instances after transforms; template/enable changes reset shared pools.
+    void syncParticles(const LevelExpansion& shown);
+    /// Clears all live particles and instance handles, including shared definition state.
+    void clearParticles();
     /// Records the current world for undo before an edit.
     void checkpoint();
     /// Records @p before for undo when an edit that started from it has finished.
@@ -373,6 +387,10 @@ private:
     bool skyboxEnabled_ = true;
     Ogre::SceneNode* sunNode_ = nullptr;
     bool shadowsEnabled_ = true;
+    bool particleResourcesLoaded_ = false, particlePreview_ = true;
+    int particleBlending_ = 1, appliedParticleBlending_ = -1;
+    std::set<std::string> particleScripts_;
+    std::size_t particleSystemCount_ = 0, particleCount_ = 0;
     int areaLightModel_ = -1;
     std::optional<bool> clustered_;
     float clusterMin_ = 0, clusterMax_ = 0;

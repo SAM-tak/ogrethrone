@@ -92,7 +92,7 @@ endif()
 if(THRONE_BUILD_GRAPHICS)
     # ImGuizmo is compiled here against the ImGui core that OgreNextImgui builds.
     add_executable(ogrethrone src/editor/main.cpp src/editor/Editor.cpp src/editor/EditorPanels.cpp
-        src/editor/EditorPlatform.cpp src/editor/References.cpp third_party/imguizmo/src/ImGuizmo.cpp
+        src/editor/EditorPlatform.cpp src/editor/EditorParticles.cpp src/editor/References.cpp third_party/imguizmo/src/ImGuizmo.cpp
         src/editor/Editor.h src/editor/EditorPlatform.h src/editor/OgreConversions.h src/editor/References.h)
     if(WIN32)
         # The application icon and the manifest (visual styles, per-monitor DPI, UTF-8).
@@ -100,19 +100,21 @@ if(THRONE_BUILD_GRAPHICS)
         target_link_libraries(ogrethrone PRIVATE dwmapi)
     endif()
     target_link_libraries(ogrethrone PRIVATE throne_runtime throne_audio throne_script OgreNextMain
-        RenderSystem_Vulkan OgreNextHlmsPbs OgreNextHlmsUnlit OgreNextImgui OgreNextAtmosphere ColibriGui)
+        RenderSystem_Vulkan OgreNextHlmsPbs OgreNextHlmsUnlit OgreNextImgui OgreNextAtmosphere Plugin_ParticleFX2 ColibriGui)
     target_include_directories(ogrethrone PRIVATE
         third_party/ogre-next/RenderSystems/Vulkan/include
         third_party/ogre-next/Components/Imgui/include
         third_party/ogre-next/Components/Hlms/Common/include
         third_party/ogre-next/Components/Hlms/Unlit/include
         third_party/ogre-next/Components/Hlms/Pbs/include
+        third_party/ogre-next/PlugIns/ParticleFX2/include
         third_party/ogre-next/Components/Atmosphere/include
         third_party/imgui
         third_party/imguizmo/src)
     # Hlms shader templates are read from the pinned OGRE checkout until asset packaging exists.
     target_compile_definitions(ogrethrone PRIVATE
-        THRONE_OGRE_MEDIA_DIR="${PROJECT_SOURCE_DIR}/third_party/ogre-next/Samples/Media")
+        THRONE_OGRE_MEDIA_DIR="${PROJECT_SOURCE_DIR}/third_party/ogre-next/Samples/Media"
+        THRONE_MEDIA_DIR="${PROJECT_SOURCE_DIR}/media")
     if(WIN32)
         # The Win32 platform backend links against the ImGui core built by OgreNextImgui.
         target_sources(ogrethrone PRIVATE third_party/imgui/backends/imgui_impl_win32.cpp)

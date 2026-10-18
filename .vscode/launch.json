@@ -9,8 +9,7 @@
       "args": [],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
-      "stopAtEntry": false,
-      "preLaunchTask": "CMake: build"
+      "stopAtEntry": false
     },
     {
       "name": "Windows: project launcher",
@@ -20,8 +19,7 @@
       "args": [],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
-      "stopAtEntry": false,
-      "preLaunchTask": "CMake: build"
+      "stopAtEntry": false
     }
   ]
 }

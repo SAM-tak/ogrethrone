@@ -1,0 +1,5 @@
+format = "ogrethrone-level",
+version = 3,
+scenes = {{id = 1, scene = "scenes/particlefx2.scene.lton"}},
+runners = {},
+rendering = {defaultSun = false^, grid = false^, sky = false^, clustered = true^, ambientUpper = {0.0225, 0.0375, 0.0525}, ambientLower = {0.02925, 0.0219375, 0.014625}, ambientDirection = {1, 1.34641, 1}, minDistance = 0.1, maxDistance = 1000, openingCamera = true^, target = {-40, 190, 0}, yaw = 0.1, pitch = 0.15, distance = 700},

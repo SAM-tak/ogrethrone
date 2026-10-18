@@ -460,6 +460,13 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         char text[256]; fill(text,path); bool edited=ImGui::InputText(label,text,sizeof text); track();
         if(edited) path=text; return edited;
     };
+    component("Particle System",value.particles,&SceneNode::particles,&NodeOverride::particles,[&](auto& c) {
+        bool edited=texturePath("Template",c.definition);
+        edited|=texturePath("Particle Script",c.script);
+        edited|=ImGui::Checkbox("Enabled",&c.enabled); track();
+        ImGui::TextDisabled("Empty script uses OGRE's built-in ParticleFX2 examples.");
+        return edited;
+    });
     component("PBS Material",value.material,&SceneNode::material,&NodeOverride::material,[&](auto& c) {
         bool edited=scalar("Roughness",c.roughness,.02f,1);
         bool metallic=c.metalness>=0;
@@ -540,6 +547,7 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         };
         addPrimitive("Box Primitive",PrimitiveKind::Box); addPrimitive("Sphere Primitive",PrimitiveKind::Sphere);
         addPrimitive("Capsule Primitive",PrimitiveKind::Capsule); addPrimitive("Plane Primitive",PrimitiveKind::Plane);
+        if(!own->particles && ImGui::Selectable("Particle System")) checkpoint(),own->particles.emplace();
         if(!own->material && ImGui::Selectable("PBS Material")) checkpoint(),own->material.emplace();
         if(!own->light && ImGui::Selectable("Light")) checkpoint(),own->light.emplace();
         if(!own->boxCollider && ImGui::Selectable("Box Collider")) checkpoint(),own->boxCollider.emplace();

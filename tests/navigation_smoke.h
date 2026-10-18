@@ -1,7 +1,7 @@
 #pragma once
-namespace Ogre { class Camera; }
+namespace Ogre { class Camera; class Window; }
 namespace throne {
 class Editor;
 /// Exercises viewport mouse and keyboard navigation through real ImGui frames.
-void navigationSmoke(Editor& editor, Ogre::Camera& camera);
+void navigationSmoke(Editor& editor, Ogre::Window& window, Ogre::Camera& camera);
 }

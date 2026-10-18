@@ -15,7 +15,8 @@
     {"kind": "hostdata", "module": "throne", "name": "PlaneCollider"},
     {"kind": "hostdata", "module": "throne", "name": "RigidBody"},
     {"kind": "hostdata", "module": "throne", "name": "PbsMaterial"},
-    {"kind": "hostdata", "module": "throne", "name": "Light"}
+    {"kind": "hostdata", "module": "throne", "name": "Light"},
+    {"kind": "hostdata", "module": "throne", "name": "ParticleSystem"}
   ],
   "functions": [
     {"kind": "func", "module": "std.math", "name": "sin", "signature": "f^number^ -> number^;"},
@@ -95,6 +96,7 @@
     {"kind": "member", "module": "throne", "type": "PlaneCollider", "name": "centre", "signature": "f^self^ -> throne.Vec3;"},
     {"kind": "member", "module": "throne", "type": "PlaneCollider", "name": "width", "signature": "f^self^ -> number^;"},
     {"kind": "member", "module": "throne", "type": "PlaneCollider", "name": "depth", "signature": "f^self^ -> number^;"},
+    {"kind": "member", "module": "throne", "type": "SceneNode", "name": "particleSystem", "signature": "f^self^ -> throne.ParticleSystem|nil^;"},
     {"kind": "member", "module": "throne", "type": "SceneNode", "name": "material", "signature": "f^self^ -> throne.PbsMaterial|nil^;"},
     {"kind": "member", "module": "throne", "type": "PbsMaterial", "name": "roughness", "signature": "f^self^ -> number^;"},
     {"kind": "member", "module": "throne", "type": "PbsMaterial", "name": "metalness", "signature": "f^self^ -> number^;"},

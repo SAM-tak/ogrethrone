@@ -13,12 +13,17 @@
 #include <OgreTextureGpu.h>
 #include <OgreAtmosphereNpr.h>
 #include <OgreMaterialManager.h>
+#include <OgreMaterial.h>
+#include <OgreTechnique.h>
+#include <OgrePass.h>
 #include <OgreResourceGroupManager.h>
 #include <OgreHlmsPbs.h>
 #include <OgreHlmsPbsDatablock.h>
 #include <OgreHlmsSamplerblock.h>
 #include <Compositor/Pass/OgreCompositorPassDef.h>
 #include <OgreCamera.h>
+#include <OgreControllerManager.h>
+#include <ParticleSystem/OgreParticleSystemManager2.h>
 #include <OgreCompositorPassImguiProvider.h>
 #include <OgreHlmsManager.h>
 #include <OgreHlmsUnlit.h>
@@ -298,6 +303,7 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
     // The provider must be installed before the dear_imgui pass is defined.
     auto* compositor = root.getCompositorManager2();
     compositor->setCompositorPassProvider(guiPass_.get());
+    scene_.getParticleSystemManager2()->setHighestPossibleQuota(16383u,0u);
     pbs_.setShadowSettings(Ogre::HlmsPbs::PCF_3x3);
     scene.setForwardClustered(true,16,8,24,64,0,0,0.1f,100.0f);
     scene.setShadowFarDistance(100.0f);
@@ -554,6 +560,7 @@ void Editor::play() {
         physics_->setSerial(doc_.world.level.serialExecution);
         physics_->load(view_);
         renderSnapshot_ = view_;
+        clearParticles();
         log("Play");
     } catch (const std::exception& error) {
         runtime_.reset();
@@ -568,6 +575,7 @@ void Editor::stop() {
     runtime_.reset();
     physics_.reset();
     renderSnapshot_.reset();
+    clearParticles();
     log("Stop");
 }
 
@@ -578,6 +586,15 @@ void Editor::togglePause() {
 }
 
 Editor::~Editor() {
+    auto& shutdownLog=Ogre::LogManager::getSingleton();
+    shutdownLog.logMessage("Shutdown: releasing script runtimes");
+    consoleMore_=nullptr;
+    consoleIdle_.reset();
+    runtime_.reset();
+    shutdownLog.logMessage("Shutdown: releasing physics world and workers");
+    physics_.reset();
+    renderSnapshot_.reset();
+    shutdownLog.logMessage("Shutdown: releasing editor rendering resources");
     // ImGui would save to io.IniFilename when its context is destroyed, after iniFile_ is gone.
     auto& io = ImGui::GetIO();
     if (io.IniFilename) ImGui::SaveIniSettingsToDisk(io.IniFilename);
@@ -596,6 +613,7 @@ Editor::~Editor() {
     unlit_.destroyDatablock(lineMaterial);
     scene_.destroyLight(sun_);
     scene_.destroySceneNode(sunNode_);
+    shutdownLog.logMessage("Shutdown: editor released");
 }
 
 bool Editor::frame(float deltaSeconds, const std::function<void()>& input) {
@@ -607,10 +625,11 @@ bool Editor::frame(float deltaSeconds, const std::function<void()>& input) {
     FrameTimings measured;
     platform_.newFrame();
     if (input) input();
+    if (platform_.takeCloseRequest()) requestLeave(Leave::Exit);
+    if (close_) return false;
     ImGui::GetIO().DeltaTime = std::max(deltaSeconds, 1.0e-4f);
     ImGui::NewFrame();
     ImGuizmo::BeginFrame();
-    if (platform_.takeCloseRequest()) requestLeave(Leave::Exit);
     if (!project_) {
         launcher();
         gui_->prepareForRender(&scene_);
@@ -635,6 +654,10 @@ bool Editor::frame(float deltaSeconds, const std::function<void()>& input) {
     fileDialog();
     closeDialog();
     replaceDialog();
+    if(close_) {
+        ImGui::EndFrame();
+        return false;
+    }
     measured.uiMs = milliseconds(frameStart, Clock::now());
     bool running = true;
     std::optional<LevelExpansion> nextSnapshot;
@@ -664,10 +687,21 @@ bool Editor::frame(float deltaSeconds, const std::function<void()>& input) {
         } else if (stage == "OGRE") {
             syncTransforms(runtime_ && renderSnapshot_ ? &*renderSnapshot_ : nullptr);
             updateCamera();
+            scene_.getParticleSystemManager2()->setCameraPosition(camera_.getDerivedPosition());
             gui_->prepareForRender(&scene_);
+            // Scene RGB is already composited. Particle alpha must not blend the viewport again.
+            // The pinned ImGui backend creates this per-texture material during prepareForRender.
+            if(auto material=Ogre::MaterialManager::getSingleton().getByName(
+                   "!!OgreImgui_"+texture_->getName().getReleaseText())) {
+                auto* pass=material->getTechnique(0)->getPass(0);
+                if(pass->getBlendblock()->mSourceBlendFactor!=Ogre::SBF_ONE ||
+                   pass->getBlendblock()->mDestBlendFactor!=Ogre::SBF_ZERO)
+                    pass->setBlendblock(Ogre::HlmsBlendblock());
+            }
             measured.renderSyncMs = milliseconds(start, Clock::now());
             const auto render = Clock::now();
-            running = root_.renderOneFrame();
+            Ogre::ControllerManager::getSingleton().setTimeFactor(paused()?0.0f:1.0f);
+            running = root_.renderOneFrame(deltaSeconds);
             measured.renderMs = milliseconds(render, Clock::now());
         } else if (stage == "SyncSimulation") {
             if (nextSnapshot) renderSnapshot_ = std::move(nextSnapshot);
@@ -686,11 +720,12 @@ bool Editor::frame(float deltaSeconds, const std::function<void()>& input) {
         stop();
         syncTransforms();
         gui_->prepareForRender(&scene_);
-        running = root_.renderOneFrame();
+        running = root_.renderOneFrame(deltaSeconds);
     }
     measured.frameMs = milliseconds(frameStart, Clock::now());
     measured.nodes = renderObjects_.size();
     measured.bodies = physics_ ? physics_->bodyCount() : 0;
+    measured.particleSystems=particleSystemCount_; measured.particles=particleCount_;
     timings_ = measured;
     const auto weight = averageTimings_.frameMs == 0 ? 1.0 : 1.0 - std::exp(-measured.frameMs / 500.0);
     for (auto member : {&FrameTimings::frameMs, &FrameTimings::uiMs, &FrameTimings::scriptMs,
@@ -926,6 +961,7 @@ void Editor::rebuildScene() {
 }
 
 void Editor::destroyRenderObjects() {
+    clearParticles();
     // Children before parents, so no node is destroyed while it still has children.
     for (auto it = renderObjects_.rbegin(); it != renderObjects_.rend(); ++it) {
         if(it->light) scene_.destroyLight(it->light);
@@ -1023,9 +1059,11 @@ void Editor::syncTransforms(const LevelExpansion* snapshot) {
         sceneRoots_[i]->setScale(toOgre(transform.scale));
     }
     const RenderObject* outlined = nullptr;
+    bool hasParticles=false;
     for (auto& render : renderObjects_) {
         const auto& expanded = shown.instances[render.instance].expansion.nodes[render.index];
         const auto& node = expanded.node;
+        hasParticles|=bool(node.particles);
         const auto shape=primitiveShape(node);
         const auto surface=node.material.value_or(PbsMaterial{});
         if (shape != render.shape || surface.uvScale!=render.uvScale) {
@@ -1108,6 +1146,7 @@ void Editor::syncTransforms(const LevelExpansion* snapshot) {
             selected_.path == expanded.path)
             outlined = &render;
     }
+    if(hasParticles || particleSystemCount_) syncParticles(shown);
     gridNode_->setVisible(showGrid_);
     outlineNode_->setVisible(outlined != nullptr);
     if (outlined) {
@@ -1332,6 +1371,7 @@ void Editor::dropOnPrefab(int instance, NodeId id, const std::string& file) {
 namespace {
 /// Copies the properties @p from sets into @p into.
 void assign(NodeOverride& into, const NodeOverride& from) {
+    if (from.particles) into.particles = from.particles;
     if (from.material) into.material = from.material;
     if (from.light) into.light = from.light;
     if (from.sphere) into.sphere = from.sphere;
@@ -1917,6 +1957,15 @@ void Editor::menu() {
         ImGui::EndDisabled();
         ImGui::EndMenu();
     }
+    if(ImGui::BeginMenu("Particles")) {
+        ImGui::BeginDisabled(runtime_!=nullptr);
+        ImGui::MenuItem("Preview in Edit Mode",nullptr,&particlePreview_);
+        ImGui::EndDisabled();
+        if(ImGui::MenuItem("Alpha Blending",nullptr,particleBlending_==0)) particleBlending_=0;
+        if(ImGui::MenuItem("Alpha Hashing",nullptr,particleBlending_==1)) particleBlending_=1;
+        if(ImGui::MenuItem("Restart")) clearParticles();
+        ImGui::EndMenu();
+    }
     if (ImGui::MenuItem(runtime_ ? "Stop" : "Play", "F5")) runtime_ ? stop() : play();
     if (ImGui::MenuItem(paused() ? "Resume" : "Pause", "Pause", paused(), runtime_ != nullptr)) togglePause();
     if (runtime_) ImGui::TextColored(paused() ? ImVec4(1.0f, 0.8f, 0.3f, 1) : ImVec4(0.4f, 0.9f, 0.5f, 1),
@@ -1944,14 +1993,19 @@ void Editor::fileDialog() {
 }
 
 void Editor::requestLeave(Leave action) {
-    if (runtime_) stop();
     leaving_ = action;
-    if (dirty_) confirmClose_ = true;
+    if (dirty_) {
+        if (runtime_) stop();
+        confirmClose_ = true;
+    }
     else leave(action);
 }
 
 void Editor::leave(Leave action) {
-    if (action == Leave::Exit) close_ = true;
+    if (action == Leave::Exit) {
+        Ogre::LogManager::getSingleton().logMessage("Shutdown: exit accepted");
+        close_ = true;
+    }
     else closeProject();
 }
 
@@ -2005,7 +2059,7 @@ void Editor::viewport() {
                     if (viewDrag_ == ViewDrag::Fly && ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Right))
                         flySpeed_ = std::clamp(flySpeed_ * std::pow(1.25f, io.MouseWheel), 0.1f, 500.0f);
                     else if (ImGui::IsItemHovered() && !ImGui::IsMouseDown(ImGuiMouseButton_Right))
-                        distance_ = std::clamp(distance_ * std::pow(0.88f, io.MouseWheel), 0.5f, 500.0f);
+                        distance_ = std::clamp(distance_ * std::pow(0.88f, io.MouseWheel), 0.5f, 5000.0f);
                 }
                 const auto offset = [&] {
                     return Ogre::Vector3(std::cos(pitch_) * std::sin(yaw_), std::sin(pitch_),
@@ -2036,7 +2090,7 @@ void Editor::viewport() {
                         target_ += (camera_.getUp() * io.MouseDelta.y - camera_.getRight() * io.MouseDelta.x) *
                                    (distance_ * 0.0015f);
                     if (viewDrag_ == ViewDrag::Dolly)
-                        distance_ = std::clamp(distance_ * std::exp(io.MouseDelta.y * 0.01f), 0.5f, 500.0f);
+                        distance_ = std::clamp(distance_ * std::exp(io.MouseDelta.y * 0.01f), 0.5f, 5000.0f);
                 }
                 if (viewDrag_ == ViewDrag::Pan && ImGui::IsMouseReleased(ImGuiMouseButton_Middle) &&
                     ImGui::IsItemHovered() && !ImGui::IsMouseDragPastThreshold(ImGuiMouseButton_Middle))
@@ -2058,7 +2112,7 @@ void Editor::viewport() {
                 ImGui::SetCursorScreenPos(ImVec2(origin.x + size.x - 290, origin.y + 8));
                 ImGui::SetNextWindowBgAlpha(0.75f);
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6, 4));
-                if (ImGui::BeginChild("ViewportStatistics", ImVec2(280, statisticsCollapsed_ ? 28 : 182), ImGuiChildFlags_Borders,
+                if (ImGui::BeginChild("ViewportStatistics", ImVec2(280, statisticsCollapsed_ ? 28 : 200), ImGuiChildFlags_Borders,
                                      ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoScrollbar)) {
                     if (ImGui::SmallButton(statisticsCollapsed_ ? "+" : "-")) statisticsCollapsed_ = !statisticsCollapsed_;
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip(statisticsCollapsed_ ? "Expand statistics" : "Minimize statistics");
@@ -2068,6 +2122,7 @@ void Editor::viewport() {
                     if (!statisticsCollapsed_) {
                         const auto& t = averageTimings_;
                         ImGui::Text("Nodes %zu | Bodies %zu", renderObjects_.size(), physics_ ? physics_->bodyCount() : 0);
+                        ImGui::Text("Particles ~%zu | Systems %zu",particleCount_,particleSystemCount_);
                         ImGui::Text("UI / scripts: %.2f / %.2f ms", t.uiMs, t.scriptMs);
                         ImGui::Text("Physics step: %.2f ms", t.physicsStepMs);
                         ImGui::Text("Physics apply/prepare: %.2f ms", t.physicsApplyMs + t.physicsPrepareMs);

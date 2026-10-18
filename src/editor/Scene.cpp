@@ -137,6 +137,11 @@ void readExtraComponents(const LhatTable& table, Node& node) {
         if (const auto v = lton::field(t, "colour"); !lhat_is_nil(v)) lton::vector(v, c.colour.data());
         for (float v : c.colour) if (v < 0 || v > 1) lton::invalid();
     };
+    read("particles", node.particles, [&](const auto& t, auto& c) {
+        if(const auto v=lton::field(t,"definition"); !lhat_is_nil(v)) c.definition=name(v);
+        if(const auto v=lton::field(t,"script"); !lhat_is_nil(v)) c.script=lton::relativePath(v);
+        c.enabled=flag(t,"enabled",c.enabled);
+    });
     read("material", node.material, [&](const auto& t, auto& c) {
         c.roughness = scalar(t,"roughness",c.roughness,0.02f,1);
         c.metalness = scalar(t,"metalness",c.metalness,-1,1);
@@ -229,6 +234,10 @@ void writeExtraComponents(lton::Writer& out, LhatValue table, const Node& node) 
         const auto value = out.table(); fields(value, *component); out.set(table, key, value);
     };
     const auto colour = [&](LhatValue t, const auto& c) { out.set(t, "colour", out.vector(c.colour.data())); };
+    write("particles", node.particles, [&](auto t,const auto& c) {
+        out.set(t,"definition",out.string(c.definition)); out.set(t,"enabled",lhat_bool(c.enabled));
+        if(!c.script.empty()) out.set(t,"script",out.string(c.script));
+    });
     write("material", node.material, [&](auto t, const auto& c) {
         out.set(t,"roughness",lhat_real(c.roughness)); out.set(t,"metalness",lhat_real(c.metalness));
         out.set(t,"fresnel",out.vector(c.fresnel.data())); out.set(t,"emissive",out.vector(c.emissive.data()));
@@ -312,7 +321,7 @@ SceneNode readNode(const LhatTable& entry) {
             while (lhat_table_walk(&walk, &key, &value)) {
                 const auto componentName = name(key);
                 for(const char* builtIn:{"Transform","BoxPrimitive","SpherePrimitive","CapsulePrimitive","PlanePrimitive",
-                                        "BoxCollider","SphereCollider","CapsuleCollider","PlaneCollider","RigidBody","PbsMaterial","Light"})
+                                        "BoxCollider","SphereCollider","CapsuleCollider","PlaneCollider","RigidBody","PbsMaterial","Light","ParticleSystem"})
                     if(componentName==builtIn) lton::invalid();
                 const auto& item = lton::table(value);
                 node.scriptComponents[componentName] = {lton::relativePath(lton::field(item, "script")),

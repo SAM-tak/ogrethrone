@@ -9,6 +9,7 @@
     "${workspaceFolder}/.fetchcontent-cache"
   ],
   "cmake.configureOnOpen": true,
+  "cmake.buildBeforeRun": true,
   "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
   "search.exclude": {
     "**/out/**": true,

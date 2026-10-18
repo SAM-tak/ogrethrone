@@ -67,11 +67,15 @@ Paths stored in levels and scenes are relative to the project folder; texture
 paths starting with `@ogre/` refer to the pinned OGRE sample media. [`samples/basic`](samples/basic) is a sample project; the VS Code
 launch configurations open it or show the launcher.
 
-[`samples/showcase`](samples/showcase) ports the OGRE Forward3D, PBS Materials and
-Area Lights scenes to editable Throne levels. Open the project and choose a level
+[`samples/showcase`](samples/showcase) ports the OGRE Forward3D, PBS Materials,
+Area Lights and ParticleFX2 scenes to editable Throne levels. Open the project and
+choose a level
 in **Browser > Levels**. **Lighting** switches Forward3D/Clustered, cluster debug
 and Approx/LTC area-light previews. Light and PBS Material components are editable
-in Inspector and persist with scenes and prefab overrides. See the sample's
+in Inspector and persist with scenes and prefab overrides. The particle level
+includes a fountain, rings, lit/unlit smoke and sphere particles, with edit
+preview, Play/Pause/Stop and transparency comparison in **Particles**. A Particle
+System component stores its template and optional script file. See the sample's
 [README](samples/showcase/README.md) for controls and source attribution.
 
 The editor's dockable panels are Scene, Runners, Inspector, Viewport, Browser and Console
@@ -153,6 +157,11 @@ With `BUILD_TESTING=ON`, `ogrethrone --smoke-navigation` replays mouse and keybo
 input against a temporary copy of `samples/physics`, checking surface focus,
 empty-space clicks, orbit, looking in place, WASD movement, panning, dolly,
 wheel-adjusted fly speed and Left Shift boost.
+On Windows it also sends a native Close request during Play and verifies that
+rendering and simulation do not run another frame before shutdown. Use
+`ogrethrone --smoke-close` for the same checks with the real audio output backend
+instead of the null driver. Shutdown stages are recorded in `OgreThrone.log`;
+the final OGRE marker is also written to standard error.
 **View → Statistics** toggles a viewport overlay showing averaged editor FPS and
 frame time, scene node count and active physics body count. Its **− / +** button
 switches between the full panel and a single FPS row. Expanded statistics also
@@ -222,6 +231,9 @@ open **Ctrl+Shift+P → CMake: Select Build Preset** and choose `windows-debug`
 (unoptimized debugging), `windows-release` (optimized), or `windows-relwithdebinfo`
 (optimized with debug symbols). Then press F5. If the configure preset has not
 been selected yet, use **CMake: Select Configure Preset → windows** first.
+F5 uses CMake Tools' `cmake.buildBeforeRun` incremental build check; the launch
+configuration does not add a second build task. With no source changes, it should
+report no work rather than recompile the editor.
 
 This engine currently has no C# component. In the Extensions view, select
 **Disable (Workspace)** for C# Dev Kit (`ms-dotnettools.csdevkit`) and C#

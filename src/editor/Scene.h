@@ -104,6 +104,20 @@ struct LightComponent {
     std::string mask;
 };
 
+/// An instance of an OGRE ParticleFX2 template attached to this node's transform.
+struct ParticleSystemComponent {
+    std::string definition = "Examples/PurpleFountain";
+    /// Optional project-relative .particle2 file; empty uses the built-in OGRE examples.
+    std::string script;
+    bool enabled = true;
+    /// Whether renderer resources can be reused for this authored instance.
+    bool operator==(const ParticleSystemComponent& other) const {
+        return definition==other.definition && script==other.script && enabled==other.enabled;
+    }
+    /// Negation of equality.
+    bool operator!=(const ParticleSystemComponent& other) const { return !(*this==other); }
+};
+
 /// Material and local offset shared by collision shapes. Density determines mass.
 struct Collider {
     Vec3 centre;
@@ -144,6 +158,7 @@ struct NodeOverride {
     std::optional<PlanePrimitive> plane;
     std::optional<PbsMaterial> material;
     std::optional<LightComponent> light;
+    std::optional<ParticleSystemComponent> particles;
     std::optional<BoxCollider> boxCollider;
     std::optional<SphereCollider> sphereCollider;
     std::optional<CapsuleCollider> capsuleCollider;
@@ -233,6 +248,7 @@ struct SceneNode {
     std::optional<PlanePrimitive> plane;
     std::optional<PbsMaterial> material;
     std::optional<LightComponent> light;
+    std::optional<ParticleSystemComponent> particles;
     std::optional<BoxCollider> boxCollider;
     std::optional<SphereCollider> sphereCollider;
     std::optional<CapsuleCollider> capsuleCollider;
@@ -251,6 +267,7 @@ struct SceneNode {
 
 /// Copies only overrides of components that the target already owns.
 inline void applyExtraComponents(SceneNode& node, const NodeOverride& layer) {
+    if (node.particles && layer.particles) node.particles = layer.particles;
     if (node.material && layer.material) node.material = layer.material;
     if (node.light && layer.light) node.light = layer.light;
     if (node.sphere && layer.sphere) node.sphere = layer.sphere;

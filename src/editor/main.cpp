@@ -13,6 +13,7 @@
 #include <OgreSceneManager.h>
 #include <OgreForwardPlusBase.h>
 #include <OgreVulkanPlugin.h>
+#include <OgreParticleFX2Plugin.h>
 #include <OgreWindow.h>
 #include <OgreTextureGpu.h>
 #include <OgreWindowEventUtilities.h>
@@ -67,10 +68,11 @@ int main(int argc, char** argv) {
     }
     const bool physicsSmoke = argc > 1 && std::strcmp(argv[1], "--smoke-physics") == 0;
     const bool profilePhysics = argc > 1 && std::strcmp(argv[1], "--profile-physics") == 0;
-    bool navigationSmoke = false, showcaseSmoke = false;
+    bool navigationSmoke = false, showcaseSmoke = false, closeSmoke = false;
 #ifdef THRONE_NAVIGATION_SMOKE
     showcaseSmoke = argc > 1 && std::strcmp(argv[1], "--smoke-showcases") == 0;
-    navigationSmoke = argc > 1 && std::strcmp(argv[1], "--smoke-navigation") == 0;
+    closeSmoke = argc > 1 && std::strcmp(argv[1], "--smoke-close") == 0;
+    navigationSmoke = closeSmoke || (argc > 1 && std::strcmp(argv[1], "--smoke-navigation") == 0);
 #endif
     const bool smoke = showcaseSmoke || physicsSmoke || profilePhysics || navigationSmoke || (argc > 1 && std::strcmp(argv[1], "--smoke") == 0);
     const auto captures = physicsSmoke ? std::filesystem::absolute(argc > 3 ? argv[3] : "out/physics-captures") : std::filesystem::path{};
@@ -91,11 +93,14 @@ int main(int argc, char** argv) {
         project = std::filesystem::u8path(argv[1]);
     }
     try {
-        throne::AudioSystem audio(smoke);
+        // Close smoke also exercises shutdown of the real audio output backend.
+        throne::AudioSystem audio(smoke && !closeSmoke);
         const auto abi = Ogre::generateAbiCookie();
         Ogre::VulkanPlugin vulkan;
+        Ogre::ParticleFX2Plugin particles;
         Ogre::Root root(&abi, "", "", "OgreThrone.log", "Ogre Throne");
         root.installPlugin(&vulkan, nullptr);
+        root.installPlugin(&particles, nullptr);
         auto* renderer = root.getRenderSystemByName("Vulkan Rendering Subsystem");
         if (!renderer) throw std::runtime_error("Vulkan renderer unavailable");
         root.setRenderSystem(renderer);
@@ -108,6 +113,7 @@ int main(int argc, char** argv) {
         constexpr auto windowTitle = "Ogre Throne [Debug]";
 #endif
         auto* window = root.createRenderWindow(windowTitle, 1280, 720, false, &windowParameters);
+        if (showcaseSmoke) window->setWantsToDownload(true);
         auto* scene = root.createSceneManager(Ogre::ST_GENERIC, 1, "MainScene");
         auto* camera = scene->createCamera("MainCamera");
         camera->setNearClipDistance(0.1f);
@@ -125,8 +131,8 @@ int main(int argc, char** argv) {
             Colibri::ColibriListener guiPlatform;
             Colibri::ColibriManager gui(&guiLog, &guiPlatform);
 #ifdef THRONE_NAVIGATION_SMOKE
-            if (navigationSmoke) throne::navigationSmoke(editor, *camera);
-            if (showcaseSmoke) throne::showcaseSmoke(editor,*scene,*camera,std::filesystem::absolute(argc>3?argv[3]:"out/showcase-captures"));
+            if (navigationSmoke) throne::navigationSmoke(editor, *window, *camera);
+            if (showcaseSmoke) throne::showcaseSmoke(editor,*window,*scene,*camera,std::filesystem::absolute(argc>3?argv[3]:"out/showcase-captures"));
 #endif
             auto previous = std::chrono::steady_clock::now();
             unsigned frames = 0;
@@ -153,11 +159,11 @@ int main(int argc, char** argv) {
                 ++frames;
             };
             editor.platform().modalFrame = [&] {
-                if (running && !window->isClosed()) step();
+                if (running && !window->isClosed() && !editor.shouldClose()) step();
             };
             while (running && !window->isClosed() && !editor.shouldClose() && (!smoke || frames < (profilePhysics ? 2100u : physicsSmoke ? 245u : 3u))) {
                 Ogre::WindowEventUtilities::messagePump();
-                if (window->isClosed()) break;
+                if (!running || window->isClosed() || editor.shouldClose()) break;
                 if (smoke && frames == 1) ImGui::GetIO().AddKeyEvent(ImGuiKey_F5, true);
                 if (smoke && frames == 2) ImGui::GetIO().AddKeyEvent(ImGuiKey_F5, false);
                 if (physicsSmoke && frames == 2) editor.setShadowsEnabled(false);
@@ -210,6 +216,7 @@ int main(int argc, char** argv) {
         ImGui::DestroyContext();
         if (smoke) std::filesystem::remove_all(project);
         root.shutdown();
+        std::fprintf(stderr,"Shutdown: OGRE released; leaving application scope\n");
         return 0;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());

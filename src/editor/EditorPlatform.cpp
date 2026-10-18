@@ -1,5 +1,6 @@
 #include "editor/EditorPlatform.h"
 #include <OgreWindow.h>
+#include <OgreLogManager.h>
 #include <imgui.h>
 #include <cwchar>
 #include <stdexcept>
@@ -37,6 +38,7 @@ struct WindowHook {
         auto& platform = *reinterpret_cast<EditorPlatform*>(data);
         switch (message) {
         case WM_CLOSE:
+            Ogre::LogManager::getSingleton().logMessage("Shutdown: WM_CLOSE received");
             platform.closeRequested_ = true;
             return 0;
         case WM_ENTERSIZEMOVE:

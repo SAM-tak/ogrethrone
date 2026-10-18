@@ -80,7 +80,21 @@ Vulkan の `--smoke-physics` は Forward Clustered が選択されているこ�
 
 ［補足］Lighting メニューの Forward 方式とクラスタ表示はレベルへ保存し、Area の全光源切替は比較用の一時状態とする。永続的な方式変更は個々の Light.type に保存する。元アプリの F キーは引き継がず、F5 と Pause を Throne の Play／Pause に使う。検証は showcase_data_smoke と --smoke-showcases で行う。
 
-## 7. 参考
+## 7. ParticleFX2
+
+［補足］Particle System Component は ParticleFX2 のテンプレート名、任意のプロジェクト相対 .particle2 パス、有効フラグを持つ。Inspector で編集でき、シーン保存、プレハブ上書き、query("ParticleSystem") に対応する。空のパスは組み込みの 5 テンプレートを参照する。
+
+［補足］particlefx2.level.lton は元の噴水、光輪、PBS 煙、Unlit 煙、PBS 球粒子と移動台・マーカーを移植する。元の煙定義は Affector の継承が衝突するため、media/particles/Showcase.particle2 で継承を展開し、Scaler／Rotator／ColourImage を分離する。色の増加率の先頭 + も除去し、charconv で元の数値を読み取れるようにする。画像と HLMS 材質は固定済み OGRE Media を利用し、単独の大理石 Billboard は縦の Plane で表す。
+
+［補足］粒子プレビューは編集時も動作し、Particles メニューで停止・再開・再スタートできる。Play 開始と Stop で共有粒子プールを消去し、Pause 中は OGRE ControllerManager の時間係数を 0 にして放出・位置・寿命を停止する。OGRE のフレーム時間には Throne の dt を渡す。カメラと UI は継続する。テンプレートや有効フラグの変更もプールを再スタートする。
+
+［補足］Particles メニューで Alpha Blending／Alpha Hashing を比較できる。単一サンプルのビューポートなので MSAA A2C の比較は含めない。統計にシステム数と粒子の概数（SIMD の処理枠数）を表示する。--smoke-showcases は 4 レベルを開き、5 系統を単独表示した際の描画、停止中の全生存粒子の位置・寿命、方式変更、Stop の消去、再入場を検査する。
+
+［補足］光輪の aureola.png は輝度＋アルファの PNG で、STBI は RG8 として読み込む。通常の RGBA 読み取りでは存在しない A が 1 となり、透明な四隅に黒い板が現れる。Unlit の読み取りを R→RGB、G→Alpha に割り当てる。描画テストは光輪の単独表示で背景の一様色が黒く覆われないこと、アルファブレンドと深度書き込み OFF を検査する。
+
+［補足］シーンの RGB は背景と粒子を合成済みだが、描画先の Alpha は粒子によって変わる。ImGui の標準 Image 材質でこれを再度透過合成すると、RGB のキャプチャでは正常でも UI には黒い四角が現れる。ビューポート専用の Image 材質だけを不透明コピーにする。固定済み ImGui バックエンドが prepareForRender で生成するテクスチャ別材質を設定し、フォントなど他の UI の透過は維持する。--smoke-showcases は影を有効にした粒子シーンについて、光輪単独と Alpha Blending／Hashing のウィンドウ出力を取得し、UI 表示部分を除いた画素がシーンの RGB と一致することも検査する。
+
+## 8. 参考
 
 - [OGRE-Next Compositor: PSSM / CSM と安定化](https://ogrecave.github.io/ogre-next/api/latest/compositor.html)
 - 固定済みソースの `ShadowMapFromCode` サンプル、`ShadowNodeHelper`、`HlmsPbs::ShadowFilter`。

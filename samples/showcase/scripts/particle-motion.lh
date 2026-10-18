@@ -1,0 +1,20 @@
+# Reproduces the moving platform and marker from OGRE's ParticleFX2 sample.
+module^ samples.particleMotion
+import^ throne
+
+public^let^ Behaviour = def^{
+    self^{ @export marker = false^, elapsed = 0 },
+    update = p^self^, node:throne.SceneNode, dt:number^ {
+        self^.elapsed := self^.elapsed + dt
+        if^ self^.elapsed > 10 { self^.elapsed := 0 }
+        let^ t = node.transform()
+        if^ t != nil^ {
+            if^ self^.marker {
+                t.setPosition(throne.vec3(2 * self^.elapsed - 10, 0.5, 2 * self^.elapsed - 10))
+            }
+            if^ self^.marker != true^ {
+                t.setPosition(throne.vec3(25 - 5 * self^.elapsed, 2, -50))
+            }
+        }
+    },
+}

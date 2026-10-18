@@ -1,4 +1,5 @@
 #include "navigation_smoke.h"
+#include "showcase_smoke.h"
 #include "editor/Editor.h"
 #include <OgreCamera.h>
 #include <OgreRay.h>
@@ -10,7 +11,7 @@
 #include <stdexcept>
 
 namespace throne {
-void navigationSmoke(Editor& editor, Ogre::Camera& camera) {
+void navigationSmoke(Editor& editor, Ogre::Window& nativeWindow, Ogre::Camera& camera) {
     const auto require = [](bool condition, const char* message) {
         if (!condition) throw std::runtime_error(message);
     };
@@ -216,6 +217,8 @@ void navigationSmoke(Editor& editor, Ogre::Camera& camera) {
     require(editor.playing() && !editor.paused(), "A new Play session inherited Pause");
     tap(ImGuiKey_F5);
     std::filesystem::remove(pauseCapture);
+    tap(ImGuiKey_F5); for(int i=0;i<600;++i) frame();
+    closePlayingSmoke(editor,nativeWindow);
     std::puts("Navigation smoke passed: camera controls, statistics, Pause/Resume, frozen poses/spawning and Stop restoration");
 }
 }

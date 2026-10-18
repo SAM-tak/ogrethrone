@@ -6,6 +6,12 @@ OGRE-Next examples:
 - `Samples/2.0/Showcase/Forward3D/Forward3DGameState.cpp`
 - `Samples/2.0/Showcase/PbsMaterials/PbsMaterialsGameState.cpp`
 - `Samples/2.0/ApiUsage/AreaApproxLights/AreaApproxLightsGameState.cpp`
+- `Samples/2.0/ApiUsage/ParticleFX2/ParticleFX2GameState.cpp`
+- `Samples/Media/2.0/scripts/materials/ParticleFX2/Examples.particle2` and `smoke.particle2`
+
+`media/particles/Showcase.particle2` adapts the five used templates with smoke
+inheritance expanded; it retains the OGRE MIT notice. Particle textures, normal
+maps and HLMS materials remain referenced from the pinned OGRE sample media.
 
 OGRE is made available under the MIT License:
 
