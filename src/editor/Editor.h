@@ -277,8 +277,15 @@ private:
     void runnerInspector(const Runner& runner);
     /// Draws the rendered scene and handles camera and picking input.
     void viewport();
-    /// Draws the bottom panel listing the project's levels and log messages.
+    /// Draws the Browser panel: the project's levels, scenes and prefabs.
     void browser();
+    /// Draws the Console panel: the log, and an L^ prompt below it.
+    void console();
+    /// The runtime console lines run on: the playing one, or else one of the
+    /// console's own on an empty world, made on first use. nullptr when that fails.
+    ScriptRuntime* consoleRuntime();
+    /// Runs @p line at the console and logs it with what it gave.
+    void evaluate(const std::string& line);
     /// Applies the orbit parameters and projection mode to the camera.
     void updateCamera();
     /// Centres the orbit camera on the selected node.
@@ -345,6 +352,16 @@ private:
     std::vector<std::tuple<std::size_t, NodePath, std::size_t>> viewShape_;
     /// Non-null while playing.
     std::unique_ptr<ScriptRuntime> runtime_;
+    /// What the console runs on while not playing: an empty world, and a runtime on it.
+    World consoleWorld_;
+    LevelExpansion consoleView_;
+    std::unique_ptr<ScriptRuntime> consoleIdle_;
+    /// The runtime the console's input being continued belongs to.
+    ScriptRuntime* consoleMore_ = nullptr;
+    char consoleInput_[1024] = "";
+    /// Lines run at the console, oldest first, and the one shown while going through them.
+    std::vector<std::string> consoleHistory_;
+    std::size_t consoleRecall_ = 0;
     Selection selected_;
     std::map<std::string, CachedFields> fieldCache_;
     /// Drag-and-drop payload naming a node of the edited file by its ID.

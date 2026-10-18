@@ -200,13 +200,18 @@ std::string formatTime(std::int64_t seconds) {
 
 /// Fills the window below the menu bar with a dock space. When there is no saved
 /// layout that knows the current panels, it docks Scene above Runners on the left,
-/// Inspector on the right, Browser below and Viewport in the middle.
+/// Inspector on the right, Browser and Console below and Viewport in the middle.
 void dockSpace() {
     const auto* viewport = ImGui::GetMainViewport();
     const ImGuiID id = ImGui::DockSpaceOverViewport(0, viewport);
     if (const auto* node = ImGui::DockBuilderGetNode(id);
-        node && node->IsSplitNode() && ImGui::FindWindowSettingsByID(ImHashStr("Runners")))
+        node && node->IsSplitNode() && ImGui::FindWindowSettingsByID(ImHashStr("Runners"))) {
+        // Console came later: in a layout saved before it, it joins Browser's tabs.
+        if (!ImGui::FindWindowSettingsByID(ImHashStr("Console")))
+            if (const auto* browser = ImGui::FindWindowSettingsByID(ImHashStr("Browser")); browser && browser->DockId)
+                ImGui::DockBuilderDockWindow("Console", browser->DockId);
         return;
+    }
     ImGui::DockBuilderRemoveNode(id);
     ImGui::DockBuilderAddNode(id, ImGuiDockNodeFlags_DockSpace);
     ImGui::DockBuilderSetNodeSize(id, viewport->WorkSize);
@@ -220,6 +225,7 @@ void dockSpace() {
     ImGui::DockBuilderDockWindow("Runners", runners);
     ImGui::DockBuilderDockWindow("Inspector", right);
     ImGui::DockBuilderDockWindow("Browser", bottom);
+    ImGui::DockBuilderDockWindow("Console", bottom);
     ImGui::DockBuilderDockWindow("Viewport", centre);
     ImGui::DockBuilderFinish(id);
 }
@@ -294,6 +300,9 @@ void Editor::openProject(const std::filesystem::path& path) {
     try {
         auto project = Project::open(path);
         if (runtime_) stop();
+        // The console's own session belongs to the project it was made for.
+        consoleIdle_.reset();
+        consoleMore_ = nullptr;
         project_ = std::move(project);
         projects_.touch(project_->root);
         projectsChanged();
@@ -319,6 +328,8 @@ void Editor::openProject(const std::filesystem::path& path) {
 
 void Editor::closeProject() {
     if (runtime_) stop();
+    consoleIdle_.reset();
+    consoleMore_ = nullptr;
     project_.reset();
     doc_ = Document();
     contexts_.resize(1);
@@ -462,6 +473,7 @@ void Editor::play() {
 }
 
 void Editor::stop() {
+    if (consoleMore_ == runtime_.get()) consoleMore_ = nullptr;
     runtime_.reset();
     log("Stop");
 }
@@ -517,6 +529,7 @@ void Editor::frame(float deltaSeconds) {
     inspector();
     viewport();
     browser();
+    console();
     fileDialog();
     closeDialog();
     replaceDialog();
@@ -1608,15 +1621,75 @@ void Editor::browser() {
             };
             files("Scenes", "scenes", ".scene.lton", newScenePath_, sizeof newScenePath_, Context::Kind::Scene);
             files("Prefabs", "prefabs", ".prefab.lton", newPrefabPath_, sizeof newPrefabPath_, Context::Kind::Prefab);
-            if (ImGui::BeginTabItem("Log")) {
-                for (const auto& message : messages_) ImGui::TextUnformatted(message.c_str());
-                if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) ImGui::SetScrollHereY(1.0f);
-                ImGui::EndTabItem();
-            }
             ImGui::EndTabBar();
         }
     }
     ImGui::End();
+}
+
+void Editor::console() {
+    if (ImGui::Begin("Console")) {
+        // The log fills the panel above one line for the prompt.
+        if (ImGui::BeginChild("##messages", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()))) {
+            for (const auto& message : messages_) ImGui::TextUnformatted(message.c_str());
+            // Follows new lines while scrolled to the bottom.
+            if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) ImGui::SetScrollHereY(1.0f);
+        }
+        ImGui::EndChild();
+        auto* on = consoleRuntime();
+        ImGui::TextUnformatted(consoleMore_ && consoleMore_ == on ? "." : ">");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(-1);
+        // Up and Down go through the lines run before.
+        const auto recall = [](ImGuiInputTextCallbackData* data) {
+            auto& self = *static_cast<Editor*>(data->UserData);
+            auto& history = self.consoleHistory_;
+            if (history.empty()) return 0;
+            auto& at = self.consoleRecall_;
+            if (data->EventKey == ImGuiKey_UpArrow && at > 0) --at;
+            else if (data->EventKey == ImGuiKey_DownArrow && at < history.size()) ++at;
+            data->DeleteChars(0, data->BufTextLen);
+            if (at < history.size()) data->InsertChars(0, history[at].c_str());
+            return 0;
+        };
+        if (ImGui::InputText("##prompt", consoleInput_, sizeof consoleInput_,
+                             ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackHistory, recall, this)) {
+            evaluate(consoleInput_);
+            consoleInput_[0] = '\0';
+            ImGui::SetKeyboardFocusHere(-1);  // Stays in the prompt for the next line.
+        }
+        // Escape leaves an input that will not be finished.
+        if (ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_Escape) && consoleMore_) {
+            consoleMore_->dropInput();
+            consoleMore_ = nullptr;
+        }
+    }
+    ImGui::End();
+}
+
+ScriptRuntime* Editor::consoleRuntime() {
+    if (runtime_) return runtime_.get();
+    if (!consoleIdle_ && project_) {
+        try {
+            consoleIdle_ = std::make_unique<ScriptRuntime>(consoleWorld_, consoleView_, project_->root,
+                                                           [this](const std::string& line) { log(line); }, PlayScope::Level);
+        } catch (const ScriptError& error) {
+            log(error.what());
+        }
+    }
+    return consoleIdle_.get();
+}
+
+void Editor::evaluate(const std::string& line) {
+    auto* on = consoleRuntime();
+    if (!on) return;
+    const bool continuing = consoleMore_ == on;
+    log((continuing ? ". " : "> ") + line);
+    if (!line.empty() && (consoleHistory_.empty() || consoleHistory_.back() != line)) consoleHistory_.push_back(line);
+    consoleRecall_ = consoleHistory_.size();
+    const auto answer = on->evaluate(line);
+    consoleMore_ = answer.more ? on : nullptr;
+    if (!answer.text.empty()) log(answer.text);
 }
 
 void Editor::gizmo(ImVec2 origin, ImVec2 size) {

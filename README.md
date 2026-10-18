@@ -67,7 +67,7 @@ Every path inside a project, including those stored in levels and scenes, is
 relative to the project folder. [`samples/basic`](samples/basic) is a sample project; the VS Code
 launch configurations open it or show the launcher.
 
-The editor's dockable panels are Scene, Runners, Inspector, Viewport and Browser
+The editor's dockable panels are Scene, Runners, Inspector, Viewport, Browser and Console
 (the layout is kept in `editor.ini` beside the project list). The data is split
 in three kinds of file, all LTON (L^ Table Object Notation, read by L^ as
 effect-free data):
@@ -201,7 +201,7 @@ menu item). Play runs the open level: its runners and its scenes' runners, but n
 script changes never reach the edited data. Editing is disabled while playing.
 Each Play checks and compiles every script anew, so edited scripts take effect
 on the next Play. Rejected scripts, run-time errors, and frames over the loop
-budget (treated as endless loops) are written to the Log tab and stop Play.
+budget (treated as endless loops) are written to the Console and stop Play.
 
 Paths are relative to the project folder. `main.lh` at the top of the project is the
 game's entry point and organizer (which levels to play, in what order); new
@@ -260,6 +260,13 @@ The `throne` module provides:
   `throne.log(text)` and `throne.time()` (seconds since Play).
 
 `std.math` is the only standard module scripts can import.
+
+The Console panel shows the log, and its bottom line is an L^ prompt. While
+playing, lines run on the playing scripts' machine, so `throne.find("Cube 2")`
+reaches the running scene; otherwise they run in the console's own session on
+an empty world. Names a line binds stay for the next, an unfinished input
+continues on the next line (Esc drops it), Up and Down recall earlier lines,
+and refused inputs and run errors are reported without stopping Play.
 
 The L^ language server (VS Code extension) reads the `lhat-host.json` nearest to a
 script to know the `throne` module. The editor rewrites a project's copy whenever

@@ -143,6 +143,26 @@ int main(int argc, char** argv) {
     if (levelOnly.nodes()[1].node.position.x != 2 || levelOnly.nodes()[0].node.rotation.y < 89)
         return fail("Level play ran main.lh or skipped the runners");
 
+    // The console runs lines on a session's machine: names stay, an input may span
+    // lines, and a refused or failed one is reported without ending the session.
+    {
+        auto consoled = world(root, "scripts/spin.lh");
+        throne::ScriptRuntime runtime(consoled.world, consoled.expanded, root, [](const std::string&) {},
+                                      throne::PlayScope::Level);
+        const auto bound = runtime.evaluate("let^ answer = 6 * 7");
+        const auto read = runtime.evaluate("answer");
+        const auto opened = runtime.evaluate("if^ answer > 40 {");
+        const auto closed = runtime.evaluate("throne.log(\"big\") }");
+        const auto found = runtime.evaluate("throne.find(\"Cube 2\").name()");
+        const auto refused = runtime.evaluate("let^ = 1");
+        const auto failed = runtime.evaluate("panic^ \"no\"");
+        const auto after = runtime.evaluate("answer + 1");
+        if (bound.more || read.text != "42" || !opened.more || closed.more || found.text.find("Cube 2") == std::string::npos ||
+            refused.text.empty() || failed.text.find("no") == std::string::npos || after.text != "43")
+            return fail("The console did not run its lines as a session: " + read.text + " / " + found.text + " / " +
+                        after.text);
+    }
+
     // A prefab's runner runs once per instance, each on the node inside its own instance.
     throne::Prefab spinner;
     const auto wheel = spinner.addNode("Wheel").id;

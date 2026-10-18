@@ -1,5 +1,6 @@
 #include "script/ScriptRuntime.h"
 #include <lhat.h>
+#include <lhat/prompt.h>
 #include <stdlib/math.h>
 #include <algorithm>
 #include <cmath>
@@ -79,6 +80,8 @@ struct ScriptRuntime::State {
     Program program{nullptr, &lhat_program_free};
     // Declared after the program so that it is disposed first.
     Machine machine{nullptr, &lhat_machine_dispose};
+    /// The console's prompt, made on first use; disposed before the machine.
+    std::unique_ptr<LhatPrompt, decltype(&lhat_prompt_dispose)> prompt{nullptr, &lhat_prompt_dispose};
     const LhatHostValueTag* vec3 = nullptr;
     const LhatHostDataTag *sceneNode = nullptr, *runner = nullptr;
     // Values the host holds are not roots, so everything kept between calls
@@ -599,6 +602,30 @@ ScriptRuntime::ScriptRuntime(const World& world, LevelExpansion& expanded, const
 ScriptRuntime::~ScriptRuntime() = default;
 
 bool ScriptRuntime::finished() const { return state_->finished; }
+
+ScriptRuntime::ConsoleAnswer ScriptRuntime::evaluate(const std::string& line) {
+    auto& s = *state_;
+    if (!s.prompt) s.prompt.reset(lhat_prompt_new(s.program.get(), s.machine.get(), "console"));
+    if (!s.prompt) return {false, "Out of memory"};
+    const auto input = line + "\n";
+    const auto result = lhat_prompt_feed(s.prompt.get(), input.data(), input.size());
+    ConsoleAnswer answer;
+    answer.more = result.status == LHAT_PROMPT_MORE;
+    answer.text.resize(lhat_prompt_report(s.prompt.get(), nullptr, 0));
+    lhat_prompt_report(s.prompt.get(), answer.text.data(), answer.text.size() + 1);
+    if (result.status == LHAT_PROMPT_RAN && !lhat_is_nil(result.value)) {
+        std::string value(lhat_value_write(result.value, nullptr, 0), '\0');
+        lhat_value_write(result.value, value.data(), value.size() + 1);
+        if (!answer.text.empty() && answer.text.back() != '\n') answer.text += '\n';
+        answer.text += value;
+    }
+    while (!answer.text.empty() && answer.text.back() == '\n') answer.text.pop_back();
+    return answer;
+}
+
+void ScriptRuntime::dropInput() {
+    if (state_->prompt) lhat_prompt_drop(state_->prompt.get());
+}
 
 void ScriptRuntime::update(float deltaSeconds) {
     auto& s = *state_;

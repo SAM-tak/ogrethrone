@@ -72,6 +72,21 @@ public:
     /// True once main.lh has run to its end (Game scope only).
     bool finished() const;
 
+    /// What one console line gave.
+    struct ConsoleAnswer {
+        /// The input is not whole yet; the next line continues it.
+        bool more = false;
+        /// Diagnostics or the run error, then the answer when there is one; may be empty.
+        std::string text;
+    };
+    /// Feeds @p line to this session's L^ prompt (TDDja/02): the names an input
+    /// binds stay for the next, and an input runs on the session's machine with
+    /// the frame budget, between frames. A refused or failed input is reported,
+    /// never thrown.
+    ConsoleAnswer evaluate(const std::string& line);
+    /// Throws away a console input being continued.
+    void dropInput();
+
     /// Returns the host API scripts can use (the `throne` module and `std.math`) as
     /// the JSON the L^ language server reads from `lhat-host.json`.
     static std::string hostApi();
