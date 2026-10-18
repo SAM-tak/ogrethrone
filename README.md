@@ -123,7 +123,15 @@ file asks before replacing that prefab with it; dropping an instance on its own
 prefab applies the instance's overrides to the prefab. Variants are shown in violet.
 Ctrl+S saves the level, its scenes and every opened prefab.
 
-Right-drag orbits, middle-drag pans, the wheel zooms, left-click selects a node
+Right-drag looks around in place; hold the right button and use WASD to fly
+forward/backward and strafe left/right (initially 5 scene units per second).
+Q descends and E ascends along the world's Y axis while flying.
+While holding the right button, the wheel adjusts fly speed instead of dollying;
+hold Left Shift to double the current speed. Alt+middle-drag
+orbits the focus point. A middle-click focuses the nearest rendered surface without
+moving the camera; clicking empty space leaves the focus unchanged. Middle-drag
+pans, Ctrl+Alt+middle-drag vertically dollies (up moves closer, down moves away),
+the wheel dollies outside fly mode, left-click selects a node
 and `F` frames it. The selected node shows an ImGuizmo gizmo: W, E and R (or the
 viewport toolbar) switch between move, rotate and scale, and Local switches between
 the node's own axes and the world's; one drag is one undo step. Ctrl+Z/Ctrl+Y undo/redo, Ctrl+D duplicates a node (with copies of
@@ -134,6 +142,10 @@ unsaved changes asks to save or discard them (on Windows this also covers the
 window's close button). Colibri widgets and model import are not wired yet.
 `ogrethrone --smoke` creates a throwaway project, runs the editor on it for three
 frames and exits, without touching the project list.
+With `BUILD_TESTING=ON`, `ogrethrone --smoke-navigation` replays mouse and keyboard
+input against a temporary copy of `samples/physics`, checking surface focus,
+empty-space clicks, orbit, looking in place, WASD movement, panning, dolly,
+wheel-adjusted fly speed and Left Shift boost.
 It uses OGRE's native window and message pump. HlmsUnlit shader templates are read
 from the pinned `third_party/ogre-next/Samples/Media`, so the executable currently
 needs the source tree.

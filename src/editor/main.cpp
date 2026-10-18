@@ -27,6 +27,9 @@
 #include <iterator>
 #include <thread>
 #include <stdexcept>
+#ifdef THRONE_NAVIGATION_SMOKE
+#include "navigation_smoke.h"
+#endif
 
 namespace {
 /// Registers an HLMS implementation from the pinned OGRE shader templates.
@@ -61,18 +64,23 @@ int main(int argc, char** argv) {
         return 0;
     }
     const bool physicsSmoke = argc > 1 && std::strcmp(argv[1], "--smoke-physics") == 0;
-    const bool smoke = physicsSmoke || (argc > 1 && std::strcmp(argv[1], "--smoke") == 0);
+    bool navigationSmoke = false;
+#ifdef THRONE_NAVIGATION_SMOKE
+    navigationSmoke = argc > 1 && std::strcmp(argv[1], "--smoke-navigation") == 0;
+#endif
+    const bool smoke = physicsSmoke || navigationSmoke || (argc > 1 && std::strcmp(argv[1], "--smoke") == 0);
     const auto captures = physicsSmoke ? std::filesystem::absolute(argc > 3 ? argv[3] : "out/physics-captures") : std::filesystem::path{};
     // `ogrethrone <folder>` opens that project; --smoke uses a throwaway one and leaves
     // the user's project list alone; otherwise the launcher is shown.
     std::filesystem::path project, projectList = throne::ProjectList::defaultFile();
     if (smoke) {
-        project = std::filesystem::temp_directory_path() / (physicsSmoke ? "ogrethrone-physics-smoke" : "ogrethrone-smoke");
+        project = std::filesystem::temp_directory_path() / (navigationSmoke ? "ogrethrone-navigation-smoke" :
+            physicsSmoke ? "ogrethrone-physics-smoke" : "ogrethrone-smoke");
         std::filesystem::remove_all(project);
-        if (physicsSmoke) {
+        if (physicsSmoke || navigationSmoke) {
             const auto source=std::filesystem::absolute(argc>2?argv[2]:"samples/physics");
             std::filesystem::copy(source,project,std::filesystem::copy_options::recursive);
-            std::filesystem::create_directories(captures);
+            if (physicsSmoke) std::filesystem::create_directories(captures);
         } else throne::Project::create(project.parent_path(), project.filename().u8string());
         projectList.clear();
     } else if (argc > 1) {
@@ -105,9 +113,12 @@ int main(int argc, char** argv) {
             Colibri::LogListener guiLog;
             Colibri::ColibriListener guiPlatform;
             Colibri::ColibriManager gui(&guiLog, &guiPlatform);
+#ifdef THRONE_NAVIGATION_SMOKE
+            if (navigationSmoke) throne::navigationSmoke(editor, *camera);
+#endif
             auto previous = std::chrono::steady_clock::now();
             unsigned frames = 0;
-            bool running = true, stepping = false;
+            bool running = !navigationSmoke, stepping = false;
             // One frame; also run from the window hook while a move or resize blocks the loop.
             const auto step = [&] {
                 if (stepping) return;

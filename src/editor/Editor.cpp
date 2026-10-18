@@ -550,8 +550,9 @@ Editor::~Editor() {
     scene_.destroySceneNode(sunNode_);
 }
 
-bool Editor::frame(float deltaSeconds) {
+bool Editor::frame(float deltaSeconds, const std::function<void()>& input) {
     platform_.newFrame();
+    if (input) input();
     ImGui::GetIO().DeltaTime = std::max(deltaSeconds, 1.0e-4f);
     ImGui::NewFrame();
     ImGuizmo::BeginFrame();
@@ -1599,7 +1600,7 @@ bool Editor::save() {
 }
 
 void Editor::shortcuts() {
-    if (ImGui::GetIO().WantTextInput) return;
+    if (ImGui::GetIO().WantTextInput || ImGui::IsMouseDown(ImGuiMouseButton_Right)) return;
     if (ImGui::IsKeyPressed(ImGuiKey_F5, false)) runtime_ ? stop() : play();
     if (ImGui::IsKeyPressed(ImGuiKey_F, false)) focusSelection();
     // Play mode runs on a copy, so editing is disabled until Stop.
@@ -1717,39 +1718,74 @@ void Editor::closeDialog() {
 }
 
 void Editor::viewport() {
+    bool visible = false;
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     if (ImGui::Begin("Viewport", nullptr,
               ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
         const ImVec2 size = ImGui::GetContentRegionAvail();
         if (size.x >= 1 && size.y >= 1) {
+            visible = true;
             resizeViewport(static_cast<unsigned>(size.x), static_cast<unsigned>(size.y));
             const ImVec2 origin = ImGui::GetCursorScreenPos();
             ImGui::Image(texture_, size);
             // ImGuizmo will not start a drag while another item was hovered in the previous
             // frame, so the camera/picking input steps aside while the gizmo is under the mouse,
-            // except during an orbit or pan, which disables the gizmo instead.
-            const bool orbiting = viewDragging_;
-            viewDragging_ = false;
-            if (orbiting || (!gizmoOver_ && !ImGuizmo::IsUsing())) {
+            // Navigation can start over a gizmo, and owns the gesture until release.
+            const bool startNavigation = ImGui::IsWindowHovered() &&
+                (ImGui::IsMouseClicked(ImGuiMouseButton_Right) || ImGui::IsMouseClicked(ImGuiMouseButton_Middle));
+            if (viewDrag_ != ViewDrag::None || (!ImGuizmo::IsUsing() && (!gizmoOver_ || startNavigation))) {
                 ImGui::SetCursorScreenPos(origin);
                 ImGui::SetNextItemAllowOverlap();
                 ImGui::InvisibleButton("ViewportInput", size, ImGuiButtonFlags_MouseButtonLeft |
                                                                   ImGuiButtonFlags_MouseButtonRight |
                                                                   ImGuiButtonFlags_MouseButtonMiddle);
                 const auto& io = ImGui::GetIO();
-                if (ImGui::IsItemHovered() && io.MouseWheel != 0)
-                    distance_ = std::clamp(distance_ * std::pow(0.88f, io.MouseWheel), 0.5f, 500.0f);
                 if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
                     pick((io.MousePos.x - origin.x) / size.x, (io.MousePos.y - origin.y) / size.y);
-                if (ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
-                    yaw_ -= io.MouseDelta.x * 0.01f;
-                    pitch_ = std::clamp(pitch_ + io.MouseDelta.y * 0.01f, -1.5f, 1.5f);
+                if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) viewDrag_ = ViewDrag::Fly;
+                if (ImGui::IsItemClicked(ImGuiMouseButton_Middle))
+                    viewDrag_ = io.KeyAlt ? (io.KeyCtrl ? ViewDrag::Dolly : ViewDrag::Orbit) : ViewDrag::Pan;
+                if (io.MouseWheel != 0) {
+                    if (viewDrag_ == ViewDrag::Fly && ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Right))
+                        flySpeed_ = std::clamp(flySpeed_ * std::pow(1.25f, io.MouseWheel), 0.1f, 500.0f);
+                    else if (ImGui::IsItemHovered() && !ImGui::IsMouseDown(ImGuiMouseButton_Right))
+                        distance_ = std::clamp(distance_ * std::pow(0.88f, io.MouseWheel), 0.5f, 500.0f);
                 }
-                if (ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Middle))
-                    target_ += (camera_.getUp() * io.MouseDelta.y - camera_.getRight() * io.MouseDelta.x) *
-                               (distance_ * 0.0015f);
-                viewDragging_ = ImGui::IsItemActive() && (ImGui::IsMouseDown(ImGuiMouseButton_Right) ||
-                                                          ImGui::IsMouseDown(ImGuiMouseButton_Middle));
+                const auto offset = [&] {
+                    return Ogre::Vector3(std::cos(pitch_) * std::sin(yaw_), std::sin(pitch_),
+                                         std::cos(pitch_) * std::cos(yaw_));
+                };
+                const bool flying = viewDrag_ == ViewDrag::Fly;
+                const auto button = flying ? ImGuiMouseButton_Right : ImGuiMouseButton_Middle;
+                if (viewDrag_ != ViewDrag::None && ImGui::IsItemActive() && ImGui::IsMouseDown(button)) {
+                    if (flying || viewDrag_ == ViewDrag::Orbit) {
+                        const auto position = target_ + offset() * distance_;
+                        yaw_ -= io.MouseDelta.x * 0.01f;
+                        pitch_ = std::clamp(pitch_ + io.MouseDelta.y * 0.01f, -1.5f, 1.5f);
+                        if (flying) target_ = position - offset() * distance_;
+                    }
+                    if (flying && !io.WantTextInput) {
+                        const auto forward = -offset();
+                        const Ogre::Vector3 right(std::cos(yaw_), 0, -std::sin(yaw_));
+                        auto move = forward * float(ImGui::IsKeyDown(ImGuiKey_W) - ImGui::IsKeyDown(ImGuiKey_S)) +
+                                    right * float(ImGui::IsKeyDown(ImGuiKey_D) - ImGui::IsKeyDown(ImGuiKey_A)) +
+                                    Ogre::Vector3::UNIT_Y * float(ImGui::IsKeyDown(ImGuiKey_E) - ImGui::IsKeyDown(ImGuiKey_Q));
+                        if (move.squaredLength() > 0) {
+                            move.normalise();
+                            const float speed = flySpeed_ * (ImGui::IsKeyDown(ImGuiKey_LeftShift) ? 2.0f : 1.0f);
+                            target_ += move * (speed * io.DeltaTime);
+                        }
+                    }
+                    if (viewDrag_ == ViewDrag::Pan && ImGui::IsMouseDragging(ImGuiMouseButton_Middle))
+                        target_ += (camera_.getUp() * io.MouseDelta.y - camera_.getRight() * io.MouseDelta.x) *
+                                   (distance_ * 0.0015f);
+                    if (viewDrag_ == ViewDrag::Dolly)
+                        distance_ = std::clamp(distance_ * std::exp(io.MouseDelta.y * 0.01f), 0.5f, 500.0f);
+                }
+                if (viewDrag_ == ViewDrag::Pan && ImGui::IsMouseReleased(ImGuiMouseButton_Middle) &&
+                    ImGui::IsItemHovered() && !ImGui::IsMouseDragPastThreshold(ImGuiMouseButton_Middle))
+                    focusAt((io.MousePos.x - origin.x) / size.x, (io.MousePos.y - origin.y) / size.y);
+                if (!ImGui::IsMouseDown(button) || !ImGui::IsItemActive()) viewDrag_ = ViewDrag::None;
             }
             gizmo(origin, size);
             ImGui::SetCursorScreenPos(ImVec2(origin.x + 6, origin.y + 6));
@@ -1764,6 +1800,7 @@ void Editor::viewport() {
             breadcrumb();
         }
     }
+    if (!visible) viewDrag_ = ViewDrag::None;
     ImGui::End();
     ImGui::PopStyleVar();
 }
@@ -1922,8 +1959,8 @@ void Editor::gizmo(ImVec2 origin, ImVec2 size) {
     ImGuizmo::SetDrawlist();
     ImGuizmo::SetRect(origin.x, origin.y, size.x, size.y);
     ImGuizmo::SetOrthographic(orthographic_);
-    // During an orbit or pan the gizmo is drawn but neither highlights nor takes the mouse.
-    ImGuizmo::Enable(!viewDragging_);
+    // Navigation draws the gizmo without letting it highlight or take the mouse.
+    ImGuizmo::Enable(viewDrag_ == ViewDrag::None);
     const bool changed =
         ImGuizmo::Manipulate(view, projection, static_cast<ImGuizmo::OPERATION>(gizmoOperation_),
                              gizmoLocal_ ? ImGuizmo::LOCAL : ImGuizmo::WORLD, model);
@@ -2002,6 +2039,34 @@ void Editor::pick(float x, float y) {
                          view_.instances[render.instance].expansion.nodes[render.index].path};
         }
     }
+}
+
+void Editor::focusAt(float x, float y) {
+    const auto ray = camera_.getCameraToViewportRay(x, y);
+    auto nearest = std::numeric_limits<Ogre::Real>::max();
+    for (const auto& render : renderObjects_) {
+        const auto inverse = render.node->_getFullTransformUpdated().inverseAffine();
+        // Keep the direction unnormalized so t remains a world-ray distance under scaling.
+        const Ogre::Ray local(inverse.transformAffine(ray.getOrigin()),
+                              inverse.transformDirectionAffine(ray.getDirection()));
+        const auto geometry = primitiveMesh(render.shape);
+        for (std::size_t i = 0; i < geometry.indices.size(); i += 3) {
+            const auto hit = Ogre::Math::intersects(local,
+                toOgre(geometry.vertices[geometry.indices[i]].position),
+                toOgre(geometry.vertices[geometry.indices[i + 1]].position),
+                toOgre(geometry.vertices[geometry.indices[i + 2]].position), true, true);
+            if (hit.first && hit.second > 0 && hit.second < nearest) nearest = hit.second;
+        }
+    }
+    if (nearest == std::numeric_limits<Ogre::Real>::max()) return;
+    const auto target = ray.getPoint(nearest);
+    const auto offset = camera_.getPosition() - target;
+    const auto distance = offset.length();
+    if (distance < 0.001f) return;
+    target_ = target;
+    distance_ = distance;
+    yaw_ = std::atan2(offset.x, offset.z);
+    pitch_ = std::asin(std::clamp(offset.y / distance, -1.0f, 1.0f));
 }
 
 void Editor::resizeViewport(unsigned width, unsigned height) {

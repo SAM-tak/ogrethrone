@@ -10,6 +10,7 @@
 #include <OgreVector3.h>
 #include <imgui.h>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -69,8 +70,9 @@ public:
     Editor& operator=(const Editor&) = delete;
 
     /// Builds the UI and runs a complete frame, including main-thread OGRE rendering.
+    /// @param input Optional input replay hook, called after platform polling and before NewFrame.
     /// Returns false when the renderer requests shutdown.
-    bool frame(float deltaSeconds);
+    bool frame(float deltaSeconds, const std::function<void()>& input = {});
     /// Enables/disables shadow casting while preserving direct and ambient lighting.
     void setShadowsEnabled(bool enabled);
     /// Downloads the rendered viewport to a portable RGB image for visual smoke checks.
@@ -302,8 +304,10 @@ private:
     ScriptRuntime* consoleRuntime();
     /// Runs @p line at the console and logs it with what it gave.
     void evaluate(const std::string& line);
-    /// Applies the orbit parameters and projection mode to the camera.
+    /// Applies the view parameters and projection mode to the camera.
     void updateCamera();
+    /// Retargets the camera at the nearest rendered triangle, preserving its position.
+    void focusAt(float x, float y);
     /// Centres the orbit camera on the selected node.
     void focusSelection();
     /// Draws the ImGuizmo transform gizmo for the selected node over the viewport
@@ -399,12 +403,15 @@ private:
     char newPrefabPath_[256] = "prefabs/new.prefab.lton";
     Ogre::Vector3 target_{0, 0.5f, 0};
     float yaw_ = 0.65f, pitch_ = 0.45f, distance_ = 9.0f;
+    /// Base fly speed in scene units per second, adjusted by the wheel during flight.
+    float flySpeed_ = 5.0f;
     unsigned viewportWidth_ = 0, viewportHeight_ = 0;
     /// ImGuizmo::OPERATION of the gizmo (translate initially).
     int gizmoOperation_ = 7;
     bool gizmoLocal_ = true, gizmoOver_ = false, gizmoUsing_ = false;
-    /// Whether the viewport is being orbited or panned; the gizmo is disabled meanwhile.
-    bool viewDragging_ = false;
+    /// Navigation gesture captured by the viewport; disables the gizmo until release.
+    enum class ViewDrag { None, Fly, Pan, Orbit, Dolly };
+    ViewDrag viewDrag_ = ViewDrag::None;
     bool showGrid_ = true, orthographic_ = false, close_ = false;
     bool dirty_ = false, showFiles_ = false, saving_ = true, confirmClose_ = false;
     /// Project-relative path of the open level.
