@@ -59,12 +59,15 @@ struct Runner {
     std::vector<Behaviour> behaviours;
 };
 
-/// Property values an instance gives one node of its prefab (TDDja/06 4); unset ones keep the prefab's.
+/// Property values an instance gives one node of its prefab (TDDja/06 4); unset ones
+/// keep the prefab's. Component properties apply only where the node has the component.
 struct NodeOverride {
     /// The node, relative to the instance; empty for the instance node itself (the root).
     NodePath path;
     std::optional<std::string> name;
+    /// Transform properties.
     std::optional<Vec3> position, rotation, scale;
+    /// BoxPrimitive properties.
     std::optional<std::array<float, 3>> colour;
 };
 
@@ -108,7 +111,9 @@ struct Overrides {
     FieldOverride& fieldsOf(const NodePath& instance, std::uint32_t runner, std::size_t behaviour);
 };
 
-/// Placement relative to a parent, as a scene node has it.
+/// The Transform component (TDDja/07 3): placement relative to the nearest ancestor
+/// with a Transform; a node without one passes its parent's placement on unchanged.
+/// Also a scene instance's placement in its level.
 struct Transform {
     Vec3 position;
     /// Euler angles in degrees, applied about X, then Y, then Z.
@@ -117,10 +122,16 @@ struct Transform {
     Vec3 scale{1, 1, 1};
 };
 
-/// One drawable node of a scene hierarchy. Currently every node is a unit cube.
-/// A node naming a prefab is a prefab instance and becomes the prefab's root
-/// (TDDja/06 3): it gives the root its name and transform, everything else comes
-/// from the prefab, and it has no children of its own.
+/// The BoxPrimitive component (TDDja/07 3): a unit cube drawn at the node.
+struct BoxPrimitive {
+    /// Linear RGB colour with components in [0, 1].
+    std::array<float, 3> colour{0.32f, 0.62f, 0.82f};
+};
+
+/// One node of a scene hierarchy (TDDja/07 3): an ID, a name and a parent, and the
+/// components it has. A node naming a prefab is a prefab instance and becomes the
+/// prefab's root (TDDja/06 3): it gives the root its name and Transform, everything
+/// else comes from the prefab, and it has no children of its own.
 struct SceneNode {
     /// Unique nonzero ID; see NodeId.
     NodeId id = 0;
@@ -128,15 +139,9 @@ struct SceneNode {
     std::string name;
     /// ID of the parent node, or 0 for the scene root.
     NodeId parent = 0;
-    /// Position relative to the parent.
-    Vec3 position;
-    /// Euler angles in degrees relative to the parent, applied about X, then Y, then Z.
-    Vec3 rotation;
-    /// Per-axis scale relative to the parent; each component is at least 0.001.
-    Vec3 scale{1, 1, 1};
-    /// Linear RGB colour with components in [0, 1]; unused by an instance, whose
-    /// colour comes from the prefab or its overrides.
-    std::array<float, 3> colour{0.32f, 0.62f, 0.82f};
+    std::optional<Transform> transform;
+    /// Unused by an instance, whose root's comes from the prefab or its overrides.
+    std::optional<BoxPrimitive> box;
     /// Project-relative path of the prefab this node instantiates; empty for a plain node.
     std::string prefab;
     /// What this instance changes in the prefab.
@@ -180,7 +185,8 @@ struct Prefab : RunnerSet {
     SceneNode* findNode(NodeId id);
     /// @copydoc findNode
     const SceneNode* findNode(NodeId id) const;
-    /// Appends a cube node named @p name under @p parent, with a new random ID, and returns it.
+    /// Appends a cube node (a Transform half a unit up and a BoxPrimitive) named @p name
+    /// under @p parent, with a new ID, and returns it.
     SceneNode& addNode(const std::string& name, NodeId parent = 0);
     /// Removes the node and all its descendants.
     void removeNode(NodeId id);

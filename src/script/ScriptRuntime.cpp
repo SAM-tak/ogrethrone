@@ -10,6 +10,7 @@
 #include <iterator>
 #include <map>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 namespace throne {
@@ -51,13 +52,12 @@ std::string_view text(LhatValue value) {
     return {string->text, string->length};
 }
 
-/// Returns the component storage of one of a node's vector properties (0-3).
-float* property(SceneNode& node, int which) {
+/// Returns the storage of one of a Transform's vector properties (0 position, 1 rotation, 2 scale).
+float* property(Transform& transform, int which) {
     switch (which) {
-    case 0: return node.position.data();
-    case 1: return node.rotation.data();
-    case 2: return node.scale.data();
-    default: return node.colour.data();
+    case 0: return transform.position.data();
+    case 1: return transform.rotation.data();
+    default: return transform.scale.data();
     }
 }
 
@@ -83,7 +83,7 @@ struct ScriptRuntime::State {
     /// The console's prompt, made on first use; disposed before the machine.
     std::unique_ptr<LhatPrompt, decltype(&lhat_prompt_dispose)> prompt{nullptr, &lhat_prompt_dispose};
     const LhatHostValueTag* vec3 = nullptr;
-    const LhatHostDataTag *sceneNode = nullptr, *runner = nullptr;
+    const LhatHostDataTag *sceneNode = nullptr, *runner = nullptr, *transform = nullptr, *box = nullptr;
     // Values the host holds are not roots, so everything kept between calls
     // also lives in the machine's host root table.
     LhatTable* roots = nullptr;
@@ -122,9 +122,9 @@ struct ScriptRuntime::State {
         return (static_cast<std::uintptr_t>(scene + 1) << 32) | node;
     }
 
-    /// Returns the node a throne.SceneNode handle names, or nullptr.
-    SceneNode* resolve(LhatValue value) {
-        const auto bits = reinterpret_cast<std::uintptr_t>(lhat_hostdata_pointer(value, sceneNode));
+    /// Returns the node a handle of @p tag (throne.SceneNode unless said) names, or nullptr.
+    SceneNode* resolve(LhatValue value, const LhatHostDataTag* tag = nullptr) {
+        const auto bits = reinterpret_cast<std::uintptr_t>(lhat_hostdata_pointer(value, tag ? tag : sceneNode));
         const auto scene = static_cast<std::size_t>(bits >> 32);
         if (scene == 0 || scene > expanded.instances.size()) return nullptr;
         auto& nodes = expanded.instances[scene - 1].expansion.nodes;
@@ -136,6 +136,16 @@ struct ScriptRuntime::State {
     SceneNode* target(LhatMachine* running, LhatValue value) {
         if (auto* node = resolve(value)) return node;
         lhat_machine_panic_text(running, "throne.SceneNode refers to a node that is gone; check valid() first");
+        return nullptr;
+    }
+
+    /// Returns the component @p member of the node a component handle of @p tag
+    /// names, or panics and answers null when the node or the component is gone.
+    template <typename Component>
+    Component* component(LhatMachine* running, LhatValue value, const LhatHostDataTag* tag,
+                         std::optional<Component> SceneNode::*member) {
+        if (auto* node = resolve(value, tag); node && node->*member) return &*(node->*member);
+        lhat_machine_panic_text(running, "the component's node, or the component itself, is gone");
         return nullptr;
     }
 
@@ -272,26 +282,50 @@ THRONE_HOST(nodeValid, {
     answers[0] = lhat_bool(s.resolve(arguments[0]) != nullptr);
     *count = 1;
 })
-/// Reads local vector property @p Which of the receiver.
-template <int Which>
-THRONE_HOST(nodeGet, {
-    if (auto* node = s.target(machine, arguments[0])) s.answer(answers, count, property(*node, Which));
-})
-/// Writes local vector property @p Which of the receiver, keeping scale and colour in range.
-template <int Which>
-THRONE_HOST(nodeSet, {
+/// SceneNode.transform() and SceneNode.box(): a handle on the component, or nil^ when
+/// the node has none. The handle names the node, as a SceneNode handle does.
+template <typename Component, std::optional<Component> SceneNode::*Member>
+THRONE_HOST(nodeComponent, {
     auto* node = s.target(machine, arguments[0]);
     if (!node) return;
-    auto value = vec3(s, arguments[1]);
+    const auto* tag = std::is_same_v<Component, Transform> ? s.transform : s.box;
+    answers[0] = node->*Member ? s.handle(machine, tag, reinterpret_cast<std::uintptr_t>(
+                                                           lhat_hostdata_pointer(arguments[0], s.sceneNode)))
+                               : lhat_nil();
+    *count = 1;
+})
+/// Reads Vec3 @p value into @p out, clamped to [@p low, @p high]; panics when not finite.
+bool finite(LhatMachine* machine, Vec3 value, float low, float high, float* out) {
     for (float* component : {&value.x, &value.y, &value.z}) {
         if (!std::isfinite(*component)) {
-            lhat_machine_panic_text(machine, "throne.SceneNode property must be finite");
-            return;
+            lhat_machine_panic_text(machine, "a component property must be finite");
+            return false;
         }
-        *component = std::clamp(*component, Which == 2 ? 0.001f : Which == 3 ? 0.0f : -1.0e6f,
-                                Which == 3 ? 1.0f : 1.0e6f);
+        *component = std::clamp(*component, low, high);
     }
-    std::memcpy(property(*node, Which), value.data(), sizeof value);
+    std::memcpy(out, value.data(), sizeof value);
+    return true;
+}
+/// Reads vector property @p Which of a Transform.
+template <int Which>
+THRONE_HOST(transformGet, {
+    if (auto* transform = s.component(machine, arguments[0], s.transform, &SceneNode::transform))
+        s.answer(answers, count, property(*transform, Which));
+})
+/// Writes vector property @p Which of a Transform, keeping scale above zero.
+template <int Which>
+THRONE_HOST(transformSet, {
+    if (auto* transform = s.component(machine, arguments[0], s.transform, &SceneNode::transform))
+        finite(machine, vec3(s, arguments[1]), Which == 2 ? 0.001f : -1.0e6f, 1.0e6f, property(*transform, Which));
+})
+/// BoxPrimitive.colour().
+THRONE_HOST(boxColour, {
+    if (auto* box = s.component(machine, arguments[0], s.box, &SceneNode::box)) s.answer(answers, count, box->colour.data());
+})
+/// BoxPrimitive.setColour(v), each component kept in [0, 1].
+THRONE_HOST(boxSetColour, {
+    if (auto* box = s.component(machine, arguments[0], s.box, &SceneNode::box))
+        finite(machine, vec3(s, arguments[1]), 0.0f, 1.0f, box->colour.data());
 })
 
 /// Runner.name().
@@ -329,7 +363,9 @@ bool registerThrone(LhatProgram* program, State& s) {
     s.vec3 = lhat_register_hostvalue_type(program, moduleName, "Vec3", sizeof(Vec3));
     s.sceneNode = lhat_register_hostdata_type(program, moduleName, "SceneNode");
     s.runner = lhat_register_hostdata_type(program, moduleName, "Runner");
-    if (!s.vec3 || !s.sceneNode || !s.runner) return false;
+    s.transform = lhat_register_hostdata_type(program, moduleName, "Transform");
+    s.box = lhat_register_hostdata_type(program, moduleName, "BoxPrimitive");
+    if (!s.vec3 || !s.sceneNode || !s.runner || !s.transform || !s.box) return false;
     const char* axes[] = {"x", "y", "z"};
     for (std::size_t i = 0; i < 3; ++i)
         if (!lhat_register_hostvalue_field(program, moduleName, "Vec3", axes[i], i * sizeof(float), LHAT_HVFIELD_F32))
@@ -352,14 +388,16 @@ bool registerThrone(LhatProgram* program, State& s) {
         {"SceneNode", "id", "f^self^ -> number^;", nodeId},
         {"SceneNode", "name", "f^self^ -> string^;", nodeName},
         {"SceneNode", "valid", "f^self^ -> bool^;", nodeValid},
-        {"SceneNode", "position", "f^self^ -> throne.Vec3;", nodeGet<0>},
-        {"SceneNode", "rotation", "f^self^ -> throne.Vec3;", nodeGet<1>},
-        {"SceneNode", "scale", "f^self^ -> throne.Vec3;", nodeGet<2>},
-        {"SceneNode", "colour", "f^self^ -> throne.Vec3;", nodeGet<3>},
-        {"SceneNode", "setPosition", "p^self^, throne.Vec3;", nodeSet<0>},
-        {"SceneNode", "setRotation", "p^self^, throne.Vec3;", nodeSet<1>},
-        {"SceneNode", "setScale", "p^self^, throne.Vec3;", nodeSet<2>},
-        {"SceneNode", "setColour", "p^self^, throne.Vec3;", nodeSet<3>},
+        {"SceneNode", "transform", "f^self^ -> throne.Transform|nil^;", nodeComponent<Transform, &SceneNode::transform>},
+        {"SceneNode", "box", "f^self^ -> throne.BoxPrimitive|nil^;", nodeComponent<BoxPrimitive, &SceneNode::box>},
+        {"Transform", "position", "f^self^ -> throne.Vec3;", transformGet<0>},
+        {"Transform", "rotation", "f^self^ -> throne.Vec3;", transformGet<1>},
+        {"Transform", "scale", "f^self^ -> throne.Vec3;", transformGet<2>},
+        {"Transform", "setPosition", "p^self^, throne.Vec3;", transformSet<0>},
+        {"Transform", "setRotation", "p^self^, throne.Vec3;", transformSet<1>},
+        {"Transform", "setScale", "p^self^, throne.Vec3;", transformSet<2>},
+        {"BoxPrimitive", "colour", "f^self^ -> throne.Vec3;", boxColour},
+        {"BoxPrimitive", "setColour", "p^self^, throne.Vec3;", boxSetColour},
         {"Runner", "name", "f^self^ -> string^;", runnerName},
         {nullptr, "vec3", "f^number^, number^, number^ -> throne.Vec3;", vecNew},
         {nullptr, "find", "f^string^ -> throne.SceneNode|nil^;", find},

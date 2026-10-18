@@ -72,9 +72,12 @@ public^let^Behaviour = def^{
     },
     update = p^self^, runner:throne.Runner, dt:number^ {
         if^ self^.target != nil^ {
-            var^ r = self^.target.rotation()
-            r.y := r.y + self^.degreesPerSecond * dt
-            self^.target.setRotation(r)
+            let^ t = self^.target.transform()
+            if^ t != nil^ {
+                var^ r = t.rotation()
+                r.y := r.y + self^.degreesPerSecond * dt
+                t.setRotation(r)
+            }
         }
     },
 }
@@ -91,7 +94,8 @@ var^ moved = 0
 repeat^while^ moved < 3 {
     let^ mover = throne.find("Cube 2")
     if^ mover != nil^ {
-        mover.setPosition(mover.position() + throne.vec3(1, 0, 0))
+        let^ t = mover.transform()
+        if^ t != nil^ { t.setPosition(t.position() + throne.vec3(1, 0, 0)) }
     }
     await^ nextFrame()
     moved := moved + 1
@@ -120,12 +124,12 @@ int main(int argc, char** argv) {
         return fail(std::string("Valid scripts failed:\n") + e.what());
     }
     const auto& nodes = played.nodes();
-    if (std::abs(nodes[0].node.rotation.y - 45) > 0.01f)
-        return fail("Behaviour did not rotate its target node: y=" + std::to_string(nodes[0].node.rotation.y));
-    if (std::abs(nodes[1].node.position.x - 5) > 0.01f)
+    if (std::abs(nodes[0].node.transform->rotation.y - 45) > 0.01f)
+        return fail("Behaviour did not rotate its target node: y=" + std::to_string(nodes[0].node.transform->rotation.y));
+    if (std::abs(nodes[1].node.transform->position.x - 5) > 0.01f)
         return fail("main.lh did not move Cube 2 once per frame for three frames: x=" +
-                    std::to_string(nodes[1].node.position.x));
-    if (played.world.scenes.at("scenes/main.scene.lton").nodes[0].rotation.y != 0)
+                    std::to_string(nodes[1].node.transform->position.x));
+    if (played.world.scenes.at("scenes/main.scene.lton").nodes[0].transform->rotation.y != 0)
         return fail("Play changed the world instead of its expansion");
     if (logged.size() != 2 || logged[0].find("field missing ignored") == std::string::npos ||
         logged[1] != "start Spinner")
@@ -140,7 +144,7 @@ int main(int argc, char** argv) {
     } catch (const throne::ScriptError& e) {
         return fail(std::string("Level play failed:\n") + e.what());
     }
-    if (levelOnly.nodes()[1].node.position.x != 2 || levelOnly.nodes()[0].node.rotation.y < 89)
+    if (levelOnly.nodes()[1].node.transform->position.x != 2 || levelOnly.nodes()[0].node.transform->rotation.y < 89)
         return fail("Level play ran main.lh or skipped the runners");
 
     // The console runs lines on a session's machine: names stay, an input may span
@@ -186,7 +190,7 @@ int main(int argc, char** argv) {
     const auto& expansion = prefabs.expanded.instances[0].expansion;
     const auto& wheelA = expansion.nodes[expansion.find({a, wheel})].node;
     const auto& wheelB = expansion.nodes[expansion.find({b, wheel})].node;
-    if (std::abs(wheelA.rotation.y - 90) > 0.01f || std::abs(wheelB.rotation.y - 45) > 0.01f)
+    if (std::abs(wheelA.transform->rotation.y - 90) > 0.01f || std::abs(wheelB.transform->rotation.y - 45) > 0.01f)
         return fail("Prefab runners did not turn their own instance's wheel at their own speed");
 
     const auto described = throne::ScriptRuntime::fields(root, "scripts/spin.lh");
@@ -246,12 +250,12 @@ int main(int argc, char** argv) {
         } catch (const throne::ScriptError& e) {
             return fail(std::string("The sample was rejected:\n") + e.what());
         }
-        if (std::fabs(basic.nodes()[0].node.rotation.y - 45.0f) > 0.01f)
+        if (std::fabs(basic.nodes()[0].node.transform->rotation.y - 45.0f) > 0.01f)
             return fail("The sample's runner did not spin its cube");
     }
 
     const auto api = throne::ScriptRuntime::hostApi();
-    for (const char* name : {"\"throne\"", "Vec3", "SceneNode", "Runner", "setPosition", "math"})
+    for (const char* name : {"\"throne\"", "Vec3", "SceneNode", "Transform", "BoxPrimitive", "Runner", "setPosition", "math"})
         if (api.find(name) == std::string::npos) return fail(std::string("Host API JSON lacks ") + name);
     fs::remove_all(root);
     std::printf("Scripts ran 10 frames; %zu failure cases were reported\n", std::size(failures));

@@ -95,11 +95,10 @@ std::size_t Expander::prefab(const std::string& file, const SceneNode* placed, c
     const auto& root = content->nodes.front();
     if (!root.prefab.empty()) return broken(file + ": its root cannot be an instance; make a variant instead");
     auto merged = root;
+    // The instance gives the root its name and Transform.
     if (placed) {
         merged.name = placed->name;
-        merged.position = placed->position;
-        merged.rotation = placed->rotation;
-        merged.scale = placed->scale;
+        if (placed->transform) merged.transform = placed->transform;
     }
     const auto at = out.nodes.size();
     out.nodes.push_back({prefix, parent, merged, root.id});
@@ -126,10 +125,12 @@ void apply(Expansion& out, const NodePath& prefix, const Overrides& overrides, s
         if (at == Expansion::npos) continue;  // The prefab no longer has that node.
         auto& node = out.nodes[at].node;
         if (entry.name) node.name = *entry.name;
-        if (entry.position) node.position = *entry.position;
-        if (entry.rotation) node.rotation = *entry.rotation;
-        if (entry.scale) node.scale = *entry.scale;
-        if (entry.colour) node.colour = *entry.colour;
+        if (auto& transform = node.transform) {
+            if (entry.position) transform->position = *entry.position;
+            if (entry.rotation) transform->rotation = *entry.rotation;
+            if (entry.scale) transform->scale = *entry.scale;
+        }
+        if (node.box && entry.colour) node.box->colour = *entry.colour;
     }
     for (const auto& entry : overrides.removedRunners) {
         const auto where = join(prefix, entry.instance);

@@ -706,22 +706,28 @@ const Runner* Editor::selectedRunner() {
 
 void Editor::writeNode(const SceneNode& value, unsigned changed) {
     const auto target = targetOf(selected_.instance, selected_.path);
+    const auto* transform = value.transform ? &*value.transform : nullptr;
+    const auto* box = value.box ? &*value.box : nullptr;
     if (target.node) {
         if (changed & 1) target.node->name = value.name;
-        if (changed & 2) target.node->position = value.position;
-        if (changed & 4) target.node->rotation = value.rotation;
-        if (changed & 8) target.node->scale = value.scale;
-        if (changed & 16) {
-            if (target.overrides) target.overrides->node({}).colour = value.colour;
-            else target.node->colour = value.colour;
+        if (transform && (changed & 14)) {
+            auto& into = target.node->transform ? *target.node->transform : target.node->transform.emplace();
+            if (changed & 2) into.position = transform->position;
+            if (changed & 4) into.rotation = transform->rotation;
+            if (changed & 8) into.scale = transform->scale;
+        }
+        // An instance's root takes everything but its Transform from the prefab.
+        if (box && (changed & 16)) {
+            if (target.overrides) target.overrides->node({}).colour = box->colour;
+            else if (target.node->box) target.node->box->colour = box->colour;
         }
     } else if (target.overrides) {
         auto& entry = target.overrides->node(target.relative);
         if (changed & 1) entry.name = value.name;
-        if (changed & 2) entry.position = value.position;
-        if (changed & 4) entry.rotation = value.rotation;
-        if (changed & 8) entry.scale = value.scale;
-        if (changed & 16) entry.colour = value.colour;
+        if (transform && (changed & 2)) entry.position = transform->position;
+        if (transform && (changed & 4)) entry.rotation = transform->rotation;
+        if (transform && (changed & 8)) entry.scale = transform->scale;
+        if (box && (changed & 16)) entry.colour = box->colour;
     }
 }
 
@@ -769,10 +775,13 @@ void Editor::syncTransforms() {
     for (const auto& render : renderObjects_) {
         const auto& expanded = view_.instances[render.instance].expansion.nodes[render.index];
         const auto& node = expanded.node;
-        render.node->setPosition(toOgre(node.position));
-        render.node->setOrientation(orientation(node.rotation));
-        render.node->setScale(toOgre(node.scale));
-        render.material->setColour(Ogre::ColourValue(node.colour[0], node.colour[1], node.colour[2]));
+        // A node without a Transform passes its parent's placement on; one without a box draws nothing.
+        const auto transform = node.transform.value_or(Transform{});
+        render.node->setPosition(toOgre(transform.position));
+        render.node->setOrientation(orientation(transform.rotation));
+        render.node->setScale(toOgre(transform.scale));
+        render.mesh->setVisible(node.box.has_value());
+        if (node.box) render.material->setColour(Ogre::ColourValue(node.box->colour[0], node.box->colour[1], node.box->colour[2]));
         if (selected_.kind == Selection::Kind::Node && selected_.instance == static_cast<int>(render.instance) &&
             selected_.path == expanded.path)
             outlined = &render;
@@ -824,7 +833,8 @@ void Editor::addNode() {
     }
     SceneNode node;
     node.name = name;
-    node.position = {0, 0.5f, 0};
+    node.transform = Transform{{0, 0.5f, 0}};
+    node.box.emplace();
     auto before = doc_;
     if (insert(std::move(node))) commit(std::move(before));
 }
@@ -847,6 +857,7 @@ void Editor::addInstance() {
     SceneNode node;
     node.name = std::filesystem::u8path(prefab).stem().stem().u8string();
     node.prefab = prefab;
+    node.transform.emplace();
     if (!check.errors.empty() || !insert(std::move(node))) {
         if (!check.errors.empty()) log("Cannot place " + prefab + ": " + check.errors.front());
         if (!before.prefabs.count(prefab)) library_.forget(prefab);
@@ -991,13 +1002,23 @@ void Editor::dropOnPrefab(int instance, NodeId id, const std::string& file) {
 
 namespace {
 /// Copies the properties @p from sets into @p into.
-template <typename Target>
-void assign(Target& into, const NodeOverride& from) {
+void assign(NodeOverride& into, const NodeOverride& from) {
+    if (from.name) into.name = from.name;
+    if (from.position) into.position = from.position;
+    if (from.rotation) into.rotation = from.rotation;
+    if (from.scale) into.scale = from.scale;
+    if (from.colour) into.colour = from.colour;
+}
+
+/// Writes the properties @p from sets into @p into's components, where it has them.
+void assign(SceneNode& into, const NodeOverride& from) {
     if (from.name) into.name = *from.name;
-    if (from.position) into.position = *from.position;
-    if (from.rotation) into.rotation = *from.rotation;
-    if (from.scale) into.scale = *from.scale;
-    if (from.colour) into.colour = *from.colour;
+    if (auto& transform = into.transform) {
+        if (from.position) transform->position = *from.position;
+        if (from.rotation) transform->rotation = *from.rotation;
+        if (from.scale) transform->scale = *from.scale;
+    }
+    if (into.box && from.colour) into.box->colour = *from.colour;
 }
 
 /// Adds @p from on top of the overrides @p into already has.
@@ -1282,7 +1303,7 @@ void Editor::duplicate() {
         auto& added = file->addNode(copy.name, copy.parent);
         copy.id = added.id;
         if (copy.name.size() <= 250) copy.name += " Copy";
-        copy.position.x += 1;
+        if (copy.transform) copy.transform->position.x += 1;
         added = std::move(copy);
         // Runners that refer to the node come along, referring to the copy instead
         // (the file's own, and at the level the level's naming this scene instance).
@@ -1736,7 +1757,8 @@ void Editor::gizmo(ImVec2 origin, ImVec2 size) {
         if (node && selected_.instance == static_cast<int>(each.instance) &&
             view_.instances[each.instance].expansion.nodes[each.index].path == selected_.path)
             moved = each.node;
-    if (!moved || runtime_) {
+    // Only a node with a Transform can be moved.
+    if (!moved || runtime_ || (node && !node->node.transform)) {
         gizmoOver_ = false;
         return;
     }
@@ -1777,9 +1799,7 @@ void Editor::gizmo(ImVec2 origin, ImVec2 size) {
         return;
     }
     auto value = node->node;
-    value.position = result.position;
-    value.rotation = result.rotation;
-    value.scale = result.scale;
+    value.transform = result;
     writeNode(value, 2 | 4 | 8);
 }
 
@@ -1815,6 +1835,7 @@ void Editor::pick(float x, float y) {
     auto nearest = std::numeric_limits<Ogre::Real>::max();
     selected_ = {};
     for (const auto& render : renderObjects_) {
+        if (!view_.instances[render.instance].expansion.nodes[render.index].node.box) continue;
         // Test in node space; the unnormalized direction keeps distances comparable.
         const auto inverse = render.node->_getFullTransformUpdated().inverseAffine();
         const Ogre::Ray local(inverse.transformAffine(ray.getOrigin()),

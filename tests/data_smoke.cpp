@@ -40,7 +40,7 @@ int main() {
     auto original = throne::Scene::example();
     const auto parent = original.nodes[0].id, child = original.nodes[1].id;
     auto& grandchild = original.addNode("Grandchild \xE2\x9C\x93", child);
-    grandchild.rotation = {0, 45, 10};
+    grandchild.transform->rotation = {0, 45, 10};
     const auto grandchildId = grandchild.id;
     if (!original.reparent(child, parent) || original.reparent(parent, grandchildId) ||
         original.nodes[0].id != parent || original.nodes[2].id != grandchildId || !original.isWithin(grandchildId, parent))
@@ -66,9 +66,21 @@ int main() {
     for (std::size_t i = 0; i < loaded.nodes.size(); ++i) {
         const auto& a = original.nodes[i];
         const auto& b = loaded.nodes[i];
-        if (a.id != b.id || a.name != b.name || a.parent != b.parent || a.position != b.position ||
-            a.rotation != b.rotation || a.scale != b.scale || a.colour != b.colour)
+        if (a.id != b.id || a.name != b.name || a.parent != b.parent || !b.transform || !b.box ||
+            a.transform->position != b.transform->position || a.transform->rotation != b.transform->rotation ||
+            a.transform->scale != b.transform->scale || a.box->colour != b.box->colour)
             return fail("Node changed after save/load");
+    }
+    // Components are each optional: a node may have neither a Transform nor a box.
+    {
+        auto bare = original;
+        auto& empty = bare.addNode("Empty");
+        empty.transform.reset();
+        empty.box.reset();
+        bare.save(directory / "bare.scene.lton");
+        const auto reread = throne::Scene::load(directory / "bare.scene.lton");
+        const auto* read = reread.findNode(empty.id);
+        if (!read || read->transform || read->box) return fail("A node without components did not stay without them");
     }
     if (loaded.runners[0].name != "Spinner" || loaded.runners[0].behaviours.size() != 1 ||
         loaded.runners[0].behaviours[0].script != "scripts/spin.lh" ||
@@ -128,7 +140,7 @@ int main() {
     const auto pile = room.addNode("Pile").id;
     auto& placed = *room.findNode(pile);
     placed.prefab = "prefabs/stack.prefab.lton";
-    placed.position = {3, 0, 0};
+    placed.transform->position = {3, 0, 0};
     placed.overrides.node({bottom, lid}).position = throne::Vec3{0, 5, 0};
     placed.overrides.fieldsOf({bottom}, 1, 0).fields["degreesPerSecond"] = 10.0;
     room.save(directory / "scenes/room.scene.lton");
@@ -139,11 +151,11 @@ int main() {
     const auto pileAt = expanded.find({pile}), lidAt = expanded.find({pile, bottom, lid});
     if (!expanded.errors.empty() || expanded.nodes.size() != 6 || lidAt == throne::Expansion::npos)
         return fail("Nested prefab instances did not expand to six nodes");
-    if (expanded.nodes[pileAt].node.name != "Pile" || expanded.nodes[pileAt].node.position.x != 3 ||
+    if (expanded.nodes[pileAt].node.name != "Pile" || expanded.nodes[pileAt].node.transform->position.x != 3 ||
         expanded.find({pile, stackRoot}) != pileAt || expanded.find({pile, stackRoot, bottom, body, lid}) != lidAt ||
         expanded.find({pile, lid}) != lidAt)
         return fail("An instance did not become its prefab's root, or a path did not search below");
-    if (expanded.nodes[lidAt].node.colour[0] != 1 || expanded.nodes[lidAt].node.position.y != 5 ||
+    if (expanded.nodes[lidAt].node.box->colour[0] != 1 || expanded.nodes[lidAt].node.transform->position.y != 5 ||
         expanded.nodes[expanded.nodes[lidAt].parent].path != throne::NodePath{pile, bottom})
         return fail("Inner and outer overrides were not both applied to the nested lid");
     if (expanded.runners.size() != 2 || expanded.runners[0].instance != throne::NodePath{pile, bottom} ||
@@ -173,7 +185,7 @@ int main() {
     const auto inStudy = throne::expand(study, fresh);
     const auto bookAt = inStudy.find({placedShelf, book});
     if (!inStudy.errors.empty() || bookAt == throne::Expansion::npos ||
-        inStudy.nodes[bookAt].path != throne::NodePath{placedShelf, board, book} || inStudy.nodes[bookAt].node.colour[1] != 1)
+        inStudy.nodes[bookAt].path != throne::NodePath{placedShelf, board, book} || inStudy.nodes[bookAt].node.box->colour[1] != 1)
         return fail("An override did not follow its node into a new prefab");
 
     // An instance can add nodes, plain or instances themselves, anywhere inside it.
@@ -216,8 +228,8 @@ int main() {
     const auto alone = throne::expand(throne::Prefab::load(directory / "prefabs/green.prefab.lton"), library,
                                       "prefabs/green.prefab.lton");
     if (!inYard.errors.empty() || inYard.nodes.size() != 2 || inYard.nodes[0].node.name != "Box" ||
-        inYard.nodes[0].node.colour[1] != 1 || inYard.nodes[1].node.name != "Green Lid" ||
-        inYard.nodes[1].node.scale.x != 2 || alone.nodes.size() != 2 || alone.find({}) != 0 ||
+        inYard.nodes[0].node.box->colour[1] != 1 || inYard.nodes[1].node.name != "Green Lid" ||
+        inYard.nodes[1].node.transform->scale.x != 2 || alone.nodes.size() != 2 || alone.find({}) != 0 ||
         alone.nodes[0].node.name != "Body" || alone.find({body, lid}) != 1 || alone.nodes[1].node.name != "Green Lid")
         return fail("A variant did not expand to its base with its overrides");
 

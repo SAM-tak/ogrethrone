@@ -1,22 +1,22 @@
 format = "ogrethrone-scene",
 nodes = {
     {
-        colour = {0.32, 0.62, 0.82},
+        components = {
+            box = {colour = {0.32, 0.62, 0.82}},
+            transform = {position = {0.0, 0.5, 0.0}, rotation = {0.0, 0.0, 0.0}, scale = {1.0, 1.0, 1.0}},
+        },
         id = 1,
         name = "SpinningCube",
         parent = 0,
-        position = {0.0, 0.5, 0.0},
-        rotation = {0.0, 0.0, 0.0},
-        scale = {1.0, 1.0, 1.0},
     },
     {
-        colour = {0.86, 0.53, 0.25},
+        components = {
+            box = {colour = {0.86, 0.53, 0.25}},
+            transform = {position = {2.0, 0.75, -1.0}, rotation = {0.0, 0.0, 0.0}, scale = {1.0, 1.5, 1.0}},
+        },
         id = 2,
         name = "Cube 2",
         parent = 0,
-        position = {2.0, 0.75, -1.0},
-        rotation = {0.0, 0.0, 0.0},
-        scale = {1.0, 1.5, 1.0},
     },
 },
 runners = {
@@ -33,4 +33,4 @@ runners = {
         name = "SpinningCube",
     },
 },
-version = 1,
+version = 2,

@@ -8,7 +8,7 @@
 namespace throne {
 namespace {
 constexpr std::string_view prefabFormat = "ogrethrone-prefab", sceneFormat = "ogrethrone-scene";
-constexpr LhatInteger prefabVersion = 2, sceneVersion = 1;
+constexpr LhatInteger prefabVersion = 3, sceneVersion = 2;
 
 /// Reads a name: 1 to 255 bytes without NUL.
 std::string name(LhatValue value) {
@@ -108,12 +108,25 @@ SceneNode readNode(const LhatTable& entry) {
     node.name = name(lton::field(entry, "name"));
     const auto parent = lton::field(entry, "parent");
     node.parent = lton::integer(parent) == 0 ? 0 : nodeId(parent);
-    lton::vector(lton::field(entry, "position"), node.position.data());
-    lton::vector(lton::field(entry, "rotation"), node.rotation.data());
-    lton::vector(lton::field(entry, "scale"), node.scale.data());
-    lton::vector(lton::field(entry, "colour"), node.colour.data());
-    for (unsigned axis = 0; axis < 3; ++axis)
-        if (node.scale.data()[axis] < 0.001f || node.colour[axis] < 0 || node.colour[axis] > 1) lton::invalid();
+    // Components: each optional, each a table of its properties.
+    if (const auto components = lton::field(entry, "components"); !lhat_is_nil(components)) {
+        const auto& table = lton::table(components);
+        if (const auto value = lton::field(table, "transform"); !lhat_is_nil(value)) {
+            const auto& transform = lton::table(value);
+            auto& read = node.transform.emplace();
+            lton::vector(lton::field(transform, "position"), read.position.data());
+            lton::vector(lton::field(transform, "rotation"), read.rotation.data());
+            lton::vector(lton::field(transform, "scale"), read.scale.data());
+            for (unsigned axis = 0; axis < 3; ++axis)
+                if (read.scale.data()[axis] < 0.001f) lton::invalid();
+        }
+        if (const auto value = lton::field(table, "box"); !lhat_is_nil(value)) {
+            auto& read = node.box.emplace();
+            lton::vector(lton::field(lton::table(value), "colour"), read.colour.data());
+            for (const auto component : read.colour)
+                if (component < 0 || component > 1) lton::invalid();
+        }
+    }
     if (const auto prefab = lton::field(entry, "prefab"); !lhat_is_nil(prefab)) {
         node.prefab = lton::relativePath(prefab);
         node.overrides = readOverrides(lton::field(entry, "overrides"));
@@ -127,10 +140,20 @@ LhatValue writeNode(lton::Writer& out, const SceneNode& node) {
     out.set(entry, "id", lhat_integer(static_cast<LhatInteger>(node.id)));
     out.set(entry, "name", out.string(node.name));
     out.set(entry, "parent", lhat_integer(static_cast<LhatInteger>(node.parent)));
-    out.set(entry, "position", out.vector(node.position.data()));
-    out.set(entry, "rotation", out.vector(node.rotation.data()));
-    out.set(entry, "scale", out.vector(node.scale.data()));
-    out.set(entry, "colour", out.vector(node.colour.data()));
+    const auto components = out.table();
+    if (node.transform) {
+        const auto transform = out.table();
+        out.set(transform, "position", out.vector(node.transform->position.data()));
+        out.set(transform, "rotation", out.vector(node.transform->rotation.data()));
+        out.set(transform, "scale", out.vector(node.transform->scale.data()));
+        out.set(components, "transform", transform);
+    }
+    if (node.box) {
+        const auto box = out.table();
+        out.set(box, "colour", out.vector(node.box->colour.data()));
+        out.set(components, "box", box);
+    }
+    out.set(entry, "components", components);
     if (!node.prefab.empty()) {
         out.set(entry, "prefab", out.string(node.prefab));
         if (!node.overrides.empty()) out.set(entry, "overrides", writeOverrides(out, node.overrides));
@@ -174,10 +197,18 @@ LhatValue writeOverrides(lton::Writer& out, const Overrides& overrides) {
         const auto item = out.table();
         out.set(item, "path", writePath(out, entry.path));
         if (entry.name) out.set(item, "name", out.string(*entry.name));
-        if (entry.position) out.set(item, "position", out.vector(entry.position->data()));
-        if (entry.rotation) out.set(item, "rotation", out.vector(entry.rotation->data()));
-        if (entry.scale) out.set(item, "scale", out.vector(entry.scale->data()));
-        if (entry.colour) out.set(item, "colour", out.vector(entry.colour->data()));
+        if (entry.position || entry.rotation || entry.scale) {
+            const auto transform = out.table();
+            if (entry.position) out.set(transform, "position", out.vector(entry.position->data()));
+            if (entry.rotation) out.set(transform, "rotation", out.vector(entry.rotation->data()));
+            if (entry.scale) out.set(transform, "scale", out.vector(entry.scale->data()));
+            out.set(item, "transform", transform);
+        }
+        if (entry.colour) {
+            const auto box = out.table();
+            out.set(box, "colour", out.vector(entry.colour->data()));
+            out.set(item, "box", box);
+        }
         out.push(nodes, item);
     }
     out.set(root, "nodes", nodes);
@@ -231,10 +262,13 @@ Overrides readOverrides(LhatValue value) {
             NodeOverride entry;
             entry.path = readPath(lton::field(item, "path"));
             if (const auto text = lton::field(item, "name"); !lhat_is_nil(text)) entry.name = name(text);
-            readOptional(item, "position", entry.position);
-            readOptional(item, "rotation", entry.rotation);
-            readOptional(item, "scale", entry.scale);
-            readOptional(item, "colour", entry.colour);
+            if (const auto transform = lton::field(item, "transform"); !lhat_is_nil(transform)) {
+                readOptional(lton::table(transform), "position", entry.position);
+                readOptional(lton::table(transform), "rotation", entry.rotation);
+                readOptional(lton::table(transform), "scale", entry.scale);
+            }
+            if (const auto box = lton::field(item, "box"); !lhat_is_nil(box))
+                readOptional(lton::table(box), "colour", entry.colour);
             overrides.nodes.push_back(std::move(entry));
         }
     }
@@ -308,7 +342,8 @@ SceneNode& Prefab::addNode(const std::string& name, NodeId parent) {
     do node.id = newNodeId();
     while (findNode(node.id));
     node.name = name;
-    node.position = {0, 0.5f, 0};
+    node.transform = Transform{{0, 0.5f, 0}};
+    node.box.emplace();
     nodes.push_back(node);
     if (parent) reparent(node.id, parent);
     return *findNode(node.id);
@@ -418,9 +453,8 @@ Scene Scene::example() {
     Scene scene;
     scene.addNode("SpinningCube");
     auto& second = scene.addNode("Cube 2");
-    second.position = {2, 0.75f, -1};
-    second.scale = {1, 1.5f, 1};
-    second.colour = {0.86f, 0.53f, 0.25f};
+    second.transform = Transform{{2, 0.75f, -1}, {}, {1, 1.5f, 1}};
+    second.box = BoxPrimitive{{0.86f, 0.53f, 0.25f}};
     return scene;
 }
 

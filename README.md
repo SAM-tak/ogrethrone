@@ -72,9 +72,12 @@ The editor's dockable panels are Scene, Runners, Inspector, Viewport, Browser an
 in three kinds of file, all LTON (L^ Table Object Notation, read by L^ as
 effect-free data):
 
-- A **scene** (`*.scene.lton`) is a hierarchy of drawable nodes. Each node has a
-  local position, rotation (degrees, applied about X, then Y, then Z), scale and
-  colour; nodes are unit cubes for now. Drag nodes in the Scene panel to reparent
+- A **scene** (`*.scene.lton`) is a hierarchy of nodes. A node has an ID, a name
+  and a parent, and components, each optional: a **Transform** (local position,
+  rotation in degrees applied about X, then Y, then Z, and scale; a node without
+  one passes its parent's placement on) and a **Box Primitive** (a unit cube and
+  its colour). The Inspector shows one section per component, where a node of the
+  edited file can add or remove them. Drag nodes in the Scene panel to reparent
   them, or drop one on the top or bottom edge of another to place it before or
   after it; sibling order is kept. A scene is a prefab (`*.prefab.lton`) extended with scene-wide data.
 - A **prefab** (`*.prefab.lton`) is a reusable node hierarchy with a single root
@@ -227,9 +230,12 @@ public^let^Behaviour = def^{
     start = p^self^, runner:throne.Runner { throne.log("hello " .. runner.name()) },
     update = p^self^, runner:throne.Runner, dt:number^ {
         if^ self^.target != nil^ {
-            var^ r = self^.target.rotation()
-            r.y := r.y + self^.degreesPerSecond * dt
-            self^.target.setRotation(r)
+            let^ t = self^.target.transform()
+            if^ t != nil^ {
+                var^ r = t.rotation()
+                r.y := r.y + self^.degreesPerSecond * dt
+                t.setRotation(r)
+            }
         }
     },
 }
@@ -253,11 +259,15 @@ The `throne` module provides:
   `dot`, `cross`, `length` and `normalized`; made with `throne.vec3(x, y, z)`. The
   axes match OGRE, Box3D and Steam Audio: right-handed, +Y up, -Z forward. Like
   any L^ host value it cannot be stored in a table; keep one with `throne.Vec3.Box^`.
-- `throne.SceneNode`: `id()`, `name()`, `valid()`, `position()`/`rotation()`/`scale()`/
-  `colour()` and the matching `setPosition(v)` etc., all relative to the parent.
-  Rotation is in degrees, applied about X, then Y, then Z; scale and colour are
-  clamped to their valid ranges. Using a handle whose node is gone panics; check
-  `valid()` first.
+- `throne.SceneNode`: `id()`, `name()`, `valid()`, and its components:
+  `transform()` (a `throne.Transform`, or nil^ when the node has none) and `box()`
+  (a `throne.BoxPrimitive`, or nil^). Using a handle whose node is gone panics;
+  check `valid()` first.
+- `throne.Transform`: `position()`/`rotation()`/`scale()` and the matching
+  `setPosition(v)` etc., relative to the parent; rotation is in degrees, applied
+  about X, then Y, then Z, and scale is kept at 0.001 or more.
+- `throne.BoxPrimitive`: `colour()` and `setColour(v)`, kept in [0, 1].
+- A component handle whose node or component is gone panics.
 - `throne.Runner`: `name()`; passed to `start` and `update`.
 - `throne.find(name)` (the first node with that name, scene by scene),
   `throne.log(text)` and `throne.time()` (seconds since Play).

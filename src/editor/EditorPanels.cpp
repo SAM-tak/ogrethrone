@@ -330,18 +330,37 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
     fill(name, value.name);
     property(1, layer && layer->name, [&] { return ImGui::InputText("Name", name, sizeof name) && name[0] && (value.name = name, true); },
              [&] { layer->name.reset(); });
-    property(2, layer && layer->position,
-             [&] { return ImGui::DragFloat3("Position", value.position.data(), 0.05f, -1.0e6f, 1.0e6f, "%.3f", clamp); },
-             [&] { layer->position.reset(); });
-    property(4, layer && layer->rotation,
-             [&] { return ImGui::DragFloat3("Rotation", value.rotation.data(), 0.5f, -1.0e6f, 1.0e6f, "%.1f", clamp); },
-             [&] { layer->rotation.reset(); });
-    property(8, layer && layer->scale,
-             [&] { return ImGui::DragFloat3("Scale", value.scale.data(), 0.01f, 0.001f, 1.0e6f, "%.3f", clamp); },
-             [&] { layer->scale.reset(); });
-    property(16, layer && layer->colour, [&] { return ImGui::ColorEdit3("Colour", value.colour.data()); },
-             [&] { layer->colour.reset(); });
+    // Components, one section each. A plain node the edited file holds can add and
+    // remove them; elsewhere only their properties change (as overrides).
+    auto* own = target.node && target.node->prefab.empty() ? target.node : nullptr;
+    bool keepTransform = true, keepBox = true;
+    constexpr auto open = ImGuiTreeNodeFlags_DefaultOpen;
+    if (auto& transform = value.transform;
+        transform && ImGui::CollapsingHeader("Transform", own ? &keepTransform : nullptr, open)) {
+        property(2, layer && layer->position,
+                 [&] { return ImGui::DragFloat3("Position", transform->position.data(), 0.05f, -1.0e6f, 1.0e6f, "%.3f", clamp); },
+                 [&] { layer->position.reset(); });
+        property(4, layer && layer->rotation,
+                 [&] { return ImGui::DragFloat3("Rotation", transform->rotation.data(), 0.5f, -1.0e6f, 1.0e6f, "%.1f", clamp); },
+                 [&] { layer->rotation.reset(); });
+        property(8, layer && layer->scale,
+                 [&] { return ImGui::DragFloat3("Scale", transform->scale.data(), 0.01f, 0.001f, 1.0e6f, "%.3f", clamp); },
+                 [&] { layer->scale.reset(); });
+    }
+    if (auto& box = value.box; box && ImGui::CollapsingHeader("Box Primitive", own ? &keepBox : nullptr, open))
+        property(16, layer && layer->colour, [&] { return ImGui::ColorEdit3("Colour", box->colour.data()); },
+                 [&] { layer->colour.reset(); });
     if (changed) writeNode(value, changed);
+    if (own && (!keepTransform || !keepBox)) {
+        checkpoint();
+        if (!keepTransform) own->transform.reset();
+        if (!keepBox) own->box.reset();
+    }
+    if (own && (!own->transform || !own->box) && ImGui::BeginCombo("##add", "Add Component")) {
+        if (!own->transform && ImGui::Selectable("Transform")) checkpoint(), own->transform.emplace();
+        if (!own->box && ImGui::Selectable("Box Primitive")) checkpoint(), own->box.emplace();
+        ImGui::EndCombo();
+    }
 
     // The runner fields that refer to this node; clicking one selects its runner.
     const auto& nodes = view_.instances[selected_.instance].expansion.nodes;
