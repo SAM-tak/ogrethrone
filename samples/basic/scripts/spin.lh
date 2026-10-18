@@ -11,11 +11,9 @@ public^let^Behaviour = def^{
     },
 
     start = p^self^, runner:throne.Runner {
-        if^self^.target? {
-            self^._transform := self^.target.transform()
-            if^self^._transform? {
-                print("valid transform")
-            }
+        self^._transform := self^.target?.transform()
+        if^self^._transform? {
+            print("has valid transform")
         }
         print("started")
     },
