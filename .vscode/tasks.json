@@ -20,6 +20,14 @@
       "command": "test",
       "group": "test",
       "problemMatcher": []
+    },
+    {
+      "label": "Regenerate samples/basic/lhat-host.json",
+      "detail": "Builds the launch target (ogrethrone), then writes the throne host API for the L^ language server.",
+      "type": "shell",
+      "command": "${command:cmake.launchTargetPath}",
+      "args": ["--dump-host-api", "${workspaceFolder}/samples/basic/lhat-host.json"],
+      "problemMatcher": []
     }
   ]
 }

@@ -5,7 +5,7 @@ nodes = {
             box = {colour = {0.32, 0.62, 0.82}},
             transform = {position = {0.0, 0.5, 0.0}, rotation = {0.0, 0.0, 0.0}, scale = {1.0, 1.0, 1.0}},
         },
-        id = 1,
+        id = 105248190270967808,
         name = "SpinningCube",
         parent = 0,
     },
@@ -14,9 +14,36 @@ nodes = {
             box = {colour = {0.86, 0.53, 0.25}},
             transform = {position = {2.0, 0.75, -1.0}, rotation = {0.0, 0.0, 0.0}, scale = {1.0, 1.5, 1.0}},
         },
-        id = 2,
+        id = 105248190270967809,
         name = "Cube 2",
         parent = 0,
+    },
+    {
+        components = {
+            transform = {position = {-3.0, 0.0, 1.0}, rotation = {0.0, 0.0, 0.0}, scale = {1.0, 1.0, 1.0}},
+        },
+        id = 105248190270967810,
+        name = "Rotor Post",
+        overrides = {
+            nodes = {
+                {
+                    box = {colour = {0.45, 0.75, 0.35}},
+                    path = {105248190270967813},
+                },
+            },
+            runners = {},
+        },
+        parent = 0,
+        prefab = "prefabs/rotor-post.prefab.lton",
+    },
+    {
+        components = {
+            transform = {position = {-3.0, 0.0, -2.0}, rotation = {0.0, 0.0, 0.0}, scale = {1.0, 1.0, 1.0}},
+        },
+        id = 105248190270967811,
+        name = "Fast Rotor Post",
+        parent = 0,
+        prefab = "prefabs/fast-rotor-post.prefab.lton",
     },
 },
 runners = {
@@ -24,7 +51,7 @@ runners = {
         behaviours = {
             {
                 fields = {
-                    target = {node = 1},
+                    target = {node = 105248190270967808},
                 },
                 script = "scripts/spin.lh",
             },

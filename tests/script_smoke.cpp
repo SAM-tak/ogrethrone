@@ -252,6 +252,12 @@ int main(int argc, char** argv) {
         }
         if (std::fabs(basic.nodes()[0].node.transform->rotation.y - 45.0f) > 0.01f)
             return fail("The sample's runner did not spin its cube");
+        // The rotor post prefab spins its hub at 90 degrees a second, its variant at 360.
+        std::vector<float> hubs;
+        for (const auto& node : basic.nodes())
+            if (node.node.name == "Hub") hubs.push_back(node.node.transform->rotation.y);
+        if (hubs.size() != 2 || std::fabs(hubs[0] - 45.0f) > 0.01f || std::fabs(hubs[1] - 180.0f) > 0.01f)
+            return fail("The sample's prefab and variant did not spin their hubs at their own speeds");
     }
 
     const auto api = throne::ScriptRuntime::hostApi();

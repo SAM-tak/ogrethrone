@@ -181,6 +181,8 @@ lets CMake Tools initialize the Visual Studio developer environment on Windows.
 Select the `windows` configure preset and `windows-debug` build preset, then
 select `ogrethrone` with **CMake: Set Debug Target** (or the launch-target picker).
 `Ctrl+Shift+B` builds the active preset; **Tasks: Run Test Task** runs CTest.
+The **Regenerate samples/basic/lhat-host.json** task builds the editor and rewrites
+the sample's host API file with `--dump-host-api`.
 The supplied Windows F5 configuration launches the selected CMake target with
 the Visual Studio debugger. Choose a Debug build for debugging.
 
@@ -294,6 +296,10 @@ The file defaults to `lhat-host.json` in the working directory.
 
 In [`samples/basic`](samples/basic), the scene's SpinningCube runner gives
 [`spin.lh`](samples/basic/scripts/spin.lh) the SpinningCube node as its `target`.
+The scene also places [`rotor-post`](samples/basic/prefabs/rotor-post.prefab.lton),
+a prefab whose own runner spins its Hub (its tower's colour overridden), and an
+instance of its variant [`fast-rotor-post`](samples/basic/prefabs/fast-rotor-post.prefab.lton),
+which makes the blade red and spins at 360 degrees a second.
 The design is recorded in [TDDja/02-scripting.md](TDDja/02-scripting.md),
 [TDDja/05-runner.md](TDDja/05-runner.md) and [TDDja/06-prefab.md](TDDja/06-prefab.md).
 
