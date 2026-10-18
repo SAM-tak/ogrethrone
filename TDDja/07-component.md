@@ -40,7 +40,7 @@ Runner の現状は 05 による。この文書は 05 の「Runner が振る舞�
 
 ［提案］箱以外の形は、Component を足して表す（`SpherePrimitive`、モデルを読み込む `Mesh` など）。`Light`・`Camera` なども Component とする。
 
-Component はそれぞれ省略できる。Transform を持たない Node は、親の配置をそのまま子へ渡す。BoxPrimitive を持たない Node は何も描かない。
+Component はそれぞれ省略できる。Transform を持たない Node は、親の配置をそのまま子へ渡す。描画用の Primitive を持たない Node は何も描かない。Box 以外の形状は 08 による。
 
 スクリプトからは Component を引いてから扱う。Node から位置などを直接取る API は持たない。
 
@@ -140,9 +140,9 @@ Box3D には、C++ の小さなスレッドプールを渡す（Box3D はホス�
 
 ［補足］現在の実装では、レベルの `stages` に段の順番を保存する。既定は FetchInput → ApplyPhysics → Update → SyncRender → Parallel（OGRE / Box3D / Animator）→ SyncSimulation。段を持たない直接の Runner は、その名前のユーザー段を SyncRender の前に作る。同じ名前の Runner は同じ段で走る。
 
-入力は UI の構築前に取得し、Behaviour と System はユーザー段で実行する。SyncRender で次フレームの描画用の写しを作り、OGRE は前フレームの写しをメインスレッドで描画する。Box3D は別スレッドで既存の固定刻みの世界を進め、内部タスクには待機中も子タスクを実行できる C++ プールを渡す。並行の組の後では、全ワーカーの終了を待ってから次の段へ進む。処理に失敗しても全ワーカーを回収してからエラーを返す。
+入力は UI の構築前に取得し、Behaviour と System はユーザー段で実行する。SyncRender で次フレームの描画用の写しを作り、OGRE は前フレームの写しをメインスレッドで描画する。Box3D は別スレッドで実行中のシーンに対応する物理世界を固定刻みで進め、内部タスクには待機中も子タスクを実行できる C++ プールを渡す。並行の組の後では、全ワーカーの終了を待ってから次の段へ進む。処理に失敗しても全ワーカーを回収してからエラーを返す。
 
-［補足］現時点ではシーンと物理ボディを結ぶ Component、アニメーションクリップ／スケルトンの Component は存在しない。ApplyPhysics と Animator の段は処理対象がないため空であり、Box3D は従来の起動確認用の世界を進める。段階 3 はこれらの実行段・同期・並行実行基盤を実装したもので、ボディやアニメーションのアセット形式を新設するものではない。物理・アニメーションのノードへの反映と、std.task を使うアニメーションの実装・性能評価は、その Component を導入するときに行う（ECS-07）。
+［補足］物理ボディとシーンの Component の結線は 08 で実装した。ApplyPhysics で完成した物理結果をノードへ戻し、SyncRender で次の物理入力をコピーする。Box3D はその独立した世界を計算し、完成した結果は次フレームの ApplyPhysics まで保持する。アニメーションクリップ／スケルトンの Component は未実装で、Animator の段にはまだ処理対象がない（ECS-07）。
 
 ## 6. System
 
@@ -181,7 +181,7 @@ public^let^ System = def^{
 }
 ```
 
-`query` は指定したすべての Component を持つノードの写しの一覧を返す。引数なしなら全ノード、未知の名前なら空の一覧。順番はシーンインスタンス順、その中の階層順。`Transform`・`BoxPrimitive` は組み込み名で、それ以外は `components.scripts` のキーとする。`node.component(name)` はスクリプト定義 Component のインスタンス（`any^`、無ければ `nil^`）を返し、`fits^` で型を絞って使う。組み込み Component は引き続き型付きの `transform()`・`box()` で取得する。
+`query` は指定したすべての Component を持つノードの写しの一覧を返す。引数なしなら全ノード、未知の名前なら空の一覧。順番はシーンインスタンス順、その中の階層順。`Transform`・`BoxPrimitive` と 08 の Primitive／物理 Component は組み込み名で、それ以外は `components.scripts` のキーとする。`node.component(name)` はスクリプト定義 Component のインスタンス（`any^`、無ければ `nil^`）を返し、`fits^` で型を絞って使う。組み込み Component は引き続き型付きの `transform()`・`box()` で取得する。
 
 プレハブのスクリプト定義 Component の欄は `overrides.nodes[].scripts` で上書きする。上書きは元の Component がある場合のみ効く。Component の追加・削除は通常ノードのみ可能とする。ノードの Behaviour の上書きは `overrides.nodes[].behaviours` に一覧を保存する。空の一覧は全削除、省略は継承を意味する。
 

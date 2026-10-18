@@ -2,6 +2,7 @@
 
 #include "editor/EditorPlatform.h"
 #include "editor/Expansion.h"
+#include "editor/PrimitiveGeometry.h"
 #include "editor/References.h"
 #include "editor/Project.h"
 #include "script/ScriptRuntime.h"
@@ -67,6 +68,10 @@ public:
     /// Builds the UI and runs a complete frame, including main-thread OGRE rendering.
     /// Returns false when the renderer requests shutdown.
     bool frame(float deltaSeconds);
+    /// Downloads the rendered viewport to a portable RGB image for visual smoke checks.
+    void captureViewport(const std::filesystem::path& path);
+    /// Whether a Play session currently owns the expanded world.
+    bool playing() const { return runtime_ != nullptr; }
     /// True once the user chose to close (File > Exit or the window's close button),
     /// after resolving unsaved changes.
     bool shouldClose() const { return close_; }
@@ -100,6 +105,9 @@ private:
         Ogre::SceneNode* node;
         Ogre::ManualObject* mesh;
         Ogre::HlmsUnlitDatablock* material;
+        std::string materialName;
+        PrimitiveShape shape;
+        Vec3 lower, upper;
     };
     /// Everything the editor edits; one undo step is a copy of it.
     struct Document {
@@ -188,7 +196,7 @@ private:
     void redo();
     /// Adds a cube to the edited scene or prefab, under the selected node when it is
     /// one of its own, and selects it.
-    void addNode();
+    void addNode(PrimitiveKind kind = PrimitiveKind::Box);
     /// Adds an instance of the prefab at newPrefabPath_ to the edited scene or prefab,
     /// creating an empty prefab when the file is absent.
     void addInstance();
@@ -353,8 +361,7 @@ private:
     LevelExpansion view_;
     /// Completed render snapshot from the preceding frame.
     std::optional<LevelExpansion> renderSnapshot_;
-    PhysicsWorld physics_;
-    double physicsAccumulator_ = 0;
+    std::unique_ptr<PhysicsWorld> physics_;
     /// Which runner fields refer to each node of view_; rebuilt with it.
     References references_;
     /// view_'s node structure (instance, path, parent) when the render objects were built.

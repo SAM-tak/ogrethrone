@@ -1,4 +1,5 @@
 #include "editor/Scene.h"
+#include "editor/PrimitiveGeometry.h"
 #include "core/Ids.h"
 #include <algorithm>
 #include <limits>
@@ -102,6 +103,123 @@ std::map<std::string, FieldValue> readFields(LhatValue value) {
     return fields;
 }
 
+/// Reads an optional finite scalar with bounds.
+float scalar(const LhatTable& table, const char* key, float fallback, float low = 0, float high = 1.0e6f) {
+    const auto value = lton::field(table, key);
+    if (lhat_is_nil(value)) return fallback;
+    const auto read = lton::number(value);
+    if (read < low || read > high) lton::invalid();
+    return static_cast<float>(read);
+}
+/// Reads an optional boolean.
+bool flag(const LhatTable& table, const char* key, bool fallback) {
+    const auto value = lton::field(table, key);
+    if (lhat_is_nil(value)) return fallback;
+    if (!lhat_is_bool(value)) lton::invalid();
+    return lhat_as_bool(value);
+}
+/// Reads a collider's material and offset.
+void readCollider(const LhatTable& table, Collider& value) {
+    if (const auto v = lton::field(table, "centre"); !lhat_is_nil(v)) lton::vector(v, value.centre.data());
+    value.density = scalar(table, "density", value.density, 0.001f);
+    value.friction = scalar(table, "friction", value.friction, 0, 1);
+    value.restitution = scalar(table, "restitution", value.restitution, 0, 1);
+    value.sensor = flag(table, "sensor", value.sensor);
+}
+/// Reads the added built-in components, for nodes and their property overrides.
+template <typename Node>
+void readExtraComponents(const LhatTable& table, Node& node) {
+    const auto read = [&](const char* key, auto& component, auto fields) {
+        const auto value = lton::field(table, key);
+        if (!lhat_is_nil(value)) fields(lton::table(value), component.emplace());
+    };
+    const auto colour = [](const LhatTable& t, auto& c) {
+        if (const auto v = lton::field(t, "colour"); !lhat_is_nil(v)) lton::vector(v, c.colour.data());
+        for (float v : c.colour) if (v < 0 || v > 1) lton::invalid();
+    };
+    read("sphere", node.sphere, [&](const auto& t, auto& c) {
+        colour(t, c); c.radius = scalar(t, "radius", c.radius, 0.001f);
+    });
+    read("capsule", node.capsule, [&](const auto& t, auto& c) {
+        colour(t, c); c.radius = scalar(t, "radius", c.radius, 0.001f);
+        c.height = scalar(t, "height", (std::max)(c.height, 2 * c.radius), 2 * c.radius);
+    });
+    read("plane", node.plane, [&](const auto& t, auto& c) {
+        colour(t, c); c.width = scalar(t, "width", c.width, 0.001f); c.depth = scalar(t, "depth", c.depth, 0.001f);
+    });
+    read("boxCollider", node.boxCollider, [&](const auto& t, auto& c) {
+        readCollider(t, c);
+        if (const auto v = lton::field(t, "size"); !lhat_is_nil(v)) lton::vector(v, c.size.data());
+        for (float v : {c.size.x, c.size.y, c.size.z}) if (v < 0.001f) lton::invalid();
+    });
+    read("sphereCollider", node.sphereCollider, [&](const auto& t, auto& c) {
+        readCollider(t, c); c.radius = scalar(t, "radius", c.radius, 0.001f);
+    });
+    read("capsuleCollider", node.capsuleCollider, [&](const auto& t, auto& c) {
+        readCollider(t, c); c.radius = scalar(t, "radius", c.radius, 0.001f);
+        c.height = scalar(t, "height", (std::max)(c.height, 2 * c.radius), 2 * c.radius);
+    });
+    read("planeCollider", node.planeCollider, [&](const auto& t, auto& c) {
+        readCollider(t, c); c.width = scalar(t, "width", c.width, 0.001f); c.depth = scalar(t, "depth", c.depth, 0.001f);
+    });
+    read("rigidBody", node.rigidBody, [&](const auto& t, auto& c) {
+        if (const auto v = lton::field(t, "type"); !lhat_is_nil(v)) {
+            const auto type = lton::string(v);
+            if (type == "Static") c.type = BodyType::Static;
+            else if (type == "Kinematic") c.type = BodyType::Kinematic;
+            else if (type == "Dynamic") c.type = BodyType::Dynamic;
+            else lton::invalid();
+        }
+        if (const auto v = lton::field(t, "linearVelocity"); !lhat_is_nil(v)) lton::vector(v, c.linearVelocity.data());
+        if (const auto v = lton::field(t, "angularVelocity"); !lhat_is_nil(v)) lton::vector(v, c.angularVelocity.data());
+        c.linearDamping = scalar(t, "linearDamping", c.linearDamping);
+        c.angularDamping = scalar(t, "angularDamping", c.angularDamping);
+        c.gravityScale = scalar(t, "gravityScale", c.gravityScale, -1000, 1000);
+        c.bullet = flag(t, "bullet", c.bullet);
+    });
+}
+/// Writes materials and offsets into a collider table.
+void writeCollider(lton::Writer& out, LhatValue table, const Collider& c) {
+    out.set(table, "centre", out.vector(c.centre.data()));
+    out.set(table, "density", lhat_real(c.density));
+    out.set(table, "friction", lhat_real(c.friction));
+    out.set(table, "restitution", lhat_real(c.restitution));
+    out.set(table, "sensor", lhat_bool(c.sensor));
+}
+/// Writes the added built-in components, shared with prefab overrides.
+template <typename Node>
+void writeExtraComponents(lton::Writer& out, LhatValue table, const Node& node) {
+    const auto write = [&](const char* key, const auto& component, auto fields) {
+        if (!component) return;
+        const auto value = out.table(); fields(value, *component); out.set(table, key, value);
+    };
+    const auto colour = [&](LhatValue t, const auto& c) { out.set(t, "colour", out.vector(c.colour.data())); };
+    write("sphere", node.sphere, [&](auto t, const auto& c) { colour(t, c); out.set(t, "radius", lhat_real(c.radius)); });
+    write("capsule", node.capsule, [&](auto t, const auto& c) {
+        colour(t, c); out.set(t, "radius", lhat_real(c.radius)); out.set(t, "height", lhat_real(c.height));
+    });
+    write("plane", node.plane, [&](auto t, const auto& c) {
+        colour(t, c); out.set(t, "width", lhat_real(c.width)); out.set(t, "depth", lhat_real(c.depth));
+    });
+    write("boxCollider", node.boxCollider, [&](auto t, const auto& c) { writeCollider(out, t, c); out.set(t, "size", out.vector(c.size.data())); });
+    write("sphereCollider", node.sphereCollider, [&](auto t, const auto& c) { writeCollider(out, t, c); out.set(t, "radius", lhat_real(c.radius)); });
+    write("capsuleCollider", node.capsuleCollider, [&](auto t, const auto& c) {
+        writeCollider(out, t, c); out.set(t, "radius", lhat_real(c.radius)); out.set(t, "height", lhat_real(c.height));
+    });
+    write("planeCollider", node.planeCollider, [&](auto t, const auto& c) {
+        writeCollider(out, t, c); out.set(t, "width", lhat_real(c.width)); out.set(t, "depth", lhat_real(c.depth));
+    });
+    write("rigidBody", node.rigidBody, [&](auto t, const auto& c) {
+        out.set(t, "type", out.string(c.type == BodyType::Static ? "Static" : c.type == BodyType::Kinematic ? "Kinematic" : "Dynamic"));
+        out.set(t, "linearVelocity", out.vector(c.linearVelocity.data()));
+        out.set(t, "angularVelocity", out.vector(c.angularVelocity.data()));
+        out.set(t, "linearDamping", lhat_real(c.linearDamping));
+        out.set(t, "angularDamping", lhat_real(c.angularDamping));
+        out.set(t, "gravityScale", lhat_real(c.gravityScale));
+        out.set(t, "bullet", lhat_bool(c.bullet));
+    });
+}
+
 /// Reads one node table (its `parent` too); an instance's overrides come along.
 SceneNode readNode(const LhatTable& entry) {
     SceneNode node;
@@ -112,6 +230,7 @@ SceneNode readNode(const LhatTable& entry) {
     // Components: each optional, each a table of its properties.
     if (const auto components = lton::field(entry, "components"); !lhat_is_nil(components)) {
         const auto& table = lton::table(components);
+        readExtraComponents(table, node);
         if (const auto value = lton::field(table, "transform"); !lhat_is_nil(value)) {
             const auto& transform = lton::table(value);
             auto& read = node.transform.emplace();
@@ -138,19 +257,23 @@ SceneNode readNode(const LhatTable& entry) {
             LhatValue key, value;
             while (lhat_table_walk(&walk, &key, &value)) {
                 const auto componentName = name(key);
-                if (componentName == "Transform" || componentName == "BoxPrimitive") lton::invalid();
+                for(const char* builtIn:{"Transform","BoxPrimitive","SpherePrimitive","CapsulePrimitive","PlanePrimitive",
+                                        "BoxCollider","SphereCollider","CapsuleCollider","PlaneCollider","RigidBody"})
+                    if(componentName==builtIn) lton::invalid();
                 const auto& item = lton::table(value);
                 node.scriptComponents[componentName] = {lton::relativePath(lton::field(item, "script")),
                                                        readFields(lton::field(item, "fields"))};
             }
         }
     }
+    try { primitiveShape(node); } catch (const std::exception&) { lton::invalid(); }
     node.behaviours = readBehaviours(lton::field(entry, "behaviours"));
     return node;
 }
 
 /// Writes what readNode reads.
 LhatValue writeNode(lton::Writer& out, const SceneNode& node) {
+    primitiveShape(node);
     const auto entry = out.table();
     out.set(entry, "id", lhat_integer(static_cast<LhatInteger>(node.id)));
     out.set(entry, "name", out.string(node.name));
@@ -178,6 +301,7 @@ LhatValue writeNode(lton::Writer& out, const SceneNode& node) {
         }
         out.set(components, "scripts", scripts);
     }
+    writeExtraComponents(out, components, node);
     out.set(entry, "components", components);
     if (!node.behaviours.empty()) out.set(entry, "behaviours", writeBehaviours(out, node.behaviours));
     if (!node.prefab.empty()) {
@@ -235,6 +359,7 @@ LhatValue writeOverrides(lton::Writer& out, const Overrides& overrides) {
             out.set(box, "colour", out.vector(entry.colour->data()));
             out.set(item, "box", box);
         }
+        writeExtraComponents(out, item, entry);
         if (entry.behaviours) out.set(item, "behaviours", writeBehaviours(out, *entry.behaviours));
         if (!entry.scriptFields.empty()) {
             const auto scripts = out.table();
@@ -292,6 +417,7 @@ Overrides readOverrides(LhatValue value) {
         for (std::size_t i = 0, count = lton::sequence(list); i < count; ++i) {
             const auto& item = lton::table(lton::at(list, i));
             NodeOverride entry;
+            readExtraComponents(item, entry);
             entry.path = readPath(lton::field(item, "path"));
             if (const auto text = lton::field(item, "name"); !lhat_is_nil(text)) entry.name = name(text);
             if (const auto transform = lton::field(item, "transform"); !lhat_is_nil(transform)) {

@@ -13,6 +13,7 @@
 #include <OgreHlmsUnlit.h>
 #include <OgreHlmsUnlitDatablock.h>
 #include <OgreImguiManager.h>
+#include <OgreImage2.h>
 #include <OgreLogManager.h>
 #include <OgreManualObject2.h>
 #include <OgreRay.h>
@@ -84,29 +85,20 @@ Ogre::HlmsUnlitDatablock* createMaterial(Ogre::HlmsUnlit& hlms, const std::strin
     return material;
 }
 
-/// Adds a unit cube centred on the origin. Faces are shaded by axis so the
-/// unlit cube still reads as a solid.
-void addCubeGeometry(Ogre::ManualObject& mesh, const std::string& material) {
-    static constexpr float shade[3] = {0.78f, 1.0f, 0.62f};
-    mesh.begin(material, Ogre::OT_TRIANGLE_LIST);
-    Ogre::uint32 vertex = 0;
-    for (int axis = 0; axis < 3; ++axis) {
-        for (float side : {-0.5f, 0.5f}) {
-            const int u = (axis + 1) % 3, v = (axis + 2) % 3;
-            const float s = shade[axis] * (side < 0 ? 0.8f : 1.0f);
-            for (int corner = 0; corner < 4; ++corner) {
-                Ogre::Vector3 p;
-                p[axis] = side;
-                p[u] = corner == 1 || corner == 2 ? 0.5f : -0.5f;
-                p[v] = corner >= 2 ? 0.5f : -0.5f;
-                mesh.position(p);
-                mesh.colour(s, s, s);
-            }
-            mesh.quad(vertex, vertex + 1, vertex + 2, vertex + 3);
-            vertex += 4;
+/// Uploads built-in triangle geometry to a manual object, returning local bounds.
+PrimitiveMesh addPrimitiveGeometry(Ogre::ManualObject& mesh, const std::string& material, const PrimitiveShape& shape) {
+    auto data=primitiveMesh(shape);
+    mesh.clear();
+    if (!data.vertices.empty()) {
+        mesh.begin(material, Ogre::OT_TRIANGLE_LIST);
+        for (const auto& vertex:data.vertices) {
+            mesh.position(toOgre(vertex.position));
+            mesh.colour(vertex.shade,vertex.shade,vertex.shade);
         }
+        for(auto index:data.indices) mesh.index(index);
+        mesh.end();
     }
-    mesh.end();
+    return data;
 }
 
 /// Adds a line list from consecutive point pairs.
@@ -466,9 +458,14 @@ void Editor::play() {
         // Play runs the open level; playing the whole game (with main.lh) comes later.
         runtime_ = std::make_unique<ScriptRuntime>(
             doc_.world, view_, project_->root, [this](const std::string& line) { log(line); }, PlayScope::Level);
+        physics_=std::make_unique<PhysicsWorld>();
+        physics_->setSerial(doc_.world.level.serialExecution);
+        physics_->load(view_);
         renderSnapshot_ = view_;
         log("Play");
-    } catch (const ScriptError& error) {
+    } catch (const std::exception& error) {
+        runtime_.reset();
+        physics_.reset();
         log(std::string("Play refused:\n") + error.what());
     }
 }
@@ -476,6 +473,7 @@ void Editor::play() {
 void Editor::stop() {
     if (consoleMore_ == runtime_.get()) consoleMore_ = nullptr;
     runtime_.reset();
+    physics_.reset();
     renderSnapshot_.reset();
     log("Stop");
 }
@@ -529,16 +527,15 @@ bool Editor::frame(float deltaSeconds) {
     replaceDialog();
     bool running = true;
     std::optional<LevelExpansion> nextSnapshot;
-    physics_.setSerial(doc_.world.level.serialExecution);
-    physicsAccumulator_ += std::clamp(double(deltaSeconds), 0.0, 0.25);
+    if (physics_) physics_->setSerial(doc_.world.level.serialExecution);
     const auto engine = [&](const std::string& stage) {
-        if (stage == "SyncRender") {
+        if (stage == "ApplyPhysics") {
+            if (physics_) physics_->apply(view_);
+        } else if (stage == "SyncRender") {
             if (runtime_) nextSnapshot = view_;
+            if (physics_) physics_->prepare(view_);
         } else if (stage == "Box3D") {
-            while (physicsAccumulator_ >= 1.0 / 60.0) {
-                physics_.step();
-                physicsAccumulator_ -= 1.0 / 60.0;
-            }
+            if (physics_) physics_->advance(deltaSeconds);
         } else if (stage == "OGRE") {
             syncTransforms(runtime_ && renderSnapshot_ ? &*renderSnapshot_ : nullptr);
             updateCamera();
@@ -548,12 +545,12 @@ bool Editor::frame(float deltaSeconds) {
             if (nextSnapshot) renderSnapshot_ = std::move(nextSnapshot);
         }
         // FetchInput has already collected this frame's OS/ImGui input above.
-        // ApplyPhysics and Animator have no node bindings until physics/animation components exist.
+        // Animator has no bindings until animation components exist.
     };
     try {
         if (runtime_) runtime_->update(deltaSeconds, engine);
         else runStages(ScriptRuntime::schedule(doc_.world, view_), doc_.world.level.serialExecution, engine);
-    } catch (const ScriptError& error) {
+    } catch (const std::runtime_error& error) {
         log(error.what());
         stop();
         syncTransforms();
@@ -561,6 +558,21 @@ bool Editor::frame(float deltaSeconds) {
         running = root_.renderOneFrame();
     }
     return running;
+}
+
+void Editor::captureViewport(const std::filesystem::path& path) {
+    Ogre::Image2 image;
+    image.convertFromTexture(texture_,0,0);
+    std::ofstream stream(path,std::ios::binary);
+    stream << "P6\n" << image.getWidth() << ' ' << image.getHeight() << "\n255\n";
+    for(unsigned y=0;y<image.getHeight();++y) for(unsigned x=0;x<image.getWidth();++x) {
+        const auto colour=image.getColourAt(x,y,0);
+        const char rgb[]={static_cast<char>(std::clamp(colour.r,0.0f,1.0f)*255),
+                          static_cast<char>(std::clamp(colour.g,0.0f,1.0f)*255),
+                          static_cast<char>(std::clamp(colour.b,0.0f,1.0f)*255)};
+        stream.write(rgb,3);
+    }
+    if(!stream) throw std::runtime_error("Could not save viewport capture");
 }
 
 Prefab* Editor::content() {
@@ -769,9 +781,8 @@ void Editor::rebuildScene() {
             const auto name = "ThroneEditor/Node/" + std::to_string(i) + "/" + std::to_string(k);
             auto* material = createMaterial(unlit_, name);
             auto* mesh = scene_.createManualObject();
-            addCubeGeometry(*mesh, name);
             created[k]->attachObject(mesh);
-            renderObjects_.push_back({i, k, created[k], mesh, material});
+            renderObjects_.push_back({i, k, created[k], mesh, material, name});
         }
     }
     syncTransforms();
@@ -798,16 +809,22 @@ void Editor::syncTransforms(const LevelExpansion* snapshot) {
         sceneRoots_[i]->setScale(toOgre(transform.scale));
     }
     const RenderObject* outlined = nullptr;
-    for (const auto& render : renderObjects_) {
+    for (auto& render : renderObjects_) {
         const auto& expanded = shown.instances[render.instance].expansion.nodes[render.index];
         const auto& node = expanded.node;
-        // A node without a Transform passes its parent's placement on; one without a box draws nothing.
+        const auto shape=primitiveShape(node);
+        if (shape != render.shape) {
+            const auto geometry=addPrimitiveGeometry(*render.mesh,render.materialName,shape);
+            render.lower=geometry.lower; render.upper=geometry.upper; render.shape=shape;
+        }
+        // Nodes without a Transform inherit the nearest ancestor's placement.
         const auto transform = node.transform.value_or(Transform{});
         render.node->setPosition(toOgre(transform.position));
         render.node->setOrientation(orientation(transform.rotation));
         render.node->setScale(toOgre(transform.scale));
-        render.mesh->setVisible(node.box.has_value());
-        if (node.box) render.material->setColour(Ogre::ColourValue(node.box->colour[0], node.box->colour[1], node.box->colour[2]));
+        render.mesh->setVisible(shape.kind != PrimitiveKind::None);
+        const auto colour=primitiveColour(node);
+        render.material->setColour(Ogre::ColourValue(colour[0],colour[1],colour[2]));
         if (selected_.kind == Selection::Kind::Node && selected_.instance == static_cast<int>(render.instance) &&
             selected_.path == expanded.path)
             outlined = &render;
@@ -815,9 +832,11 @@ void Editor::syncTransforms(const LevelExpansion* snapshot) {
     gridNode_->setVisible(showGrid_);
     outlineNode_->setVisible(outlined != nullptr);
     if (outlined) {
-        outlineNode_->setPosition(outlined->node->_getDerivedPositionUpdated());
+        const auto centre=(outlined->lower+outlined->upper)*.5f;
+        const auto size=outlined->upper-outlined->lower;
+        outlineNode_->setPosition(outlined->node->_getFullTransformUpdated().transformAffine(toOgre(centre)));
         outlineNode_->setOrientation(outlined->node->_getDerivedOrientationUpdated());
-        outlineNode_->setScale(outlined->node->_getDerivedScaleUpdated() * 1.02f);
+        outlineNode_->setScale(outlined->node->_getDerivedScaleUpdated() * toOgre(Vec3{(std::max)(size.x,.02f),(std::max)(size.y,.02f),(std::max)(size.z,.02f)}) * 1.02f);
     }
 }
 
@@ -846,11 +865,12 @@ void Editor::redo() {
     dirty_ = true;
 }
 
-void Editor::addNode() {
-    // "Cube <n>" with the smallest n no shown node uses.
+void Editor::addNode(PrimitiveKind kind) {
+    // Use the smallest available suffix for this primitive type.
     std::string name;
     for (int number = 1;; ++number) {
-        name = "Cube " + std::to_string(number);
+        const auto base=kind==PrimitiveKind::Sphere?"Sphere":kind==PrimitiveKind::Capsule?"Capsule":kind==PrimitiveKind::Plane?"Plane":"Cube";
+        name = std::string(base) + " " + std::to_string(number);
         const auto taken = [&](const LevelExpansion::Instance& instance) {
             return std::any_of(instance.expansion.nodes.begin(), instance.expansion.nodes.end(),
                                [&](const ExpandedNode& node) { return node.node.name == name; });
@@ -860,7 +880,11 @@ void Editor::addNode() {
     SceneNode node;
     node.name = name;
     node.transform = Transform{{0, 0.5f, 0}};
-    node.box.emplace();
+    setPrimitive(node,kind);
+    if(kind==PrimitiveKind::Box) node.boxCollider.emplace();
+    if(kind==PrimitiveKind::Sphere) node.sphereCollider.emplace();
+    if(kind==PrimitiveKind::Capsule) node.capsuleCollider.emplace();
+    if(kind==PrimitiveKind::Plane) node.planeCollider.emplace();
     auto before = doc_;
     if (insert(std::move(node))) commit(std::move(before));
 }
@@ -1029,6 +1053,15 @@ void Editor::dropOnPrefab(int instance, NodeId id, const std::string& file) {
 namespace {
 /// Copies the properties @p from sets into @p into.
 void assign(NodeOverride& into, const NodeOverride& from) {
+    if (from.sphere) into.sphere = from.sphere;
+    if (from.capsule) into.capsule = from.capsule;
+    if (from.plane) into.plane = from.plane;
+    if (from.boxCollider) into.boxCollider = from.boxCollider;
+    if (from.sphereCollider) into.sphereCollider = from.sphereCollider;
+    if (from.capsuleCollider) into.capsuleCollider = from.capsuleCollider;
+    if (from.planeCollider) into.planeCollider = from.planeCollider;
+    if (from.rigidBody) into.rigidBody = from.rigidBody;
+
     if (from.name) into.name = from.name;
     if (from.position) into.position = from.position;
     if (from.rotation) into.rotation = from.rotation;
@@ -1041,6 +1074,7 @@ void assign(NodeOverride& into, const NodeOverride& from) {
 
 /// Writes the properties @p from sets into @p into's components, where it has them.
 void assign(SceneNode& into, const NodeOverride& from) {
+    applyExtraComponents(into, from);
     if (from.name) into.name = *from.name;
     if (from.behaviours) into.behaviours = *from.behaviours;
     for (const auto& [name, fields] : from.scriptFields)
@@ -1546,7 +1580,13 @@ void Editor::menu() {
         if (ImGui::MenuItem("Undo", "Ctrl+Z", false, !undo_.empty())) undo();
         if (ImGui::MenuItem("Redo", "Ctrl+Y", false, !redo_.empty())) redo();
         ImGui::Separator();
-        if (ImGui::MenuItem("Add Node")) addNode();
+        if (ImGui::BeginMenu("Add Primitive")) {
+            if (ImGui::MenuItem("Box")) addNode(PrimitiveKind::Box);
+            if (ImGui::MenuItem("Sphere")) addNode(PrimitiveKind::Sphere);
+            if (ImGui::MenuItem("Capsule")) addNode(PrimitiveKind::Capsule);
+            if (ImGui::MenuItem("Plane")) addNode(PrimitiveKind::Plane);
+            ImGui::EndMenu();
+        }
         if (ImGui::MenuItem("Add Runner")) addRunner();
         if (ImGui::MenuItem("Duplicate Node", "Ctrl+D", false, targetOf(selected_.instance, selected_.path).node))
             duplicate();
@@ -1873,24 +1913,26 @@ void Editor::focusSelection() {
         if (selected_.kind != Selection::Kind::Node || selected_.instance != static_cast<int>(render.instance) ||
             view_.instances[render.instance].expansion.nodes[render.index].path != selected_.path)
             continue;
-        target_ = render.node->_getDerivedPositionUpdated();
-        const auto scale = render.node->_getDerivedScaleUpdated();
-        distance_ = std::max({Ogre::Real(3), scale.x * 3, scale.y * 3, scale.z * 3});
+        target_ = render.node->_getFullTransformUpdated().transformAffine(toOgre((render.lower+render.upper)*.5f));
+        const auto size = render.node->_getDerivedScaleUpdated()*toOgre(render.upper-render.lower);
+        distance_ = std::max({Ogre::Real(3), size.x * 1.6f, size.y * 1.6f, size.z * 1.6f});
     }
 }
 
 void Editor::pick(float x, float y) {
     const Ogre::Ray ray = camera_.getCameraToViewportRay(x, y);
-    const Ogre::AxisAlignedBox unit(-0.5f, -0.5f, -0.5f, 0.5f, 0.5f, 0.5f);
     auto nearest = std::numeric_limits<Ogre::Real>::max();
     selected_ = {};
     for (const auto& render : renderObjects_) {
-        if (!view_.instances[render.instance].expansion.nodes[render.index].node.box) continue;
+        if (render.shape.kind==PrimitiveKind::None) continue;
+        auto lower=render.lower, upper=render.upper;
+        if(upper.y-lower.y<.02f) lower.y-=.01f, upper.y+=.01f;
+        const Ogre::AxisAlignedBox bounds(toOgre(lower),toOgre(upper));
         // Test in node space; the unnormalized direction keeps distances comparable.
         const auto inverse = render.node->_getFullTransformUpdated().inverseAffine();
         const Ogre::Ray local(inverse.transformAffine(ray.getOrigin()),
                               inverse.transformDirectionAffine(ray.getDirection()));
-        const auto hit = local.intersects(unit);
+        const auto hit = local.intersects(bounds);
         if (hit.first && hit.second < nearest) {
             nearest = hit.second;
             selected_ = {Selection::Kind::Node, static_cast<int>(render.instance),

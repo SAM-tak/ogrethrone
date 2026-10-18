@@ -63,6 +63,45 @@ struct Runner {
     std::vector<Behaviour> behaviours;
 };
 
+/// A sphere drawn around the node's origin.
+struct SpherePrimitive {
+    std::array<float, 3> colour{0.32f, 0.62f, 0.82f};
+    float radius = 0.5f;
+};
+/// A Y-axis capsule; height includes both hemispheres.
+struct CapsulePrimitive {
+    std::array<float, 3> colour{0.86f, 0.53f, 0.25f};
+    float radius = 0.5f, height = 2.0f;
+};
+/// A finite, double-sided visual rectangle on the local XZ plane.
+struct PlanePrimitive {
+    std::array<float, 3> colour{0.35f, 0.45f, 0.35f};
+    float width = 10, depth = 10;
+};
+/// Material and local offset shared by collision shapes. Density determines mass.
+struct Collider {
+    Vec3 centre;
+    float density = 1, friction = 0.6f, restitution = 0.2f;
+    bool sensor = false;
+};
+/// An axis-aligned box in body-local space, scaled with the node.
+struct BoxCollider : Collider { Vec3 size{1, 1, 1}; };
+/// A sphere, scaled uniformly by the largest node scale component.
+struct SphereCollider : Collider { float radius = 0.5f; };
+/// A Y-axis capsule; radial scale uses max(X,Z), height scale uses Y.
+struct CapsuleCollider : Collider { float radius = 0.5f, height = 2; };
+/// A finite, upward-facing triangle mesh. Only static and kinematic bodies may own it.
+struct PlaneCollider : Collider { float width = 10, depth = 10; };
+/// Box3D's three motion modes. Colliders without a RigidBody create a static body.
+enum class BodyType { Static, Kinematic, Dynamic };
+/// Simulation state and settings. Angular velocity is expressed in degrees/second.
+struct RigidBody {
+    BodyType type = BodyType::Dynamic;
+    Vec3 linearVelocity, angularVelocity;
+    float linearDamping = 0, angularDamping = 0.05f, gravityScale = 1;
+    bool bullet = false;
+};
+
 /// Property values an instance gives one node of its prefab (TDDja/06 4); unset ones
 /// keep the prefab's. Component properties apply only where the node has the component.
 struct NodeOverride {
@@ -73,6 +112,16 @@ struct NodeOverride {
     std::optional<Vec3> position, rotation, scale;
     /// BoxPrimitive properties.
     std::optional<std::array<float, 3>> colour;
+    /// Overrides of existing render/physics components.
+    std::optional<SpherePrimitive> sphere;
+    std::optional<CapsulePrimitive> capsule;
+    std::optional<PlanePrimitive> plane;
+    std::optional<BoxCollider> boxCollider;
+    std::optional<SphereCollider> sphereCollider;
+    std::optional<CapsuleCollider> capsuleCollider;
+    std::optional<PlaneCollider> planeCollider;
+    std::optional<RigidBody> rigidBody;
+
     /// Replacement attachment list, including field edits, additions and removals.
     std::optional<std::vector<Behaviour>> behaviours;
     /// Field overrides for existing script components; never adds or removes a component.
@@ -150,6 +199,16 @@ struct SceneNode {
     std::optional<Transform> transform;
     /// Unused by an instance, whose root's comes from the prefab or its overrides.
     std::optional<BoxPrimitive> box;
+    /// Render and physics components; collision shapes on a node share its body.
+    std::optional<SpherePrimitive> sphere;
+    std::optional<CapsulePrimitive> capsule;
+    std::optional<PlanePrimitive> plane;
+    std::optional<BoxCollider> boxCollider;
+    std::optional<SphereCollider> sphereCollider;
+    std::optional<CapsuleCollider> capsuleCollider;
+    std::optional<PlaneCollider> planeCollider;
+    std::optional<RigidBody> rigidBody;
+
     /// Scripts attached to this node, in attachment order.
     std::vector<Behaviour> behaviours;
     /// Script-defined component types, keyed by their query name. Each attachment publishes Component.
@@ -159,6 +218,18 @@ struct SceneNode {
     /// What this instance changes in the prefab.
     Overrides overrides;
 };
+
+/// Copies only overrides of components that the target already owns.
+inline void applyExtraComponents(SceneNode& node, const NodeOverride& layer) {
+    if (node.sphere && layer.sphere) node.sphere = layer.sphere;
+    if (node.capsule && layer.capsule) node.capsule = layer.capsule;
+    if (node.plane && layer.plane) node.plane = layer.plane;
+    if (node.boxCollider && layer.boxCollider) node.boxCollider = layer.boxCollider;
+    if (node.sphereCollider && layer.sphereCollider) node.sphereCollider = layer.sphereCollider;
+    if (node.capsuleCollider && layer.capsuleCollider) node.capsuleCollider = layer.capsuleCollider;
+    if (node.planeCollider && layer.planeCollider) node.planeCollider = layer.planeCollider;
+    if (node.rigidBody && layer.rigidBody) node.rigidBody = layer.rigidBody;
+}
 
 /// A node an instance adds to what it instantiates (TDDja/06 4). Its path is the
 /// instance's followed by its ID, wherever its parent is.

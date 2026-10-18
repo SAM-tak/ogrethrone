@@ -12,6 +12,7 @@
 #include <OgreSceneManager.h>
 #include <OgreVulkanPlugin.h>
 #include <OgreWindow.h>
+#include <OgreTextureGpu.h>
 #include <OgreWindowEventUtilities.h>
 #include <ColibriGui/ColibriManager.h>
 #include <imgui.h>
@@ -21,6 +22,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <thread>
 #include <stdexcept>
 
@@ -55,14 +57,20 @@ int main(int argc, char** argv) {
         std::printf("wrote %s (%zu bytes)\n", path, json.size());
         return 0;
     }
-    const bool smoke = argc > 1 && std::strcmp(argv[1], "--smoke") == 0;
+    const bool physicsSmoke = argc > 1 && std::strcmp(argv[1], "--smoke-physics") == 0;
+    const bool smoke = physicsSmoke || (argc > 1 && std::strcmp(argv[1], "--smoke") == 0);
+    const auto captures = physicsSmoke ? std::filesystem::absolute(argc > 3 ? argv[3] : "out/physics-captures") : std::filesystem::path{};
     // `ogrethrone <folder>` opens that project; --smoke uses a throwaway one and leaves
     // the user's project list alone; otherwise the launcher is shown.
     std::filesystem::path project, projectList = throne::ProjectList::defaultFile();
     if (smoke) {
-        project = std::filesystem::temp_directory_path() / "ogrethrone-smoke";
+        project = std::filesystem::temp_directory_path() / (physicsSmoke ? "ogrethrone-physics-smoke" : "ogrethrone-smoke");
         std::filesystem::remove_all(project);
-        throne::Project::create(project.parent_path(), project.filename().u8string());
+        if (physicsSmoke) {
+            const auto source=std::filesystem::absolute(argc>2?argv[2]:"samples/physics");
+            std::filesystem::copy(source,project,std::filesystem::copy_options::recursive);
+            std::filesystem::create_directories(captures);
+        } else throne::Project::create(project.parent_path(), project.filename().u8string());
         projectList.clear();
     } else if (argc > 1) {
         project = std::filesystem::u8path(argv[1]);
@@ -92,11 +100,14 @@ int main(int argc, char** argv) {
             Colibri::ColibriManager gui(&guiLog, &guiPlatform);
             auto previous = std::chrono::steady_clock::now();
             unsigned frames = 0;
-            bool running = true;
+            bool running = true, stepping = false;
             // One frame; also run from the window hook while a move or resize blocks the loop.
             const auto step = [&] {
+                if (stepping) return;
+                stepping=true;
+                struct Guard { bool& value; ~Guard() { value=false; } } guard{stepping};
                 const auto now = std::chrono::steady_clock::now();
-                const double elapsed = std::min(0.25, std::chrono::duration<double>(now - previous).count());
+                const double elapsed = physicsSmoke ? 1.0/60.0 : std::min(0.25, std::chrono::duration<double>(now - previous).count());
                 previous = now;
                 running = editor.frame(static_cast<float>(elapsed));
                 ++frames;
@@ -104,13 +115,28 @@ int main(int argc, char** argv) {
             editor.platform().modalFrame = [&] {
                 if (running && !window->isClosed()) step();
             };
-            while (running && !window->isClosed() && !editor.shouldClose() && (!smoke || frames < 3)) {
+            while (running && !window->isClosed() && !editor.shouldClose() && (!smoke || frames < (physicsSmoke ? 244u : 3u))) {
                 Ogre::WindowEventUtilities::messagePump();
                 if (window->isClosed()) break;
                 if (smoke && frames == 1) ImGui::GetIO().AddKeyEvent(ImGuiKey_F5, true);
                 if (smoke && frames == 2) ImGui::GetIO().AddKeyEvent(ImGuiKey_F5, false);
+                if (physicsSmoke && frames == 240) ImGui::GetIO().AddKeyEvent(ImGuiKey_F5, true);
+                if (physicsSmoke && frames == 241) ImGui::GetIO().AddKeyEvent(ImGuiKey_F5, false);
+                const bool capture=physicsSmoke && (frames==1 || frames==59 || frames==239 || frames==243);
                 step();
+                if(physicsSmoke && frames>=3 && frames<=240 && !editor.playing()) throw std::runtime_error("Physics smoke Play failed");
+                if(physicsSmoke && frames>=242 && editor.playing()) throw std::runtime_error("Physics smoke Stop failed");
+                if(capture) editor.captureViewport(captures/("frame-"+std::to_string(frames)+".ppm"));
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            if(physicsSmoke) {
+                const auto read=[&](const char* name) {
+                    std::ifstream file(captures/name,std::ios::binary);
+                    return std::string(std::istreambuf_iterator<char>(file),{});
+                };
+                const auto initial=read("frame-2.ppm");
+                if(initial.empty() || initial==read("frame-240.ppm")) throw std::runtime_error("Physics did not move the rendered scene");
+                if(initial!=read("frame-244.ppm")) throw std::runtime_error("Stop did not restore the rendered scene");
             }
             editor.platform().modalFrame = nullptr;
         }

@@ -1,31 +1,34 @@
 #pragma once
 
-#include "core/Math.h"
-#include "runtime/TaskPool.h"
-#include <box3d/box3d.h>
+#include "editor/Expansion.h"
+#include <memory>
 
 namespace throne {
-/// Bootstrap Box3D world: a static ground plane and one dynamic box falling onto it.
+/// A Play session's Box3D world, built from expanded scene components.
+/// prepare/apply run on the main thread; advance runs only inside the engine group.
 class PhysicsWorld {
 public:
-    /// Creates the world, ground and box.
+    /// Creates an empty physics world.
     PhysicsWorld();
-    /// Destroys the world and all its bodies.
+    /// Destroys all bodies, collision meshes and worker tasks.
     ~PhysicsWorld();
     PhysicsWorld(const PhysicsWorld&) = delete;
     PhysicsWorld& operator=(const PhysicsWorld&) = delete;
-
-    /// Advances the simulation by a fixed 1/60 s step with 4 sub-steps.
-    void step();
-    /// Forces Box3D task callbacks to run inline for deterministic debugging.
-    void setSerial(bool serial) { serial_ = serial; }
-    /// Returns the falling box's world position.
-    Vec3 position() const;
-
+    /// Replaces the world with bodies/shapes from every scene instance.
+    /// Throws for unsupported dynamic triangle meshes or invalid component values.
+    void load(const LevelExpansion& expanded);
+    /// Copies transforms, teleports and body velocities/settings into Box3D before the group.
+    void prepare(const LevelExpansion& expanded);
+    /// Advances by fixed 1/60 s steps with four substeps, retaining fractional time.
+    void advance(float deltaSeconds);
+    /// Publishes completed body poses and velocities into local node components.
+    void apply(LevelExpansion& expanded);
+    /// Runs internal Box3D tasks inline when enabled.
+    void setSerial(bool serial);
+    /// Number of scene bodies, including static collider-only nodes.
+    std::size_t bodyCount() const;
 private:
-    TaskPool tasks_;
-    bool serial_ = false;
-    b3WorldId world_;
-    b3BodyId box_;
+    struct State;
+    std::unique_ptr<State> state_;
 };
 }

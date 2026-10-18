@@ -49,6 +49,25 @@ struct Pending {
     std::string component;
 };
 
+/// Maps a typed host handle to its optional node component.
+template <typename T> struct ComponentBinding;
+#define THRONE_BIND_COMPONENT(Type, field) \
+    template <> struct ComponentBinding<Type> { \
+        static constexpr const char* name = #Type; \
+        static constexpr auto member = &SceneNode::field; \
+    };
+THRONE_BIND_COMPONENT(Transform, transform)
+THRONE_BIND_COMPONENT(BoxPrimitive, box)
+THRONE_BIND_COMPONENT(SpherePrimitive, sphere)
+THRONE_BIND_COMPONENT(CapsulePrimitive, capsule)
+THRONE_BIND_COMPONENT(PlanePrimitive, plane)
+THRONE_BIND_COMPONENT(BoxCollider, boxCollider)
+THRONE_BIND_COMPONENT(SphereCollider, sphereCollider)
+THRONE_BIND_COMPONENT(CapsuleCollider, capsuleCollider)
+THRONE_BIND_COMPONENT(PlaneCollider, planeCollider)
+THRONE_BIND_COMPONENT(RigidBody, rigidBody)
+#undef THRONE_BIND_COMPONENT
+
 /// Returns a number argument as a double, accepting integers and reals.
 double number(LhatValue value) {
     return lhat_is_integer(value) ? static_cast<double>(lhat_as_integer(value)) : lhat_as_real(value);
@@ -92,6 +111,7 @@ struct ScriptRuntime::State {
     std::unique_ptr<LhatPrompt, decltype(&lhat_prompt_dispose)> prompt{nullptr, &lhat_prompt_dispose};
     const LhatHostValueTag* vec3 = nullptr;
     const LhatHostDataTag *sceneNode = nullptr, *runner = nullptr, *transform = nullptr, *box = nullptr;
+    std::map<std::string, const LhatHostDataTag*> componentTags;
     // Values the host holds are not roots, so everything kept between calls
     // also lives in the machine's host root table.
     LhatTable* roots = nullptr;
@@ -299,7 +319,7 @@ template <typename Component, std::optional<Component> SceneNode::*Member>
 THRONE_HOST(nodeComponent, {
     auto* node = s.target(machine, arguments[0]);
     if (!node) return;
-    const auto* tag = std::is_same_v<Component, Transform> ? s.transform : s.box;
+    const auto* tag = s.componentTags.at(ComponentBinding<Component>::name);
     answers[0] = node->*Member ? s.handle(machine, tag, reinterpret_cast<std::uintptr_t>(
                                                            lhat_hostdata_pointer(arguments[0], s.sceneNode)))
                                : lhat_nil();
@@ -337,6 +357,45 @@ THRONE_HOST(boxColour, {
 THRONE_HOST(boxSetColour, {
     if (auto* box = s.component(machine, arguments[0], s.box, &SceneNode::box))
         finite(machine, vec3(s, arguments[1]), 0.0f, 1.0f, box->colour.data());
+})
+
+/// Reads a vector property of a typed built-in component.
+template <typename T, auto Member>
+THRONE_HOST(componentVector, {
+    if (auto* c=s.component(machine,arguments[0],s.componentTags.at(ComponentBinding<T>::name),ComponentBinding<T>::member))
+        s.answer(answers,count,(c->*Member).data());
+})
+/// Writes a finite vector property of a typed built-in component.
+template <typename T, auto Member>
+THRONE_HOST(componentSetVector, {
+    if (auto* c=s.component(machine,arguments[0],s.componentTags.at(ComponentBinding<T>::name),ComponentBinding<T>::member))
+        finite(machine,vec3(s,arguments[1]),-1.0e6f,1.0e6f,(c->*Member).data());
+})
+/// Reads a scalar shape property.
+template <typename T, auto Member>
+THRONE_HOST(componentScalar, {
+    if (auto* c=s.component(machine,arguments[0],s.componentTags.at(ComponentBinding<T>::name),ComponentBinding<T>::member)) {
+        answers[0]=lhat_real(c->*Member); *count=1;
+    }
+})
+/// Reads the colour of a non-box primitive.
+template <typename T>
+THRONE_HOST(primitiveColourGet, {
+    if (auto* c=s.component(machine,arguments[0],s.componentTags.at(ComponentBinding<T>::name),ComponentBinding<T>::member))
+        s.answer(answers,count,c->colour.data());
+})
+/// Writes a primitive's colour, keeping channels in [0,1].
+template <typename T>
+THRONE_HOST(primitiveColourSet, {
+    if (auto* c=s.component(machine,arguments[0],s.componentTags.at(ComponentBinding<T>::name),ComponentBinding<T>::member))
+        finite(machine,vec3(s,arguments[1]),0,1,c->colour.data());
+})
+/// RigidBody.type(): the Box3D motion mode.
+THRONE_HOST(bodyMotionType, {
+    if(auto* c=s.component(machine,arguments[0],s.componentTags.at("RigidBody"),&SceneNode::rigidBody)) {
+        const char* type=c->type==BodyType::Static?"Static":c->type==BodyType::Kinematic?"Kinematic":"Dynamic";
+        if(lhat_machine_make_string(machine,type,std::strlen(type),&answers[0])) *count=1;
+    }
 })
 
 /// Runner.name().
@@ -454,8 +513,19 @@ void query(LhatMachine* machine, void* context, const LhatValue* arguments, std:
             bool matches = true;
             for (std::size_t i = 0; i < argumentCount; ++i) {
                 const auto name = text(arguments[i]);
-                matches = matches && (name == "Transform" ? bool(node.transform) :
-                    name == "BoxPrimitive" ? bool(node.box) : node.scriptComponents.count(std::string(name)) != 0);
+                bool present=false;
+                if(name=="Transform") present=bool(node.transform);
+                if(name=="BoxPrimitive") present=bool(node.box);
+                if(name=="SpherePrimitive") present=bool(node.sphere);
+                if(name=="CapsulePrimitive") present=bool(node.capsule);
+                if(name=="PlanePrimitive") present=bool(node.plane);
+                if(name=="BoxCollider") present=bool(node.boxCollider);
+                if(name=="SphereCollider") present=bool(node.sphereCollider);
+                if(name=="CapsuleCollider") present=bool(node.capsuleCollider);
+                if(name=="PlaneCollider") present=bool(node.planeCollider);
+                if(name=="RigidBody") present=bool(node.rigidBody);
+                if(!s.componentTags.count(std::string(name))) present=node.scriptComponents.count(std::string(name))!=0;
+                matches=matches && present;
             }
             if (!matches) continue;
             const auto handle = s.handle(machine, s.sceneNode, State::nodeBits(scene, n));
@@ -478,6 +548,13 @@ bool registerThrone(LhatProgram* program, State& s) {
     s.transform = lhat_register_hostdata_type(program, moduleName, "Transform");
     s.box = lhat_register_hostdata_type(program, moduleName, "BoxPrimitive");
     if (!s.vec3 || !s.sceneNode || !s.runner || !s.transform || !s.box) return false;
+    s.componentTags["Transform"]=s.transform;
+    s.componentTags["BoxPrimitive"]=s.box;
+    for(const char* name:{"SpherePrimitive","CapsulePrimitive","PlanePrimitive","BoxCollider","SphereCollider","CapsuleCollider","PlaneCollider","RigidBody"}) {
+        auto* tag=lhat_register_hostdata_type(program,moduleName,name);
+        if(!tag) return false;
+        s.componentTags[name]=tag;
+    }
     const char* axes[] = {"x", "y", "z"};
     for (std::size_t i = 0; i < 3; ++i)
         if (!lhat_register_hostvalue_field(program, moduleName, "Vec3", axes[i], i * sizeof(float), LHAT_HVFIELD_F32))
@@ -512,6 +589,40 @@ bool registerThrone(LhatProgram* program, State& s) {
         {"Transform", "setScale", "p^self^, throne.Vec3;", transformSet<2>},
         {"BoxPrimitive", "colour", "f^self^ -> throne.Vec3;", boxColour},
         {"BoxPrimitive", "setColour", "p^self^, throne.Vec3;", boxSetColour},
+        {"SceneNode", "sphere", "f^self^ -> throne.SpherePrimitive|nil^;", nodeComponent<SpherePrimitive, &SceneNode::sphere>},
+        {"SpherePrimitive", "colour", "f^self^ -> throne.Vec3;", primitiveColourGet<SpherePrimitive>},
+        {"SpherePrimitive", "setColour", "p^self^, throne.Vec3;", primitiveColourSet<SpherePrimitive>},
+        {"SpherePrimitive", "radius", "f^self^ -> number^;", componentScalar<SpherePrimitive, &SpherePrimitive::radius>},
+        {"SceneNode", "capsule", "f^self^ -> throne.CapsulePrimitive|nil^;", nodeComponent<CapsulePrimitive, &SceneNode::capsule>},
+        {"CapsulePrimitive", "colour", "f^self^ -> throne.Vec3;", primitiveColourGet<CapsulePrimitive>},
+        {"CapsulePrimitive", "setColour", "p^self^, throne.Vec3;", primitiveColourSet<CapsulePrimitive>},
+        {"CapsulePrimitive", "radius", "f^self^ -> number^;", componentScalar<CapsulePrimitive, &CapsulePrimitive::radius>},
+        {"CapsulePrimitive", "height", "f^self^ -> number^;", componentScalar<CapsulePrimitive, &CapsulePrimitive::height>},
+        {"SceneNode", "plane", "f^self^ -> throne.PlanePrimitive|nil^;", nodeComponent<PlanePrimitive, &SceneNode::plane>},
+        {"PlanePrimitive", "colour", "f^self^ -> throne.Vec3;", primitiveColourGet<PlanePrimitive>},
+        {"PlanePrimitive", "setColour", "p^self^, throne.Vec3;", primitiveColourSet<PlanePrimitive>},
+        {"PlanePrimitive", "width", "f^self^ -> number^;", componentScalar<PlanePrimitive, &PlanePrimitive::width>},
+        {"PlanePrimitive", "depth", "f^self^ -> number^;", componentScalar<PlanePrimitive, &PlanePrimitive::depth>},
+        {"SceneNode", "boxCollider", "f^self^ -> throne.BoxCollider|nil^;", nodeComponent<BoxCollider, &SceneNode::boxCollider>},
+        {"BoxCollider", "centre", "f^self^ -> throne.Vec3;", componentVector<BoxCollider, &Collider::centre>},
+        {"BoxCollider", "size", "f^self^ -> throne.Vec3;", componentVector<BoxCollider, &BoxCollider::size>},
+        {"SceneNode", "sphereCollider", "f^self^ -> throne.SphereCollider|nil^;", nodeComponent<SphereCollider, &SceneNode::sphereCollider>},
+        {"SphereCollider", "centre", "f^self^ -> throne.Vec3;", componentVector<SphereCollider, &Collider::centre>},
+        {"SphereCollider", "radius", "f^self^ -> number^;", componentScalar<SphereCollider, &SphereCollider::radius>},
+        {"SceneNode", "capsuleCollider", "f^self^ -> throne.CapsuleCollider|nil^;", nodeComponent<CapsuleCollider, &SceneNode::capsuleCollider>},
+        {"CapsuleCollider", "centre", "f^self^ -> throne.Vec3;", componentVector<CapsuleCollider, &Collider::centre>},
+        {"CapsuleCollider", "radius", "f^self^ -> number^;", componentScalar<CapsuleCollider, &CapsuleCollider::radius>},
+        {"CapsuleCollider", "height", "f^self^ -> number^;", componentScalar<CapsuleCollider, &CapsuleCollider::height>},
+        {"SceneNode", "planeCollider", "f^self^ -> throne.PlaneCollider|nil^;", nodeComponent<PlaneCollider, &SceneNode::planeCollider>},
+        {"PlaneCollider", "centre", "f^self^ -> throne.Vec3;", componentVector<PlaneCollider, &Collider::centre>},
+        {"PlaneCollider", "width", "f^self^ -> number^;", componentScalar<PlaneCollider, &PlaneCollider::width>},
+        {"PlaneCollider", "depth", "f^self^ -> number^;", componentScalar<PlaneCollider, &PlaneCollider::depth>},
+        {"SceneNode", "rigidBody", "f^self^ -> throne.RigidBody|nil^;", nodeComponent<RigidBody, &SceneNode::rigidBody>},
+        {"RigidBody", "type", "f^self^ -> string^;", bodyMotionType},
+        {"RigidBody", "linearVelocity", "f^self^ -> throne.Vec3;", componentVector<RigidBody, &RigidBody::linearVelocity>},
+        {"RigidBody", "setLinearVelocity", "p^self^, throne.Vec3;", componentSetVector<RigidBody, &RigidBody::linearVelocity>},
+        {"RigidBody", "angularVelocity", "f^self^ -> throne.Vec3;", componentVector<RigidBody, &RigidBody::angularVelocity>},
+        {"RigidBody", "setAngularVelocity", "p^self^, throne.Vec3;", componentSetVector<RigidBody, &RigidBody::angularVelocity>},
         {"Runner", "name", "f^self^ -> string^;", runnerName},
         {nullptr, "vec3", "f^number^, number^, number^ -> throne.Vec3;", vecNew},
         {nullptr, "query", "f^...:string^ -> t^{throne.SceneNode[]};", query},

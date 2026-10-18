@@ -1,0 +1,4 @@
+format = "ogrethrone-project",
+mainLevel = "levels/main.level.lton",
+name = "Box3D Playground Sample",
+version = 1,

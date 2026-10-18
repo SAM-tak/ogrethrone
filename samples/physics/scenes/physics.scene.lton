@@ -1,0 +1,48 @@
+format = "ogrethrone-scene",
+version = 2,
+runners = {},
+nodes = {
+    {
+        id = 200000000000000001, name = "Ground", parent = 0,
+        components = {
+            transform = {position = {0, 0, 0}, rotation = {0, 0, 0}, scale = {1, 1, 1}},
+            plane = {colour = {0.27, 0.40, 0.31}, width = 16, depth = 14},
+            planeCollider = {width = 16, depth = 14, friction = 0.7, restitution = 0.05},
+        },
+    },
+    {
+        id = 200000000000000002, name = "Bouncing Sphere", parent = 0,
+        components = {
+            transform = {position = {0, 6, 0}, rotation = {0, 0, 0}, scale = {1, 1, 1}},
+            sphere = {colour = {0.25, 0.60, 0.95}, radius = 0.6},
+            sphereCollider = {radius = 0.6, restitution = 0.85, friction = 0.25},
+            rigidBody = {type = "Dynamic", angularVelocity = {0, 0, 25}},
+        },
+    },
+    {
+        id = 200000000000000003, name = "Tumbling Capsule", parent = 0,
+        components = {
+            transform = {position = {-3, 5, 0}, rotation = {0, 0, 25}, scale = {1, 1, 1}},
+            capsule = {colour = {0.95, 0.48, 0.19}, radius = 0.45, height = 1.8},
+            capsuleCollider = {radius = 0.45, height = 1.8, friction = 0.65, restitution = 0.25},
+            rigidBody = {type = "Dynamic", angularVelocity = {0, 0, 35}},
+        },
+    },
+    {
+        id = 200000000000000004, name = "Falling Box", parent = 0,
+        components = {
+            transform = {position = {3, 4, 0}, rotation = {15, 20, 10}, scale = {1, 1, 1}},
+            box = {colour = {0.90, 0.72, 0.18}},
+            boxCollider = {size = {1, 1, 1}, friction = 0.7, restitution = 0.15},
+            rigidBody = {type = "Dynamic", angularVelocity = {20, 15, 10}},
+        },
+    },
+    {
+        id = 200000000000000005, name = "Static Box Platform", parent = 0,
+        components = {
+            transform = {position = {3, 0.4, 0}, rotation = {0, 0, 0}, scale = {2.5, 0.8, 2.5}},
+            box = {colour = {0.48, 0.42, 0.62}},
+            boxCollider = {size = {1, 1, 1}, friction = 0.7},
+        },
+    },
+},

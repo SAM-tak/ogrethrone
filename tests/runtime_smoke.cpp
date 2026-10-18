@@ -1,37 +1,159 @@
 #include "runtime/PhysicsWorld.h"
-extern "C" {
-#include <lhat.h>
-}
+#include "editor/PrimitiveGeometry.h"
+#include "script/ScriptRuntime.h"
+#include <filesystem>
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <stdexcept>
 
+namespace {
+/// Keeps checks active in optimized builds.
+void require(bool ok, const char* message) { if (!ok) throw std::runtime_error(message); }
+/// A scene with a finite mesh floor and the three supported convex shapes.
+throne::LevelExpansion fixture() {
+    throne::World world;
+    auto& scene=world.scenes["physics.scene.lton"];
+    auto& floor=scene.addNode("Floor");
+    floor.transform->position={0,0,0}; throne::setPrimitive(floor,throne::PrimitiveKind::Plane); floor.planeCollider.emplace();
+    for (int kind=0;kind<3;++kind) {
+        auto& node=scene.addNode("Falling body");
+        node.transform->position={float(kind*2-2),4,0};
+        node.rigidBody.emplace();
+        if (kind==0) node.boxCollider.emplace();
+        if (kind==1) {throne::setPrimitive(node,throne::PrimitiveKind::Sphere); node.sphereCollider.emplace();}
+        if (kind==2) {throne::setPrimitive(node,throne::PrimitiveKind::Capsule); node.capsuleCollider.emplace();}
+    }
+    world.level.addScene("physics.scene.lton");
+    throne::Library library;
+    return throne::expand(world,library);
+}
+}
 int main() {
-    auto* machine = lhat_machine_new();
-    if (!machine) return 1;
-    lhat_machine_dispose(machine);
-
-    std::array<throne::Vec3, 180> first;
-    {
-        throne::PhysicsWorld world;
-        for (auto& position : first) {
-            world.step();
-            position = world.position();
+    try {
+        auto expanded=fixture();
+        throne::PhysicsWorld physics;
+        physics.load(expanded);
+        require(physics.bodyCount()==4,"Scene bodies were not created");
+        std::array<std::array<throne::Vec3,3>,240> first;
+        for (auto& sample:first) {
+            physics.prepare(expanded); physics.advance(1.0f/60); physics.apply(expanded);
+            for (int i=0;i<3;++i) sample[i]=expanded.instances[0].expansion.nodes[i+1].node.transform->position;
         }
-    }
-    throne::PhysicsWorld second;
-    second.setSerial(true);
-    for (const auto& expected : first) {
-        second.step();
-        if (second.position() != expected) {
-            std::fputs("Serial and parallel simulation diverged\n", stderr);
-            return 1;
+        for (int i=0;i<3;++i) {
+            const float expected=i==2?1.0f:0.5f;
+            require(std::abs(first.back()[i].y-expected)<0.15f,"Convex shape did not settle on the PlaneCollider");
+            require(first.front()[i].y>first.back()[i].y+2,"Physics did not move the scene node");
         }
+        auto serial=fixture();
+        physics.setSerial(true); physics.load(serial);
+        for (const auto& expected:first) {
+            physics.prepare(serial); physics.advance(1.0f/60); physics.apply(serial);
+            for (int i=0;i<3;++i)
+                require(serial.instances[0].expansion.nodes[i+1].node.transform->position==expected[i],
+                        "Serial and parallel physics diverged");
+        }
+        // Host queries and typed handles reach real physics components.
+        {
+            auto scripted=fixture();
+            throne::World empty;
+            throne::ScriptRuntime scripts(empty,scripted,{},[](const std::string&) {},throne::PlayScope::Level);
+            require(scripts.evaluate("import^ throne").text.empty(),"Could not import the physics host API");
+            const auto answer=scripts.evaluate(R"(for^ _^, node in^ throne.query("SpherePrimitive", "SphereCollider", "RigidBody") {
+                let^ c=node.sphereCollider()
+                let^ b=node.rigidBody()
+                if^ c != nil^ and^ b != nil^ { b.setLinearVelocity(throne.vec3(c.radius(),2,0)) }
+            })");
+            require(answer.text.empty(),answer.text.c_str());
+            require(scripted.instances[0].expansion.nodes[2].node.rigidBody->linearVelocity==throne::Vec3{.5f,2,0},
+                    "Typed RigidBody setter/query did not reach the sphere");
+        }
+        // Mesh bounds agree with the geometry used by the viewport picker.
+        for(const auto kind:{throne::PrimitiveKind::Box,throne::PrimitiveKind::Sphere,throne::PrimitiveKind::Capsule,throne::PrimitiveKind::Plane}) {
+            throne::SceneNode node; throne::setPrimitive(node,kind);
+            const auto mesh=throne::primitiveMesh(throne::primitiveShape(node));
+            require(!mesh.vertices.empty() && !mesh.indices.empty(),"Primitive generated no triangles");
+            for(auto index:mesh.indices) require(index<mesh.vertices.size(),"Primitive index exceeded its vertices");
+            for(const auto& v:mesh.vertices) for(int axis=0;axis<3;++axis)
+                require(std::isfinite(v.position.data()[axis]) && v.position.data()[axis]>=mesh.lower.data()[axis] &&
+                        v.position.data()[axis]<=mesh.upper.data()[axis],"Primitive bounds did not enclose its vertices");
+            if(kind==throne::PrimitiveKind::Capsule) require(std::abs(mesh.upper.y-1)<1e-5,"Capsule height excluded its hemispheres");
+        }
+        // All components and their prefab property overrides survive persistence.
+        {
+            const auto root=std::filesystem::temp_directory_path()/"throne_physics_components";
+            std::filesystem::create_directories(root);
+            throne::Scene scene;
+            const auto initial=fixture();
+            for(const auto& node:initial.instances[0].expansion.nodes) scene.nodes.push_back(node.node);
+            scene.save(root/"scene.lton");
+            const auto loaded=throne::Scene::load(root/"scene.lton");
+            require(loaded.nodes[0].plane && loaded.nodes[0].planeCollider && loaded.nodes[1].boxCollider &&
+                    loaded.nodes[2].sphere && loaded.nodes[2].sphereCollider && loaded.nodes[3].capsule &&
+                    loaded.nodes[3].capsuleCollider && loaded.nodes[3].rigidBody,"Physics components lost on save/load");
+            throne::Prefab base; base.nodes.push_back(loaded.nodes[2]);
+            throne::Library library; library.put("base.lton",base);
+            throne::Scene placed;
+            auto& instance=placed.addNode("Instance"); instance.prefab="base.lton";
+            auto& layer=instance.overrides.node({});
+            layer.sphere=throne::SpherePrimitive{}; layer.sphere->radius=.8f;
+            layer.sphereCollider=throne::SphereCollider{}; layer.sphereCollider->radius=.8f;
+            layer.rigidBody=throne::RigidBody{}; layer.rigidBody->gravityScale=0;
+            placed.save(root/"instance.lton");
+            const auto expandedPrefab=throne::expand(throne::Scene::load(root/"instance.lton"),library);
+            require(expandedPrefab.nodes[0].node.sphere->radius==.8f && expandedPrefab.nodes[0].node.sphereCollider->radius==.8f &&
+                    expandedPrefab.nodes[0].node.rigidBody->gravityScale==0,"Physics prefab overrides were lost");
+            std::filesystem::remove_all(root);
+        }
+        // UI/console commands between frames must not be overwritten by an older result.
+        {
+            auto commanded=fixture(); physics.load(commanded);
+            physics.prepare(commanded); physics.advance(1.0f/60);
+            auto& node=commanded.instances[0].expansion.nodes[2].node;
+            node.transform->position.y=8; node.rigidBody->linearVelocity={0,3,0};
+            physics.apply(commanded);
+            require(node.transform->position.y==8 && node.rigidBody->linearVelocity.y==3,"Old physics result overwrote a new command");
+            physics.prepare(commanded); physics.advance(1.0f/60); physics.apply(commanded);
+            require(node.transform->position.y>8,"Teleport/velocity command did not enter Box3D");
+        }
+        {
+            auto modes=fixture();
+            auto& kinematic=modes.instances[0].expansion.nodes[1].node;
+            kinematic.rigidBody->type=throne::BodyType::Kinematic;
+            kinematic.rigidBody->linearVelocity={1,0,0};
+            modes.instances[0].expansion.nodes[2].node.sphereCollider->sensor=true;
+            physics.load(modes);
+            for(int frame=0;frame<120;++frame) {physics.prepare(modes);physics.advance(1.0f/60);physics.apply(modes);}
+            require(std::abs(kinematic.transform->position.x)<.02f && kinematic.transform->position.y==4,
+                    "Kinematic body did not follow velocity independently of gravity");
+            require(modes.instances[0].expansion.nodes[2].node.transform->position.y<-5,"Sensor produced a collision response");
+        }
+        // Static objects stay put and a scene instance's transform is respected.
+        auto nested=fixture();
+        nested.instances[0].transform.position={8,3,-2};
+        nested.instances[0].transform.rotation={0,35,0};
+        nested.instances[0].expansion.nodes[1].node.rigidBody->type=throne::BodyType::Static;
+        physics.load(nested);
+        for(int frame=0;frame<240;++frame) {
+            physics.prepare(nested); physics.advance(1.0f/60); physics.apply(nested);
+        }
+        require(nested.instances[0].expansion.nodes[1].node.transform->position==throne::Vec3{-2,4,0},"Static body moved");
+        require(std::abs(nested.instances[0].expansion.nodes[2].node.transform->position.y-.5f)<.15f,
+                "Scene-instance physics conversion changed local coordinates");
+        // A mesh floor has finite extent, rather than being an invisible infinite plane.
+        auto outside=fixture();
+        outside.instances[0].expansion.nodes[2].node.transform->position.x=20;
+        physics.load(outside);
+        for(int frame=0;frame<120;++frame) {
+            physics.prepare(outside); physics.advance(1.0f/60); physics.apply(outside);
+        }
+        require(outside.instances[0].expansion.nodes[2].node.transform->position.y < -5,"PlaneCollider was not finite");
+        outside.instances[0].expansion.nodes[0].node.rigidBody.emplace();
+        bool refused=false;
+        try {physics.load(outside);} catch(const std::runtime_error&) {refused=true;}
+        require(refused,"Dynamic triangle-mesh PlaneCollider was accepted");
+        std::puts("Box, sphere and capsule fell onto a finite plane; serial replay and scene transforms matched");
+    } catch(const std::exception& error) {
+        std::fprintf(stderr,"%s\n",error.what()); return 1;
     }
-    const auto final = second.position();
-    if (!std::isfinite(final.y) || std::abs(final.y - 0.5) > 0.1 || first.front().y <= final.y) {
-        std::fputs("Box did not fall and settle on the ground\n", stderr);
-        return 1;
-    }
-    std::printf("Box3D replay matched 180 steps; settled y=%.6f; L^ VM initialized\n", double(final.y));
 }

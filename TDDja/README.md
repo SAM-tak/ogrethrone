@@ -12,7 +12,8 @@ Ogre Throne の設計に関する文書を置く。
 | [04-level.md](04-level.md) | レベル（ゲーム側の LTON）と OGRE 形式のグラフィックのリソースの分担 | 一部提案中／改名と `levels/` のみ実装済み |
 | [05-runner.md](05-runner.md) | Runner（振る舞いを担う、シーンから独立した存在）とシーンノードの関係 | 合意済み／第 1 段階実装済み |
 | [06-prefab.md](06-prefab.md) | 入れ子のプレハブ（インスタンス・上書き・展開）、ドリルダウン、階層の編集、バリアント | 合意済み／段階 1・2・5 とプレハブ化を実装済み |
-| [07-component.md](07-component.md) | Component（Entity としてのシーンノード）、ノードの Behaviour、Runner による実行の段、System | 段階 1〜4 の基盤実装済み／アニメーション処理は未実装 |
+| [07-component.md](07-component.md) | Component（Entity としてのシーンノード）、ノードの Behaviour、Runner による実行の段、System | 段階 1〜4 実装済み／物理との結線は 08、アニメーション処理は未実装 |
+| [08-physics.md](08-physics.md) | Primitive・Collider・RigidBody、Box3D とシーンの結線、物理サンプル | 実装済み |
 
 ## 記法
 

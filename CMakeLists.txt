@@ -50,12 +50,13 @@ endif()
 
 # Levels, projects and the project list: the editor's LTON data, without OGRE.
 add_library(throne_data STATIC src/editor/Lton.cpp src/editor/Scene.cpp src/editor/Level.cpp
-    src/editor/Expansion.cpp src/editor/Project.cpp src/runtime/FramePipeline.cpp src/runtime/FramePipeline.h src/editor/Lton.h src/editor/Scene.h src/editor/Level.h
+    src/editor/Expansion.cpp src/editor/Project.cpp src/editor/PrimitiveGeometry.cpp src/editor/PrimitiveGeometry.h src/runtime/FramePipeline.cpp src/runtime/FramePipeline.h src/editor/Lton.h src/editor/Scene.h src/editor/Level.h
     src/editor/Expansion.h src/editor/Project.h src/core/Math.h src/core/Ids.h)
 target_include_directories(throne_data PUBLIC src)
 # stdlib/*.h are included by path relative to the L^ source root.
 target_include_directories(throne_data PRIVATE "${THRONE_LHAT_SOURCE_DIR}")
 target_link_libraries(throne_data PUBLIC lhat PRIVATE lhatstdlib)
+target_link_libraries(throne_runtime PUBLIC throne_data)
 
 add_executable(throne_data_smoke tests/data_smoke.cpp)
 target_link_libraries(throne_data_smoke PRIVATE throne_data)
@@ -66,6 +67,7 @@ endif()
 add_library(throne_script STATIC src/script/ScriptRuntime.cpp src/script/ScriptRuntime.h)
 target_include_directories(throne_script PRIVATE "${THRONE_LHAT_SOURCE_DIR}")
 target_link_libraries(throne_script PUBLIC throne_data PRIVATE lhatstdlib)
+target_link_libraries(throne_smoke PRIVATE throne_script)
 
 add_executable(throne_script_smoke tests/script_smoke.cpp)
 target_link_libraries(throne_script_smoke PRIVATE throne_script)

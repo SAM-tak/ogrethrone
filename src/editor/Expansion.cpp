@@ -124,6 +124,7 @@ void apply(Expansion& out, const NodePath& prefix, const Overrides& overrides, s
         const auto at = out.find(join(prefix, entry.path));
         if (at == Expansion::npos) continue;  // The prefab no longer has that node.
         auto& node = out.nodes[at].node;
+        applyExtraComponents(node, entry);
         if (entry.name) node.name = *entry.name;
         if (entry.behaviours) node.behaviours = *entry.behaviours;
         for (const auto& [name, fields] : entry.scriptFields)

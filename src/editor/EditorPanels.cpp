@@ -423,9 +423,90 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         if (!keepTransform) own->transform.reset();
         if (!keepBox) own->box.reset();
     }
-    if (own && (!own->transform || !own->box) && ImGui::BeginCombo("##add", "Add Component")) {
+    const auto scalar = [&](const char* label, float& number, float low = 0.001f, float high = 1.0e6f) {
+        const bool edited=ImGui::DragFloat(label,&number,.05f,low,high,"%.3f",clamp);
+        track(); return edited;
+    };
+    const auto vector = [&](const char* label, Vec3& number, float low = -1.0e6f) {
+        const bool edited=ImGui::DragFloat3(label,number.data(),.05f,low,1.0e6f,"%.3f",clamp);
+        track(); return edited;
+    };
+    const auto colour = [&](auto& c) {
+        const bool edited=ImGui::ColorEdit3("Colour",c.colour.data()); track(); return edited;
+    };
+    const auto collider = [&](auto& c) {
+        bool edited=vector("Centre",c.centre);
+        edited|=scalar("Density (kg/m3)",c.density);
+        edited|=scalar("Friction",c.friction,0,1);
+        edited|=scalar("Restitution",c.restitution,0,1);
+        edited|=ImGui::Checkbox("Sensor",&c.sensor); track(); return edited;
+    };
+    // Components inherited from a prefab permit value overrides, but not removal.
+    const auto component = [&](const char* label, auto& shown, auto member, auto overrideMember, auto fields) {
+        if (!shown) return;
+        ImGui::PushID(label);
+        bool keep=true;
+        if (ImGui::CollapsingHeader(label,own?&keep:nullptr,open) && fields(*shown)) {
+            if (own) own->*member=shown;
+            else if(target.overrides) target.overrides->node(target.relative).*overrideMember=shown;
+        }
+        if (!keep && own) { checkpoint(); (own->*member).reset(); }
+        if (layer && layer->*overrideMember && ImGui::Button("Revert Component")) {
+            checkpoint(); (layer->*overrideMember).reset();
+        }
+        ImGui::PopID();
+    };
+    component("Sphere Primitive",value.sphere,&SceneNode::sphere,&NodeOverride::sphere,[&](auto& c) {
+        bool edited=colour(c); edited|=scalar("Radius",c.radius); return edited;
+    });
+    component("Capsule Primitive",value.capsule,&SceneNode::capsule,&NodeOverride::capsule,[&](auto& c) {
+        bool edited=colour(c); edited|=scalar("Radius",c.radius);
+        c.height=(std::max)(c.height,2*c.radius); edited|=scalar("Height",c.height,2*c.radius); return edited;
+    });
+    component("Plane Primitive",value.plane,&SceneNode::plane,&NodeOverride::plane,[&](auto& c) {
+        bool edited=colour(c); edited|=scalar("Width",c.width); edited|=scalar("Depth",c.depth); return edited;
+    });
+    component("Box Collider",value.boxCollider,&SceneNode::boxCollider,&NodeOverride::boxCollider,[&](auto& c) {
+        bool edited=collider(c); edited|=vector("Size",c.size,.001f); return edited;
+    });
+    component("Sphere Collider",value.sphereCollider,&SceneNode::sphereCollider,&NodeOverride::sphereCollider,[&](auto& c) {
+        bool edited=collider(c); edited|=scalar("Radius",c.radius); return edited;
+    });
+    component("Capsule Collider",value.capsuleCollider,&SceneNode::capsuleCollider,&NodeOverride::capsuleCollider,[&](auto& c) {
+        bool edited=collider(c); edited|=scalar("Radius",c.radius);
+        c.height=(std::max)(c.height,2*c.radius); edited|=scalar("Height",c.height,2*c.radius); return edited;
+    });
+    component("Plane Collider",value.planeCollider,&SceneNode::planeCollider,&NodeOverride::planeCollider,[&](auto& c) {
+        bool edited=collider(c); edited|=scalar("Width",c.width); edited|=scalar("Depth",c.depth); return edited;
+    });
+    component("RigidBody",value.rigidBody,&SceneNode::rigidBody,&NodeOverride::rigidBody,[&](auto& c) {
+        int type=static_cast<int>(c.type);
+        bool edited=ImGui::Combo("Motion Type",&type,"Static\0Kinematic\0Dynamic\0"); track();
+        c.type=static_cast<BodyType>(type);
+        edited|=vector("Linear Velocity",c.linearVelocity);
+        edited|=vector("Angular Velocity (deg/s)",c.angularVelocity);
+        edited|=scalar("Gravity Scale",c.gravityScale,-1000,1000);
+        edited|=scalar("Linear Damping",c.linearDamping,0);
+        edited|=scalar("Angular Damping",c.angularDamping,0);
+        edited|=ImGui::Checkbox("Bullet (CCD)",&c.bullet); track();
+        if(value.planeCollider && c.type==BodyType::Dynamic) ImGui::TextWrapped("PlaneCollider requires Static or Kinematic motion.");
+        return edited;
+    });
+    if (own && ImGui::BeginCombo("##add", "Add Component")) {
         if (!own->transform && ImGui::Selectable("Transform")) checkpoint(), own->transform.emplace();
-        if (!own->box && ImGui::Selectable("Box Primitive")) checkpoint(), own->box.emplace();
+        const auto addPrimitive=[&](const char* label,PrimitiveKind kind) {
+            if (primitiveShape(*own).kind!=kind && ImGui::Selectable(label)) checkpoint(),setPrimitive(*own,kind);
+        };
+        addPrimitive("Box Primitive",PrimitiveKind::Box); addPrimitive("Sphere Primitive",PrimitiveKind::Sphere);
+        addPrimitive("Capsule Primitive",PrimitiveKind::Capsule); addPrimitive("Plane Primitive",PrimitiveKind::Plane);
+        if(!own->boxCollider && ImGui::Selectable("Box Collider")) checkpoint(),own->boxCollider.emplace();
+        if(!own->sphereCollider && ImGui::Selectable("Sphere Collider")) checkpoint(),own->sphereCollider.emplace();
+        if(!own->capsuleCollider && ImGui::Selectable("Capsule Collider")) checkpoint(),own->capsuleCollider.emplace();
+        if(!own->planeCollider && ImGui::Selectable("Plane Collider")) checkpoint(),own->planeCollider.emplace();
+        if(!own->rigidBody && ImGui::Selectable("RigidBody")) {
+            checkpoint(); own->rigidBody.emplace();
+            if(own->planeCollider) own->rigidBody->type=BodyType::Static;
+        }
         ImGui::EndCombo();
     }
 
