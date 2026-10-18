@@ -19,7 +19,9 @@ include(CTest)
 include(cmake/Dependencies.cmake)
 include(cmake/Audio.cmake)
 
-add_library(throne_audio STATIC src/audio/AudioSystem.cpp src/audio/SpatialSound.cpp)
+# Headers are listed too, so that IDEs (CMake Tools) know which target's settings parse them.
+add_library(throne_audio STATIC src/audio/AudioSystem.cpp src/audio/SpatialSound.cpp
+    src/audio/AudioSystem.h src/audio/SpatialSound.h src/audio/SteamAudioMath.h)
 target_include_directories(throne_audio PUBLIC src)
 target_link_libraries(throne_audio PUBLIC throne_soloud throne_steam_audio)
 
@@ -35,7 +37,7 @@ foreach(check IN ITEMS audio acoustics)
     endif()
 endforeach()
 
-add_library(throne_runtime STATIC src/runtime/PhysicsWorld.cpp)
+add_library(throne_runtime STATIC src/runtime/PhysicsWorld.cpp src/runtime/PhysicsWorld.h src/runtime/Box3DMath.h)
 target_include_directories(throne_runtime PUBLIC src)
 target_link_libraries(throne_runtime PUBLIC box3d::box3d lhat)
 target_compile_features(throne_runtime PUBLIC cxx_std_17)
@@ -48,7 +50,8 @@ endif()
 
 # Levels, projects and the project list: the editor's LTON data, without OGRE.
 add_library(throne_data STATIC src/editor/Lton.cpp src/editor/Scene.cpp src/editor/Level.cpp
-    src/editor/Expansion.cpp src/editor/Project.cpp)
+    src/editor/Expansion.cpp src/editor/Project.cpp src/editor/Lton.h src/editor/Scene.h src/editor/Level.h
+    src/editor/Expansion.h src/editor/Project.h src/core/Math.h src/core/Ids.h)
 target_include_directories(throne_data PUBLIC src)
 # stdlib/*.h are included by path relative to the L^ source root.
 target_include_directories(throne_data PRIVATE "${THRONE_LHAT_SOURCE_DIR}")
@@ -60,7 +63,7 @@ if(BUILD_TESTING)
     add_test(NAME data_smoke COMMAND throne_data_smoke)
 endif()
 
-add_library(throne_script STATIC src/script/ScriptRuntime.cpp)
+add_library(throne_script STATIC src/script/ScriptRuntime.cpp src/script/ScriptRuntime.h)
 target_include_directories(throne_script PRIVATE "${THRONE_LHAT_SOURCE_DIR}")
 target_link_libraries(throne_script PUBLIC throne_data PRIVATE lhatstdlib)
 
@@ -73,7 +76,8 @@ endif()
 if(THRONE_BUILD_GRAPHICS)
     # ImGuizmo is compiled here against the ImGui core that OgreNextImgui builds.
     add_executable(ogrethrone src/editor/main.cpp src/editor/Editor.cpp src/editor/EditorPanels.cpp
-        src/editor/EditorPlatform.cpp src/editor/References.cpp third_party/imguizmo/src/ImGuizmo.cpp)
+        src/editor/EditorPlatform.cpp src/editor/References.cpp third_party/imguizmo/src/ImGuizmo.cpp
+        src/editor/Editor.h src/editor/EditorPlatform.h src/editor/OgreMath.h src/editor/References.h)
     if(WIN32)
         # The application icon and the manifest (visual styles, per-monitor DPI, UTF-8).
         target_sources(ogrethrone PRIVATE media/ogrethrone.rc media/ogrethrone.manifest)
