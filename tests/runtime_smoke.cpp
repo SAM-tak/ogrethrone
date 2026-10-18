@@ -166,7 +166,48 @@ int main() {
         bool refused=false;
         try {physics.load(outside);} catch(const std::runtime_error&) {refused=true;}
         require(refused,"Dynamic triangle-mesh PlaneCollider was accepted");
-        std::puts("Box, sphere and capsule fell onto a finite plane; serial replay and scene transforms matched");
+        // Exercise the actual sample script, incremental bodies and stable handles after growth.
+        {
+            const std::filesystem::path root = THRONE_PHYSICS_SAMPLE;
+            throne::World world;
+            world.level = throne::Level::load(root / "levels/main.level.lton");
+            world.scenes["scenes/physics.scene.lton"] = throne::Scene::load(root / "scenes/physics.scene.lton");
+            throne::Library library(root);
+            auto growing = throne::expand(world, library);
+            const auto initial = growing.instances[0].expansion.nodes.size();
+            throne::ScriptRuntime scripts(world, growing, root, [](const std::string&) {}, throne::PlayScope::Level);
+            throne::PhysicsWorld simulation;
+            simulation.load(growing);
+            const auto bodies = simulation.bodyCount();
+            const auto tick = [&](float dt) {
+                scripts.update(dt, [&](const std::string& stage) {
+                    if (stage == "ApplyPhysics") simulation.apply(growing);
+                    if (stage == "SyncRender") simulation.prepare(growing);
+                    if (stage == "Box3D") simulation.advance(dt);
+                });
+            };
+            tick(.05f);
+            require(growing.instances[0].expansion.nodes.size() == initial, "Spawner fired before its interval");
+            tick(.05f);
+            require(growing.instances[0].expansion.nodes.size() == initial + 1, "Spawner did not fire at 0.1s");
+            require(simulation.bodyCount() == bodies + 1, "Spawned box did not enter physics");
+            tick(.35f);
+            require(growing.instances[0].expansion.nodes.size() == initial + 4, "Spawner lost catch-up intervals");
+            for (int i = 0; i < 600; ++i) tick(1.0f / 60);
+            simulation.apply(growing);
+            const auto& nodes = growing.instances[0].expansion.nodes;
+            require(nodes.size() >= initial + 103 && nodes.size() <= initial + 105, "Spawner did not keep generating boxes");
+            require(simulation.bodyCount() == bodies + nodes.size() - initial, "Incremental physics duplicated or missed bodies");
+            require(nodes[initial].node.transform->position.y < -2, "Spawned box did not fall below its spawn point");
+            require(nodes[initial].node.transform->scale == throne::Vec3{.6f,.6f,.6f}, "Spawned box size changed");
+            require(world.scenes.at("scenes/physics.scene.lton").nodes.size() == initial, "Spawning modified the source scene");
+            auto restored = throne::expand(world, library);
+            require(restored.instances[0].expansion.nodes.size() == initial, "Re-expansion retained spawned boxes");
+            require(scripts.evaluate("import^ throne").text.empty(), "Could not import spawning API in console");
+            require(scripts.evaluate("let^ p = throne.find(\"Box Spawn Point\")\nif^ p != nil^ { p.spawnBox(throne.vec3(0,1,1)) }").text.find("finite and positive") != std::string::npos,
+                    "Invalid spawn size was accepted");
+        }
+        std::puts("Physics shapes, incremental script spawning, catch-up timing and source restoration passed");
     } catch(const std::exception& error) {
         std::fprintf(stderr,"%s\n",error.what()); return 1;
     }

@@ -17,7 +17,7 @@ public:
     /// Replaces the world with bodies/shapes from every scene instance.
     /// Throws for unsupported dynamic triangle meshes or invalid component values.
     void load(const LevelExpansion& expanded);
-    /// Copies transforms, teleports and body velocities/settings into Box3D before the group.
+    /// Adds appended nodes and copies transforms/velocities/settings before the group.
     void prepare(const LevelExpansion& expanded);
     /// Advances by fixed 1/60 s steps with four substeps, retaining fractional time.
     void advance(float deltaSeconds);

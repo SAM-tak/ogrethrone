@@ -1,0 +1,21 @@
+# A continuous load test: boxes accumulate until the Play session is stopped.
+module^ samples.spawnBoxes
+import^ throne
+
+public^let^ Behaviour = def^{
+    self^{ @export interval = 0.1, elapsed = 0 },
+    update = p^self^, node:throne.SceneNode, dt:number^ {
+        self^.elapsed := self^.elapsed + dt
+        var^ interval = self^.interval
+        if^ interval <= 0 { interval := 0.1 }
+        repeat^while^ self^.elapsed >= interval {
+            self^.elapsed := self^.elapsed - interval
+            let^ box = node.spawnBox(throne.vec3(0.6, 0.6, 0.6))
+            let^ body = box.rigidBody()
+            if^ body != nil^ {
+                body.setLinearVelocity(throne.vec3(0, -8, 0))
+                body.setAngularVelocity(throne.vec3(15, 25, 10))
+            }
+        }
+    },
+}

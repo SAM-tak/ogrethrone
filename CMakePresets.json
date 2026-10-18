@@ -53,6 +53,7 @@
   "buildPresets": [
     {"name": "windows-debug", "configurePreset": "windows", "configuration": "Debug"},
     {"name": "windows-release", "configurePreset": "windows", "configuration": "Release"},
+    {"name": "windows-relwithdebinfo", "configurePreset": "windows", "configuration": "RelWithDebInfo"},
     {"name": "windows-headless", "configurePreset": "windows-headless", "configuration": "Debug"},
     {"name": "linux", "configurePreset": "linux"},
     {"name": "linux-headless", "configurePreset": "linux-headless"},
@@ -66,6 +67,7 @@
     {"name": "linux-headless", "configurePreset": "linux-headless", "output": {"outputOnFailure": true}},
     {"name": "windows-msvc-debug", "configurePreset": "windows-msvc", "configuration": "Debug", "output": {"outputOnFailure": true}},
     {"name": "windows-release", "configurePreset": "windows", "configuration": "Release", "output": {"outputOnFailure": true}},
+    {"name": "windows-relwithdebinfo", "configurePreset": "windows", "configuration": "RelWithDebInfo", "output": {"outputOnFailure": true}},
     {"name": "windows-msvc-release", "configurePreset": "windows-msvc", "configuration": "Release", "output": {"outputOnFailure": true}},
     {"name": "windows-msvc-headless", "configurePreset": "windows-msvc-headless", "configuration": "Debug", "output": {"outputOnFailure": true}}
   ]

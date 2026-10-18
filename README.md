@@ -146,6 +146,20 @@ With `BUILD_TESTING=ON`, `ogrethrone --smoke-navigation` replays mouse and keybo
 input against a temporary copy of `samples/physics`, checking surface focus,
 empty-space clicks, orbit, looking in place, WASD movement, panning, dolly,
 wheel-adjusted fly speed and Left Shift boost.
+**View → Statistics** toggles a viewport overlay showing averaged editor FPS and
+frame time, scene node count and active physics body count. Its **− / +** button
+switches between the full panel and a single FPS row. Expanded statistics also
+show CPU wall times for UI/scripts, physics, scene copying, render synchronization,
+render/present and waiting for physics. Physics and rendering overlap; render/present
+includes GPU/driver/display waits and is not a GPU timestamp. The panel is enabled
+by default.
+
+`ogrethrone --profile-physics [project] [output.csv]` profiles a temporary copy of
+`samples/physics` by default. It advances at a fixed 1/60 s without the main-loop
+sleep, disables VSync for the test, writes per-frame wall times, and reports the
+average at 300–329 physics bodies. The default output is `out/physics-profile.csv`.
+Use matching Debug/Release builds and compare measured milliseconds; the test's
+fixed simulation delta makes the displayed FPS unsuitable for this comparison.
 It uses OGRE's native window and message pump. HlmsUnlit shader templates are read
 from the pinned `third_party/ogre-next/Samples/Media`, so the executable currently
 needs the source tree.
@@ -190,13 +204,17 @@ three CTest checks. CI is configured to check both Windows compilers.
 Open the repository root as a folder. The shared `.vscode` configuration recommends
 CMake Tools and C/C++, uses CMake Presets for build flags and IntelliSense, and
 lets CMake Tools initialize the Visual Studio developer environment on Windows.
-Select the `windows` configure preset and `windows-debug` build preset, then
+Select the `windows` configure preset and a build preset, then
 select `ogrethrone` with **CMake: Set Debug Target** (or the launch-target picker).
 `Ctrl+Shift+B` builds the active preset; **Tasks: Run Test Task** runs CTest.
 The **Regenerate samples/basic/lhat-host.json** task builds the editor and rewrites
 the sample's host API file with `--dump-host-api`.
-The supplied Windows F5 configuration launches the selected CMake target with
-the Visual Studio debugger. Choose a Debug build for debugging.
+The supplied Windows F5 configuration builds and launches the selected CMake
+target using the active build preset, with the Visual Studio debugger. To switch,
+open **Ctrl+Shift+P → CMake: Select Build Preset** and choose `windows-debug`
+(unoptimized debugging), `windows-release` (optimized), or `windows-relwithdebinfo`
+(optimized with debug symbols). Then press F5. If the configure preset has not
+been selected yet, use **CMake: Select Configure Preset → windows** first.
 
 This engine currently has no C# component. In the Extensions view, select
 **Disable (Workspace)** for C# Dev Kit (`ms-dotnettools.csdevkit`) and C#
@@ -222,6 +240,11 @@ script changes never reach the edited data. Editing is disabled while playing.
 Each Play checks and compiles every script anew, so edited scripts take effect
 on the next Play. Rejected scripts, run-time errors, and frames over the loop
 budget (treated as endless loops) are written to the Console and stop Play.
+**F5** toggles Play/Stop. During Play, the **Pause** menu-bar button or keyboard
+**Pause** key suspends scripts and physics, including spawning and simulation time.
+The button becomes **Resume**; clicking it or pressing Pause again continues the
+same session. Rendering, statistics and viewport navigation remain active. Stop
+also works while paused, and a new Play session always starts unpaused.
 
 Paths are relative to the project folder. `main.lh` at the top of the project is the
 game's entry point and organizer (which levels to play, in what order); new
@@ -297,6 +320,12 @@ The `throne` module provides:
   `transform()` (a `throne.Transform`, or nil^ when the node has none) and `box()`
   (a `throne.BoxPrimitive`, or nil^). Using a handle whose node is gone panics;
   check `valid()` first.
+- `node.spawnBox(size)` creates a dynamic box child at the receiver's local origin and
+  returns its SceneNode handle. Size is a positive finite Vec3 applied as local
+  scale; the child inherits the parent's placement. Its Transform, BoxPrimitive,
+  BoxCollider and RigidBody are available immediately. Runtime nodes are appended
+  without invalidating existing handles; their bodies and meshes join the next
+  physics/render synchronization. They disappear on Stop and are not saved.
 - `throne.Transform`: `position()`/`rotation()`/`scale()` and the matching
   `setPosition(v)` etc., relative to the parent; rotation is in degrees, applied
   about X, then Y, then Z, and scale is kept at 0.001 or more.
@@ -346,7 +375,12 @@ The design is recorded in [TDDja/07-component.md](TDDja/07-component.md).
 ## Default rendering
 
 The viewport uses OGRE-Next **Forward Clustered** and physically based (HlmsPbs)
-materials. A default directional sun casts **three-cascade PSSM/CSM shadows**, with
+lighting. Its default skybox is an OGRE procedural blue sky with a sun aligned to
+the directional light; **View → Skybox** toggles it. It renders at background depth
+and follows the camera's view without introducing scene geometry or colliders.
+Fog is disabled and the existing direct/ambient light settings are preserved.
+
+The default directional sun casts **three-cascade PSSM/CSM shadows**, with
 3×3 PCF filtering, blended/faded splits, and the first two cascades stabilized.
 The 2048×3072 depth atlas packs a 2048² near cascade and two 1024² cascades; shadow
 range is 100 world units. The clustered grid is 16×8×24, with 64 local lights per

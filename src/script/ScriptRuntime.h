@@ -47,7 +47,7 @@ public:
     /// @param world The level (for its own runners); must outlive the runtime.
     /// @param expanded The world's scene instances, expanded; the scripts read and
     ///        modify these nodes, never the world itself, so re-expanding the world
-    ///        undoes a session. Must outlive the runtime; nodes are never added or removed.
+    ///        undoes a session. Must outlive the runtime; spawned nodes are appended, never removed.
     /// @param root Project directory that script paths are relative to.
     /// @param log Destination of throne.log and of field warnings.
     /// @param scope Whether main.lh runs as well as the runners.

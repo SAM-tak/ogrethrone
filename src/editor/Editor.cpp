@@ -8,6 +8,9 @@
 #include <Compositor/OgreCompositorWorkspaceDef.h>
 #include <Compositor/OgreCompositorShadowNode.h>
 #include <OgreLight.h>
+#include <OgreAtmosphereNpr.h>
+#include <OgreMaterialManager.h>
+#include <OgreResourceGroupManager.h>
 #include <OgreHlmsPbs.h>
 #include <OgreHlmsPbsDatablock.h>
 #include <Compositor/Pass/OgreCompositorPassDef.h>
@@ -32,6 +35,7 @@
 #include <ImGuizmo.h>
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -295,6 +299,27 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
     sun_->setDirection(Ogre::Vector3(-.6f,-1.0f,-.4f).normalisedCopy());
     sun_->setPowerScale(Ogre::Math::PI);
     sun_->setCastShadows(true);
+    // Load only the standard sky programs/material; unrelated sample materials stay out.
+    auto& resources = Ogre::ResourceGroupManager::getSingleton();
+    const Ogre::String skyGroup = "ThroneEditorSky";
+    const Ogre::String common = THRONE_OGRE_MEDIA_DIR "/2.0/scripts/materials/Common";
+    resources.createResourceGroup(skyGroup);
+    for (const auto* folder : {"", "/GLSL", "/Any"})
+        resources.addResourceLocation(common + folder, "FileSystem", skyGroup);
+    for (const auto* script : {"Quad.program", "Atmosphere.material"}) {
+        auto stream = resources.openResource(script, skyGroup);
+        Ogre::MaterialManager::getSingleton().parseScript(stream, skyGroup);
+    }
+    sky_ = std::make_unique<Ogre::AtmosphereNpr>(root.getRenderSystem()->getVaoManager());
+    auto preset = sky_->getPreset();
+    preset.fogDensity = 0;
+    // Keep the horizon restrained in this LDR editor viewport, including downward views.
+    preset.horizonLimit = 0.15f;
+    preset.skyPower = 0.5f;
+    sky_->setPreset(preset);
+    // Match the visible sun to the existing directional light without relinking lighting.
+    sky_->setSunDir(sun_->getDirection(), std::asin(-sun_->getDirection().y) / Ogre::Math::PI);
+    sky_->setSky(&scene_, true);
     createShadowNode(root);
     compositor->createBasicWorkspaceDef(viewportWorkspaceName, Ogre::ColourValue(0.11f, 0.12f, 0.14f),"ThroneEditor/SunShadows");
     auto* node = compositor->addNodeDefinition("ThroneEditor/WindowNode");
@@ -502,6 +527,7 @@ void Editor::launcher() {
 }
 
 void Editor::play() {
+    paused_ = false;
     // Play always runs the level (TDDja/06 6), on its expansion only.
     contexts_.resize(1);
     navigate_.reset();
@@ -524,11 +550,18 @@ void Editor::play() {
 }
 
 void Editor::stop() {
+    paused_ = false;
     if (consoleMore_ == runtime_.get()) consoleMore_ = nullptr;
     runtime_.reset();
     physics_.reset();
     renderSnapshot_.reset();
     log("Stop");
+}
+
+void Editor::togglePause() {
+    if (!runtime_) return;
+    paused_ = !paused_;
+    log(paused_ ? "Pause" : "Resume");
 }
 
 Editor::~Editor() {
@@ -537,6 +570,8 @@ Editor::~Editor() {
     if (io.IniFilename) ImGui::SaveIniSettingsToDisk(io.IniFilename);
     io.IniFilename = nullptr;
     destroyWorkspaces();
+    sky_.reset();
+    Ogre::ResourceGroupManager::getSingleton().destroyResourceGroup("ThroneEditorSky");
     root_.getCompositorManager2()->setCompositorPassProvider(nullptr);
     // ImGui materials reference the viewport texture, so release them first.
     guiPass_.reset();
@@ -551,6 +586,12 @@ Editor::~Editor() {
 }
 
 bool Editor::frame(float deltaSeconds, const std::function<void()>& input) {
+    using Clock = std::chrono::steady_clock;
+    const auto frameStart = Clock::now();
+    const auto milliseconds = [](auto begin, auto end) {
+        return std::chrono::duration<double, std::milli>(end - begin).count();
+    };
+    FrameTimings measured;
     platform_.newFrame();
     if (input) input();
     ImGui::GetIO().DeltaTime = std::max(deltaSeconds, 1.0e-4f);
@@ -581,30 +622,51 @@ bool Editor::frame(float deltaSeconds, const std::function<void()>& input) {
     fileDialog();
     closeDialog();
     replaceDialog();
+    measured.uiMs = milliseconds(frameStart, Clock::now());
     bool running = true;
     std::optional<LevelExpansion> nextSnapshot;
     if (physics_) physics_->setSerial(doc_.world.level.serialExecution);
+    auto lastMainEnd = Clock::now();
     const auto engine = [&](const std::string& stage) {
+        const auto start = Clock::now();
+        // Worker callbacks touch their own timing field only; runStages joins before publication.
+        if (stage == "Box3D") {
+            if (physics_) physics_->advance(deltaSeconds);
+            measured.physicsStepMs = milliseconds(start, Clock::now());
+            return;
+        }
+        if (stage == "Animator") return;
+        const auto gap = milliseconds(lastMainEnd, start);
+        if (stage == "SyncSimulation") measured.waitMs += gap;
+        else measured.scriptMs += gap;
         if (stage == "ApplyPhysics") {
             if (physics_) physics_->apply(view_);
+            measured.physicsApplyMs = milliseconds(start, Clock::now());
         } else if (stage == "SyncRender") {
             if (runtime_) nextSnapshot = view_;
+            measured.snapshotMs = milliseconds(start, Clock::now());
+            const auto prepare = Clock::now();
             if (physics_) physics_->prepare(view_);
-        } else if (stage == "Box3D") {
-            if (physics_) physics_->advance(deltaSeconds);
+            measured.physicsPrepareMs = milliseconds(prepare, Clock::now());
         } else if (stage == "OGRE") {
             syncTransforms(runtime_ && renderSnapshot_ ? &*renderSnapshot_ : nullptr);
             updateCamera();
             gui_->prepareForRender(&scene_);
+            measured.renderSyncMs = milliseconds(start, Clock::now());
+            const auto render = Clock::now();
             running = root_.renderOneFrame();
+            measured.renderMs = milliseconds(render, Clock::now());
         } else if (stage == "SyncSimulation") {
             if (nextSnapshot) renderSnapshot_ = std::move(nextSnapshot);
+            measured.snapshotMs += milliseconds(start, Clock::now());
         }
+        lastMainEnd = Clock::now();
         // FetchInput has already collected this frame's OS/ImGui input above.
         // Animator has no bindings until animation components exist.
     };
     try {
-        if (runtime_) runtime_->update(deltaSeconds, engine);
+        if (paused()) engine("OGRE");
+        else if (runtime_) runtime_->update(deltaSeconds, engine);
         else runStages(ScriptRuntime::schedule(doc_.world, view_), doc_.world.level.serialExecution, engine);
     } catch (const std::runtime_error& error) {
         log(error.what());
@@ -613,12 +675,26 @@ bool Editor::frame(float deltaSeconds, const std::function<void()>& input) {
         gui_->prepareForRender(&scene_);
         running = root_.renderOneFrame();
     }
+    measured.frameMs = milliseconds(frameStart, Clock::now());
+    measured.nodes = renderObjects_.size();
+    measured.bodies = physics_ ? physics_->bodyCount() : 0;
+    timings_ = measured;
+    const auto weight = averageTimings_.frameMs == 0 ? 1.0 : 1.0 - std::exp(-measured.frameMs / 500.0);
+    for (auto member : {&FrameTimings::frameMs, &FrameTimings::uiMs, &FrameTimings::scriptMs,
+         &FrameTimings::snapshotMs, &FrameTimings::physicsApplyMs, &FrameTimings::physicsPrepareMs,
+         &FrameTimings::physicsStepMs, &FrameTimings::renderSyncMs, &FrameTimings::renderMs, &FrameTimings::waitMs})
+        averageTimings_.*member += weight * (measured.*member - averageTimings_.*member);
     return running;
 }
 
 void Editor::setShadowsEnabled(bool enabled) {
     shadowsEnabled_=enabled;
     sun_->setCastShadows(enabled);
+}
+
+void Editor::setSkyboxEnabled(bool enabled) {
+    skyboxEnabled_ = enabled;
+    sky_->setSky(&scene_, enabled);
 }
 
 void Editor::captureViewport(const std::filesystem::path& path) {
@@ -831,22 +907,6 @@ void Editor::writeNode(const SceneNode& value, unsigned changed) {
 
 void Editor::rebuildScene() {
     destroyRenderObjects();
-    for (std::size_t i = 0; i < view_.instances.size(); ++i) {
-        const auto& nodes = view_.instances[i].expansion.nodes;
-        sceneRoots_.push_back(scene_.getRootSceneNode()->createChildSceneNode());
-        // Parents come first, so each node's OGRE parent already exists.
-        std::vector<Ogre::SceneNode*> created(nodes.size());
-        for (std::size_t k = 0; k < nodes.size(); ++k) {
-            auto* parent = nodes[k].parent == Expansion::npos ? sceneRoots_[i] : created[nodes[k].parent];
-            created[k] = parent->createChildSceneNode();
-            const auto name = "ThroneEditor/Node/" + std::to_string(i) + "/" + std::to_string(k);
-            auto* material = createPbsMaterial(pbs_, name);
-            auto* mesh = scene_.createManualObject();
-            mesh->setCastShadows(true);
-            created[k]->attachObject(mesh);
-            renderObjects_.push_back({i, k, created[k], mesh, material, name});
-        }
-    }
     syncTransforms();
 }
 
@@ -860,10 +920,35 @@ void Editor::destroyRenderObjects() {
     renderObjects_.clear();
     for (auto* root : sceneRoots_) scene_.destroySceneNode(root);
     sceneRoots_.clear();
+    sceneNodes_.clear();
 }
 
 void Editor::syncTransforms(const LevelExpansion* snapshot) {
     const auto& shown = snapshot ? *snapshot : view_;
+    // Stop or scene replacement may remove runtime nodes; discard their render resources.
+    bool shrunk = sceneRoots_.size() > shown.instances.size();
+    for (std::size_t i = 0; i < sceneNodes_.size() && i < shown.instances.size(); ++i)
+        shrunk |= sceneNodes_[i].size() > shown.instances[i].expansion.nodes.size();
+    if (shrunk) destroyRenderObjects();
+    for (std::size_t i = 0; i < shown.instances.size(); ++i) {
+        const auto& nodes = shown.instances[i].expansion.nodes;
+        if (sceneRoots_.size() <= i) {
+            sceneRoots_.push_back(scene_.getRootSceneNode()->createChildSceneNode());
+            sceneNodes_.emplace_back();
+        }
+        // Parents come first, so each node's OGRE parent already exists.
+        auto& created = sceneNodes_[i];
+        for (std::size_t k = created.size(); k < nodes.size(); ++k) {
+            auto* parent = nodes[k].parent == Expansion::npos ? sceneRoots_[i] : created[nodes[k].parent];
+            created.push_back(parent->createChildSceneNode());
+            const auto name = "ThroneEditor/Node/" + std::to_string(i) + "/" + std::to_string(k);
+            auto* material = createPbsMaterial(pbs_, name);
+            auto* mesh = scene_.createManualObject();
+            mesh->setCastShadows(true);
+            created[k]->attachObject(mesh);
+            renderObjects_.push_back({i, k, created[k], mesh, material, name});
+        }
+    }
     for (std::size_t i = 0; i < sceneRoots_.size(); ++i) {
         const auto& transform = shown.instances[i].transform;
         sceneRoots_[i]->setPosition(toOgre(transform.position));
@@ -1600,6 +1685,7 @@ bool Editor::save() {
 }
 
 void Editor::shortcuts() {
+    if (ImGui::IsKeyPressed(ImGuiKey_Pause, false)) togglePause();
     if (ImGui::GetIO().WantTextInput || ImGui::IsMouseDown(ImGuiMouseButton_Right)) return;
     if (ImGui::IsKeyPressed(ImGuiKey_F5, false)) runtime_ ? stop() : play();
     if (ImGui::IsKeyPressed(ImGuiKey_F, false)) focusSelection();
@@ -1657,6 +1743,9 @@ void Editor::menu() {
     }
     if (ImGui::BeginMenu("View")) {
         ImGui::MenuItem("Grid", nullptr, &showGrid_);
+        ImGui::MenuItem("Statistics", nullptr, &showStatistics_);
+        bool skybox = skyboxEnabled_;
+        if (ImGui::MenuItem("Skybox", nullptr, &skybox)) setSkyboxEnabled(skybox);
         bool shadows=shadowsEnabled_;
         if(ImGui::MenuItem("Shadows",nullptr,&shadows)) setShadowsEnabled(shadows);
         ImGui::MenuItem("Orthographic", nullptr, &orthographic_);
@@ -1664,7 +1753,9 @@ void Editor::menu() {
         ImGui::EndMenu();
     }
     if (ImGui::MenuItem(runtime_ ? "Stop" : "Play", "F5")) runtime_ ? stop() : play();
-    if (runtime_) ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.5f, 1), "Playing");
+    if (ImGui::MenuItem(paused() ? "Resume" : "Pause", "Pause", paused(), runtime_ != nullptr)) togglePause();
+    if (runtime_) ImGui::TextColored(paused() ? ImVec4(1.0f, 0.8f, 0.3f, 1) : ImVec4(0.4f, 0.9f, 0.5f, 1),
+                                   paused() ? "Paused" : "Playing");
     ImGui::TextDisabled("%s%s", levelPath_, dirty_ ? " *" : "");
     ImGui::EndMainMenuBar();
 }
@@ -1798,6 +1889,34 @@ void Editor::viewport() {
             ImGui::Checkbox("Local", &gizmoLocal_);
             ImGui::SetCursorScreenPos(ImVec2(origin.x + 6, origin.y + 30));
             breadcrumb();
+            if (showStatistics_) {
+                ImGui::SetCursorScreenPos(ImVec2(origin.x + size.x - 290, origin.y + 8));
+                ImGui::SetNextWindowBgAlpha(0.75f);
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6, 4));
+                if (ImGui::BeginChild("ViewportStatistics", ImVec2(280, statisticsCollapsed_ ? 28 : 182), ImGuiChildFlags_Borders,
+                                     ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoScrollbar)) {
+                    if (ImGui::SmallButton(statisticsCollapsed_ ? "+" : "-")) statisticsCollapsed_ = !statisticsCollapsed_;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip(statisticsCollapsed_ ? "Expand statistics" : "Minimize statistics");
+                    ImGui::SameLine();
+                    const auto fps = ImGui::GetIO().Framerate;
+                    ImGui::Text("FPS %.1f | %.2f ms", fps, fps > 0 ? 1000.0f / fps : 0.0f);
+                    if (!statisticsCollapsed_) {
+                        const auto& t = averageTimings_;
+                        ImGui::Text("Nodes %zu | Bodies %zu", renderObjects_.size(), physics_ ? physics_->bodyCount() : 0);
+                        ImGui::Text("UI / scripts: %.2f / %.2f ms", t.uiMs, t.scriptMs);
+                        ImGui::Text("Physics step: %.2f ms", t.physicsStepMs);
+                        ImGui::Text("Physics apply/prepare: %.2f ms", t.physicsApplyMs + t.physicsPrepareMs);
+                        ImGui::Text("Scene snapshot: %.2f ms", t.snapshotMs);
+                        ImGui::Text("Render sync: %.2f ms", t.renderSyncMs);
+                        ImGui::Text("Render / present: %.2f ms", t.renderMs);
+                        ImGui::Text("Physics wait: %.2f ms", t.waitMs);
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("CPU wall times; physics and rendering overlap.\nRender / present includes GPU and display waits.");
+                    }
+                }
+                ImGui::EndChild();
+                ImGui::PopStyleVar();
+            }
         }
     }
     if (!visible) viewDrag_ = ViewDrag::None;

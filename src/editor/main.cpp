@@ -27,6 +27,7 @@
 #include <iterator>
 #include <thread>
 #include <stdexcept>
+#include <array>
 #ifdef THRONE_NAVIGATION_SMOKE
 #include "navigation_smoke.h"
 #endif
@@ -64,20 +65,21 @@ int main(int argc, char** argv) {
         return 0;
     }
     const bool physicsSmoke = argc > 1 && std::strcmp(argv[1], "--smoke-physics") == 0;
+    const bool profilePhysics = argc > 1 && std::strcmp(argv[1], "--profile-physics") == 0;
     bool navigationSmoke = false;
 #ifdef THRONE_NAVIGATION_SMOKE
     navigationSmoke = argc > 1 && std::strcmp(argv[1], "--smoke-navigation") == 0;
 #endif
-    const bool smoke = physicsSmoke || navigationSmoke || (argc > 1 && std::strcmp(argv[1], "--smoke") == 0);
+    const bool smoke = physicsSmoke || profilePhysics || navigationSmoke || (argc > 1 && std::strcmp(argv[1], "--smoke") == 0);
     const auto captures = physicsSmoke ? std::filesystem::absolute(argc > 3 ? argv[3] : "out/physics-captures") : std::filesystem::path{};
     // `ogrethrone <folder>` opens that project; --smoke uses a throwaway one and leaves
     // the user's project list alone; otherwise the launcher is shown.
     std::filesystem::path project, projectList = throne::ProjectList::defaultFile();
     if (smoke) {
-        project = std::filesystem::temp_directory_path() / (navigationSmoke ? "ogrethrone-navigation-smoke" :
+        project = std::filesystem::temp_directory_path() / (profilePhysics ? "ogrethrone-physics-profile" : navigationSmoke ? "ogrethrone-navigation-smoke" :
             physicsSmoke ? "ogrethrone-physics-smoke" : "ogrethrone-smoke");
         std::filesystem::remove_all(project);
-        if (physicsSmoke || navigationSmoke) {
+        if (physicsSmoke || profilePhysics || navigationSmoke) {
             const auto source=std::filesystem::absolute(argc>2?argv[2]:"samples/physics");
             std::filesystem::copy(source,project,std::filesystem::copy_options::recursive);
             if (physicsSmoke) std::filesystem::create_directories(captures);
@@ -96,7 +98,14 @@ int main(int argc, char** argv) {
         if (!renderer) throw std::runtime_error("Vulkan renderer unavailable");
         root.setRenderSystem(renderer);
         root.initialise(false);
-        auto* window = root.createRenderWindow("Ogre Throne", 1280, 720, false);
+        Ogre::NameValuePairList windowParameters;
+        if (profilePhysics) windowParameters["vsync"] = "false";
+#ifdef NDEBUG
+        constexpr auto windowTitle = "Ogre Throne";
+#else
+        constexpr auto windowTitle = "Ogre Throne [Debug]";
+#endif
+        auto* window = root.createRenderWindow(windowTitle, 1280, 720, false, &windowParameters);
         auto* scene = root.createSceneManager(Ogre::ST_GENERIC, 1, "MainScene");
         auto* camera = scene->createCamera("MainCamera");
         camera->setNearClipDistance(0.1f);
@@ -119,13 +128,23 @@ int main(int argc, char** argv) {
             auto previous = std::chrono::steady_clock::now();
             unsigned frames = 0;
             bool running = !navigationSmoke, stepping = false;
+            std::ofstream profile;
+            std::array<double, 10> totals{};
+            unsigned profileSamples = 0;
+            if (profilePhysics) {
+                const auto path = std::filesystem::path(argc > 3 ? argv[3] : "out/physics-profile.csv");
+                if (!path.parent_path().empty()) std::filesystem::create_directories(path.parent_path());
+                profile.open(path);
+                if (!profile) throw std::runtime_error("Could not open physics profile CSV");
+                profile << "frame,nodes,bodies,frame_ms,ui_ms,script_ms,snapshot_ms,physics_apply_ms,physics_prepare_ms,physics_step_ms,render_sync_ms,render_present_ms,physics_wait_ms\n";
+            }
             // One frame; also run from the window hook while a move or resize blocks the loop.
             const auto step = [&] {
                 if (stepping) return;
                 stepping=true;
                 struct Guard { bool& value; ~Guard() { value=false; } } guard{stepping};
                 const auto now = std::chrono::steady_clock::now();
-                const double elapsed = physicsSmoke ? 1.0/60.0 : std::min(0.25, std::chrono::duration<double>(now - previous).count());
+                const double elapsed = (physicsSmoke || profilePhysics) ? 1.0/60.0 : std::min(0.25, std::chrono::duration<double>(now - previous).count());
                 previous = now;
                 running = editor.frame(static_cast<float>(elapsed));
                 ++frames;
@@ -133,7 +152,7 @@ int main(int argc, char** argv) {
             editor.platform().modalFrame = [&] {
                 if (running && !window->isClosed()) step();
             };
-            while (running && !window->isClosed() && !editor.shouldClose() && (!smoke || frames < (physicsSmoke ? 245u : 3u))) {
+            while (running && !window->isClosed() && !editor.shouldClose() && (!smoke || frames < (profilePhysics ? 2100u : physicsSmoke ? 245u : 3u))) {
                 Ogre::WindowEventUtilities::messagePump();
                 if (window->isClosed()) break;
                 if (smoke && frames == 1) ImGui::GetIO().AddKeyEvent(ImGuiKey_F5, true);
@@ -145,10 +164,30 @@ int main(int argc, char** argv) {
                 if (physicsSmoke && frames == 244) editor.setShadowsEnabled(false);
                 const bool capture=physicsSmoke && (frames==1 || frames==2 || frames==59 || frames==239 || frames==243 || frames==244);
                 step();
+                if (profilePhysics) {
+                    if (frames >= 3 && !editor.playing()) throw std::runtime_error("Physics profile Play failed");
+                    const auto& t = editor.frameTimings();
+                    const std::array<double, 10> values{t.frameMs, t.uiMs, t.scriptMs, t.snapshotMs,
+                        t.physicsApplyMs, t.physicsPrepareMs, t.physicsStepMs, t.renderSyncMs, t.renderMs, t.waitMs};
+                    profile << frames << ',' << t.nodes << ',' << t.bodies;
+                    for (const auto value : values) profile << ',' << value;
+                    profile << '\n';
+                    if (t.bodies >= 300 && t.bodies < 330) {
+                        ++profileSamples;
+                        for (std::size_t i = 0; i < values.size(); ++i) totals[i] += values[i];
+                    }
+                    if (t.bodies >= 330) break;
+                }
                 if(physicsSmoke && frames>=3 && frames<=240 && !editor.playing()) throw std::runtime_error("Physics smoke Play failed");
                 if(physicsSmoke && frames>=242 && editor.playing()) throw std::runtime_error("Physics smoke Stop failed");
                 if(capture) editor.captureViewport(captures/("frame-"+std::to_string(frames)+".ppm"));
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                if (!profilePhysics) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            if (profilePhysics) {
+                if (!profileSamples) throw std::runtime_error("Physics profile never reached 300 bodies");
+                for (auto& value : totals) value /= profileSamples;
+                std::printf("PROFILE 300-329 bodies (%u frames): frame %.3f, UI %.3f, scripts %.3f, snapshot %.3f, physics apply %.3f, prepare %.3f, step %.3f, render sync %.3f, render/present %.3f, wait %.3f ms\n",
+                    profileSamples, totals[0], totals[1], totals[2], totals[3], totals[4], totals[5], totals[6], totals[7], totals[8], totals[9]);
             }
             if(physicsSmoke) {
                 const auto read=[&](const char* name) {

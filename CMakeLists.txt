@@ -44,6 +44,7 @@ target_compile_features(throne_runtime PUBLIC cxx_std_17)
 
 add_executable(throne_smoke tests/runtime_smoke.cpp)
 target_link_libraries(throne_smoke PRIVATE throne_runtime)
+target_compile_definitions(throne_smoke PRIVATE THRONE_PHYSICS_SAMPLE="${PROJECT_SOURCE_DIR}/samples/physics")
 if(BUILD_TESTING)
     add_test(NAME runtime_smoke COMMAND throne_smoke)
 endif()
@@ -93,13 +94,14 @@ if(THRONE_BUILD_GRAPHICS)
         target_link_libraries(ogrethrone PRIVATE dwmapi)
     endif()
     target_link_libraries(ogrethrone PRIVATE throne_runtime throne_audio throne_script OgreNextMain
-        RenderSystem_Vulkan OgreNextHlmsPbs OgreNextHlmsUnlit OgreNextImgui ColibriGui)
+        RenderSystem_Vulkan OgreNextHlmsPbs OgreNextHlmsUnlit OgreNextImgui OgreNextAtmosphere ColibriGui)
     target_include_directories(ogrethrone PRIVATE
         third_party/ogre-next/RenderSystems/Vulkan/include
         third_party/ogre-next/Components/Imgui/include
         third_party/ogre-next/Components/Hlms/Common/include
         third_party/ogre-next/Components/Hlms/Unlit/include
         third_party/ogre-next/Components/Hlms/Pbs/include
+        third_party/ogre-next/Components/Atmosphere/include
         third_party/imgui
         third_party/imguizmo/src)
     # Hlms shader templates are read from the pinned OGRE checkout until asset packaging exists.

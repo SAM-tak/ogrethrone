@@ -89,6 +89,7 @@ struct PhysicsWorld::State {
         Transform localInput;
     };
     std::vector<Body> bodies;
+    std::vector<std::size_t> scanned;
     std::vector<std::unique_ptr<b3MeshData, decltype(&b3DestroyMesh)>> meshes;
     /// Installs the native task pool and creates a fresh simulation world.
     State() {
@@ -149,6 +150,32 @@ struct PhysicsWorld::State {
             b3CreateMeshShape(body,&def,mesh,{1,1,1});
         }
     }
+    /// Adds appended nodes without resetting existing bodies or simulation time.
+    void append(const LevelExpansion& expanded) {
+        scanned.resize(expanded.instances.size());
+        for (std::size_t scene=0; scene<expanded.instances.size(); ++scene) {
+            const auto& instance=expanded.instances[scene];
+            if (scanned[scene] == instance.expansion.nodes.size()) continue;
+            const auto world=poses(instance);
+            for (const auto at : instance.expansion.hierarchy()) {
+                if (at < scanned[scene]) continue;
+                const auto& node=instance.expansion.nodes[at].node;
+                if (!node.rigidBody && !node.boxCollider && !node.sphereCollider && !node.capsuleCollider && !node.planeCollider) continue;
+                if (node.rigidBody && !node.transform) throw std::runtime_error(node.name + ": RigidBody requires Transform");
+                const auto settings=node.rigidBody.value_or(RigidBody{BodyType::Static});
+                auto def=b3DefaultBodyDef();
+                def.type=bodyType(settings.type); def.position=toB3Pos(world[at].position); def.rotation=world[at].rotation;
+                def.linearVelocity=vector(settings.linearVelocity); def.angularVelocity=vector(settings.angularVelocity*radians);
+                def.linearDamping=settings.linearDamping; def.angularDamping=settings.angularDamping;
+                def.gravityScale=settings.gravityScale; def.isBullet=settings.bullet;
+                auto body=b3CreateBody(this->world,&def);
+                shapes(body,node,world[at].scale);
+                bodies.push_back({scene,at,body,world[at],settings,node.transform.value_or(Transform{})});
+            }
+            scanned[scene] = instance.expansion.nodes.size();
+        }
+    }
+
 };
 
 PhysicsWorld::PhysicsWorld() : state_(std::make_unique<State>()) {}
@@ -159,28 +186,12 @@ std::size_t PhysicsWorld::bodyCount() const { return state_->bodies.size(); }
 void PhysicsWorld::load(const LevelExpansion& expanded) {
     auto fresh = std::make_unique<State>();
     fresh->serial = state_->serial;
-    for (std::size_t scene=0; scene<expanded.instances.size(); ++scene) {
-        const auto& instance=expanded.instances[scene];
-        const auto world=poses(instance);
-        for (const auto at : instance.expansion.hierarchy()) {
-            const auto& node=instance.expansion.nodes[at].node;
-            if (!node.rigidBody && !node.boxCollider && !node.sphereCollider && !node.capsuleCollider && !node.planeCollider) continue;
-            if (node.rigidBody && !node.transform) throw std::runtime_error(node.name + ": RigidBody requires Transform");
-            const auto settings=node.rigidBody.value_or(RigidBody{BodyType::Static});
-            auto def=b3DefaultBodyDef();
-            def.type=bodyType(settings.type); def.position=toB3Pos(world[at].position); def.rotation=world[at].rotation;
-            def.linearVelocity=vector(settings.linearVelocity); def.angularVelocity=vector(settings.angularVelocity*radians);
-            def.linearDamping=settings.linearDamping; def.angularDamping=settings.angularDamping;
-            def.gravityScale=settings.gravityScale; def.isBullet=settings.bullet;
-            auto body=b3CreateBody(fresh->world,&def);
-            fresh->shapes(body,node,world[at].scale);
-            fresh->bodies.push_back({scene,at,body,world[at],settings,node.transform.value_or(Transform{})});
-        }
-    }
+    fresh->append(expanded);
     state_=std::move(fresh);
 }
 
 void PhysicsWorld::prepare(const LevelExpansion& expanded) {
+    state_->append(expanded);
     for (auto& body : state_->bodies) {
         const auto& instance=expanded.instances.at(body.scene);
         const auto& node=instance.expansion.nodes.at(body.node).node;

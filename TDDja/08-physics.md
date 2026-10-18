@@ -61,6 +61,18 @@ for^ _^, node in^ throne.query("SphereCollider", "RigidBody") {
 
 ## 7. 動作確認
 
+Play／Stop は F5。Play 中の Pause キーまたはメニューバーの Pause／Resume で一時停止／再開を切り替える。Pause 中は ScriptRuntime の update と Box3D の apply／prepare／advance、および描画用の写しの更新を呼ばず、保持した写しの描画とエディター操作のみを継続する。前フレームの物理タスクは既に結合済みであり、Pause 中にバックグラウンドで進めない。再開時に停止中の経過時間を追いつき計算せず、同じセッションを続行する。Pause 中の Stop も初期状態へ戻し、新たな Play は停止状態を引き継がない。
+
+［補足］Pause 操作は Play 外では無効とし、Pause キーはカメラの右ドラッグ中も受け付ける。Pause 中も編集は Play と同様に無効にし、カメラ操作・描画・統計表示は継続する。
+
+`samples/physics` の Box Spawn Point は `scripts/spawn-boxes.lh` を Update で実行し、0.1 秒ごとに Box を生成し続ける。経過時間の端数を保持し、遅いフレームでは複数回生成する。生成上限や使い回しは設けず、Stop で初期シーンに戻す。
+
+［補足］`node.spawnBox(size)` は呼出元ノードの子に、ローカル原点・指定サイズの動的 Box を追加する。Transform、BoxPrimitive、BoxCollider、RigidBody を持ち、ハンドルを直ちに返す。サイズは有限の正の Vec3 とする。追加先は Play の展開結果のみで、元のシーンやプレハブは変更しない。生成済みノードの削除 API や Behaviour の動的追加は含まない。
+
+［補足］既存ハンドルは添字で解決し、追加による配列再配置の後も有効。物理は SyncRender の prepare で未登録の追加ノードだけを登録し、既存ボディや積算時間を維持する。描画は完成済みの写しに追加ノードが現れた時点で OGRE ノードとメッシュを追加する。Stop 後は余分な描画資源も破棄する。
+
+［補足］サンプルは (-2, 8, 0) から一辺 0.6 の箱を生成し、初速 (0, -8, 0) と角速度 (15, 25, 10) を与える。Inspector の interval で間隔を変更できる。
+
 `samples/physics` をプロジェクトとして開き F5。球が跳ね、カプセルが倒れて転がり、箱が台へ落下する。F5 で停止すると初期配置へ戻る。
 
 `--smoke-physics [project] [capture-directory]` はプロジェクトの一時コピーで Play を 240 フレーム実行し、描画の移動と Stop 後の復元を検査する。影の ON／OFF と、PSSM 境界の画素差を分けた復元の検証、出力画像の一覧は 09 による。Play 中に描画が変わらない場合、途中で Play が停止した場合、Stop 後に初期状態へ戻らない場合はエラーとする。元のプロジェクトとプロジェクト一覧は変更しない。

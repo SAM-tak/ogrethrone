@@ -308,6 +308,37 @@ THRONE_HOST(nodeName, {
     if (const auto* node = s.target(machine, arguments[0]))
         if (lhat_machine_make_string(machine, node->name.data(), node->name.size(), &answers[0])) *count = 1;
 })
+/// SceneNode.spawnBox(size): appends a dynamic box child to the Play expansion only.
+THRONE_HOST(nodeSpawnBox, {
+    const auto* parent = s.target(machine, arguments[0]);
+    if (!parent) return;
+    const auto size = vec3(s, arguments[1]);
+    if (!std::isfinite(size.x) || !std::isfinite(size.y) || !std::isfinite(size.z) ||
+        size.x <= 0 || size.y <= 0 || size.z <= 0) {
+        lhat_machine_panic_text(machine, "spawnBox size must be finite and positive");
+        return;
+    }
+    const auto bits = reinterpret_cast<std::uintptr_t>(lhat_hostdata_pointer(arguments[0], s.sceneNode));
+    const auto scene = static_cast<std::size_t>(bits >> 32) - 1;
+    const auto index = static_cast<std::size_t>(bits & 0xFFFFFFFFu);
+    auto& nodes = s.expanded.instances[scene].expansion.nodes;
+    SceneNode box;
+    box.id = newNodeId();
+    box.parent = parent->id;
+    box.name = "Spawned Box " + std::to_string(nodes.size());
+    box.transform = Transform{};
+    box.transform->scale = size;
+    box.box = BoxPrimitive{};
+    box.boxCollider = BoxCollider{};
+    box.rigidBody = RigidBody{};
+    box.rigidBody->type = BodyType::Dynamic;
+    auto path = nodes[index].path;
+    path.push_back(box.id);
+    const auto added = nodes.size();
+    nodes.push_back({std::move(path), index, std::move(box)});
+    answers[0] = s.handle(machine, s.sceneNode, State::nodeBits(scene, added));
+    *count = 1;
+})
 /// SceneNode.valid(): whether the node is still in a loaded scene.
 THRONE_HOST(nodeValid, {
     answers[0] = lhat_bool(s.resolve(arguments[0]) != nullptr);
@@ -577,6 +608,7 @@ bool registerThrone(LhatProgram* program, State& s) {
         {"SceneNode", "id", "f^self^ -> number^;", nodeId},
         {"SceneNode", "name", "f^self^ -> string^;", nodeName},
         {"SceneNode", "valid", "f^self^ -> bool^;", nodeValid},
+        {"SceneNode", "spawnBox", "p^self^, throne.Vec3 -> throne.SceneNode;", nodeSpawnBox},
         {"SceneNode", "transform", "f^self^ -> throne.Transform|nil^;", nodeComponent<Transform, &SceneNode::transform>},
         {"SceneNode", "component", "f^self^, string^ -> any^;", scriptComponent},
         {"SceneNode", "setBehaviourRunner", "p^self^, number^, throne.Runner;", moveBehaviour},

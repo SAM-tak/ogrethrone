@@ -5,6 +5,8 @@
 #include <imgui_internal.h>
 #include <cmath>
 #include <cstdio>
+#include <fstream>
+#include <iterator>
 #include <stdexcept>
 
 namespace throne {
@@ -16,7 +18,7 @@ void navigationSmoke(Editor& editor, Ogre::Camera& camera) {
         return (a - b).length() < 0.001f;
     };
     ImVec2 mouse(-100, -100);
-    bool right = false, middle = false, alt = false, ctrl = false, leftShift = false, rightShift = false;
+    bool left = false, right = false, middle = false, alt = false, ctrl = false, leftShift = false, rightShift = false;
     float wheel = 0;
     ImGuiKey key = ImGuiKey_None;
     const auto frame = [&] {
@@ -24,6 +26,7 @@ void navigationSmoke(Editor& editor, Ogre::Camera& camera) {
             auto& io = ImGui::GetIO();
             io.ConfigInputTrickleEventQueue = false;
             io.AddMousePosEvent(mouse.x, mouse.y);
+            io.AddMouseButtonEvent(ImGuiMouseButton_Left, left);
             io.AddMouseButtonEvent(ImGuiMouseButton_Right, right);
             io.AddMouseButtonEvent(ImGuiMouseButton_Middle, middle);
             io.AddKeyEvent(ImGuiMod_Alt, alt);
@@ -32,14 +35,44 @@ void navigationSmoke(Editor& editor, Ogre::Camera& camera) {
             io.AddKeyEvent(ImGuiKey_RightShift, rightShift);
             io.AddKeyEvent(ImGuiMod_Shift, leftShift || rightShift);
             io.AddMouseWheelEvent(0, wheel);
-            for (const auto k : {ImGuiKey_W, ImGuiKey_A, ImGuiKey_S, ImGuiKey_D, ImGuiKey_Q, ImGuiKey_E})
+            for (const auto k : {ImGuiKey_W, ImGuiKey_A, ImGuiKey_S, ImGuiKey_D, ImGuiKey_Q, ImGuiKey_E,
+                                 ImGuiKey_F5, ImGuiKey_Pause})
                 io.AddKeyEvent(k, key == k);
         }), "Navigation smoke renderer stopped");
         wheel = 0;
     };
     for (int i = 0; i < 3; ++i) frame();
+    // Read the rendered background, rather than merely checking the sky's enabled flag.
+    const auto skyCapture = std::filesystem::temp_directory_path() / "ogrethrone-navigation-sky.ppm";
+    const auto captureSky = [&] {
+        editor.captureViewport(skyCapture);
+        std::ifstream stream(skyCapture, std::ios::binary);
+        const std::string pixels(std::istreambuf_iterator<char>(stream), {});
+        const auto start = pixels.find("\n255\n");
+        require(start != std::string::npos && pixels.size() > start + 8, "Sky capture unavailable");
+        return pixels.substr(start + 5, 3);
+    };
+    const auto skyPixel = captureSky();
+    editor.setSkyboxEnabled(false); frame();
+    require(skyPixel != captureSky(), "Skybox toggle did not change the rendered background");
+    editor.setSkyboxEnabled(true); frame();
+    require(skyPixel == captureSky(), "Skybox did not restore its rendered background");
+    std::filesystem::remove(skyCapture);
     const auto* window = ImGui::FindWindowByName("Viewport");
     require(window && !window->Collapsed, "Navigation viewport unavailable");
+    const ImGuiWindow* statistics = nullptr;
+    for (const auto* child : ImGui::GetCurrentContext()->Windows)
+        if (child->ParentWindow == window && std::string(child->Name).find("ViewportStatistics") != std::string::npos)
+            statistics = child;
+    require(statistics && statistics->Active && ImGui::GetIO().Framerate > 0, "Viewport statistics unavailable");
+    const auto expandedHeight = statistics->Size.y;
+    const auto beforeToggle = camera.getPosition();
+    mouse = ImVec2(statistics->Pos.x + 12, statistics->Pos.y + 10);
+    frame(); left = true; frame(); left = false; frame(); frame();
+    require(statistics->Size.y < expandedHeight / 2, "Statistics minimize button did not collapse the panel");
+    left = true; frame(); left = false; frame(); frame();
+    require(statistics->Size.y == expandedHeight, "Statistics expand button did not restore the panel");
+    require(near(beforeToggle, camera.getPosition()), "Statistics button moved the camera");
     const auto origin = window->DC.CursorStartPos;
     const ImVec2 size(window->ContentRegionRect.Max.x - origin.x, window->ContentRegionRect.Max.y - origin.y);
     // Aim at an off-centre piece of ground, away from the other sample meshes.
@@ -112,7 +145,7 @@ void navigationSmoke(Editor& editor, Ogre::Camera& camera) {
 
     // Empty-space clicks preserve the pivot; the following orbit proves its identity.
     const auto pivot = camera.getPosition() + camera.getDirection() * radius;
-    mouse = ImVec2(origin.x + size.x * .95f, origin.y + size.y * .12f);
+    mouse = ImVec2(origin.x + size.x * .2f, origin.y + size.y * .12f);
     frame();
     const auto beforeMiss = camera.getDirection();
     middle = true; frame(); middle = false; frame();
@@ -143,6 +176,46 @@ void navigationSmoke(Editor& editor, Ogre::Camera& camera) {
     wheel = 1; frame();
     require(near(camera.getPosition(), dollyPivot - dollyDirection * (radius * .88f)),
             "Normal wheel dolly did not resume after flight");
-    std::puts("Navigation smoke passed: focus hit/miss, orbit, look, WASD, pan, dolly, fly speed and Left Shift boost");
+    const auto tap = [&](ImGuiKey pressed) {
+        key = pressed; frame(); key = ImGuiKey_None; frame();
+    };
+    const auto initialNodes = editor.frameTimings().nodes;
+    tap(ImGuiKey_Pause);
+    require(!editor.playing() && !editor.paused(), "Pause started an idle session");
+    tap(ImGuiKey_F5);
+    require(editor.playing() && !editor.paused(), "F5 did not start a running session");
+    for (int i = 0; i < 18; ++i) frame();
+    tap(ImGuiKey_Pause);
+    require(editor.playing() && editor.paused(), "Pause key did not suspend Play");
+    const auto pausedBodies = editor.frameTimings().bodies;
+    require(pausedBodies > 5, "Pause test did not exercise the spawning sample");
+    const auto pauseCapture = std::filesystem::temp_directory_path() / "ogrethrone-navigation-pause.ppm";
+    const auto image = [&] {
+        editor.captureViewport(pauseCapture);
+        std::ifstream stream(pauseCapture, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(stream), {});
+    };
+    const auto frozen = image();
+    for (int i = 0; i < 30; ++i) frame();
+    require(editor.frameTimings().bodies == pausedBodies && editor.frameTimings().physicsStepMs == 0,
+            "Pause continued spawning or stepping physics");
+    require(image() == frozen, "Paused scene poses changed");
+    const auto beforePausedFly = camera.getPosition();
+    right = true; frame(); key = ImGuiKey_W; frame();
+    key = ImGuiKey_None; right = false; frame();
+    require(editor.paused() && !near(beforePausedFly, camera.getPosition()), "Pause disabled viewport navigation");
+    tap(ImGuiKey_Pause);
+    require(!editor.paused() && editor.playing(), "Pause key did not resume Play");
+    for (int i = 0; i < 12; ++i) frame();
+    require(editor.frameTimings().bodies > pausedBodies && editor.frameTimings().physicsStepMs > 0,
+            "Resume did not restart spawning and physics");
+    tap(ImGuiKey_Pause); tap(ImGuiKey_F5);
+    require(!editor.playing() && !editor.paused() && editor.frameTimings().bodies == 0 &&
+            editor.frameTimings().nodes == initialNodes, "Stop while paused did not restore the scene");
+    tap(ImGuiKey_F5);
+    require(editor.playing() && !editor.paused(), "A new Play session inherited Pause");
+    tap(ImGuiKey_F5);
+    std::filesystem::remove(pauseCapture);
+    std::puts("Navigation smoke passed: camera controls, statistics, Pause/Resume, frozen poses/spawning and Stop restoration");
 }
 }

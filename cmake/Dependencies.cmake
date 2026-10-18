@@ -39,6 +39,7 @@ set(OGRE_CONFIG_ENABLE_JSON ON CACHE BOOL "Colibri skins and OGRE materials use 
 set(OGRE_CONFIG_ENABLE_STBI ON CACHE BOOL "Use the built-in image codec" FORCE)
 set(Rapidjson_INCLUDE_DIR "${PROJECT_SOURCE_DIR}/third_party/rapidjson/include")
 set(OGRE_BUILD_COMPONENT_DEAR_IMGUI ON CACHE BOOL "Use OGRE's ImGui renderer")
+set(OGRE_BUILD_COMPONENT_ATMOSPHERE ON CACHE BOOL "Use OGRE's procedural sky" FORCE)
 # The upstream ImGui component concatenates this path with source filenames.
 set(DearImgui_INCLUDE_DIR "${PROJECT_SOURCE_DIR}/third_party/imgui/")
 # OGRE uses glslang's C++ API directly. Build it with the same CRT and configuration.

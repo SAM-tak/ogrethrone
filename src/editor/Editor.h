@@ -32,6 +32,7 @@ class CompositorPassImguiProvider;
 class HlmsPbs;
 class HlmsPbsDatablock;
 class Light;
+class AtmosphereNpr;
 class HlmsUnlit;
 class HlmsUnlitDatablock;
 }
@@ -73,12 +74,26 @@ public:
     /// @param input Optional input replay hook, called after platform polling and before NewFrame.
     /// Returns false when the renderer requests shutdown.
     bool frame(float deltaSeconds, const std::function<void()>& input = {});
+    /// Wall-clock milliseconds for one completed frame. Physics runs alongside rendering;
+    /// render/present includes driver/GPU/display waits, so these are not GPU timestamps.
+    struct FrameTimings {
+        double frameMs = 0, uiMs = 0, scriptMs = 0, snapshotMs = 0;
+        double physicsApplyMs = 0, physicsPrepareMs = 0, physicsStepMs = 0;
+        double renderSyncMs = 0, renderMs = 0, waitMs = 0;
+        std::size_t nodes = 0, bodies = 0;
+    };
+    /// The last completed frame, for profiling without FPS averaging or fixed-delta assumptions.
+    const FrameTimings& frameTimings() const { return timings_; }
     /// Enables/disables shadow casting while preserving direct and ambient lighting.
     void setShadowsEnabled(bool enabled);
+    /// Shows or hides the procedural sky without modifying scene lights or physics.
+    void setSkyboxEnabled(bool enabled);
     /// Downloads the rendered viewport to a portable RGB image for visual smoke checks.
     void captureViewport(const std::filesystem::path& path);
     /// Whether a Play session currently owns the expanded world.
     bool playing() const { return runtime_ != nullptr; }
+    /// Whether Play is suspended while viewport navigation and rendering remain active.
+    bool paused() const { return runtime_ != nullptr && paused_; }
     /// True once the user chose to close (File > Exit or the window's close button),
     /// after resolving unsaved changes.
     bool shouldClose() const { return close_; }
@@ -264,6 +279,8 @@ private:
     void play();
     /// Leaves Play mode; the next refreshView() shows the document again.
     void stop();
+    /// Suspends/resumes the current Play session; has no effect outside Play.
+    void togglePause();
     /// Performs @p action now, or asks first when the document has unsaved changes.
     void requestLeave(Leave action);
     /// Performs @p action without asking.
@@ -331,6 +348,8 @@ private:
     Ogre::HlmsUnlit& unlit_;
     Ogre::HlmsPbs& pbs_;
     Ogre::Light* sun_ = nullptr;
+    std::unique_ptr<Ogre::AtmosphereNpr> sky_;
+    bool skyboxEnabled_ = true;
     Ogre::SceneNode* sunNode_ = nullptr;
     bool shadowsEnabled_ = true;
     EditorPlatform platform_;
@@ -346,6 +365,8 @@ private:
     std::vector<RenderObject> renderObjects_;
     /// One OGRE node per view_ instance, placing its scene; the scene's roots are its children.
     std::vector<Ogre::SceneNode*> sceneRoots_;
+    /// Stable index lookup for existing nodes while runtime spawning appends children.
+    std::vector<std::vector<Ogre::SceneNode*>> sceneNodes_;
     std::optional<Project> project_;
     ProjectList projects_;
     std::filesystem::path projectListFile_;
@@ -381,6 +402,7 @@ private:
     std::vector<std::tuple<std::size_t, NodePath, std::size_t>> viewShape_;
     /// Non-null while playing.
     std::unique_ptr<ScriptRuntime> runtime_;
+    bool paused_ = false;
     /// What the console runs on while not playing: an empty world, and a runtime on it.
     World consoleWorld_;
     LevelExpansion consoleView_;
@@ -412,6 +434,9 @@ private:
     /// Navigation gesture captured by the viewport; disables the gizmo until release.
     enum class ViewDrag { None, Fly, Pan, Orbit, Dolly };
     ViewDrag viewDrag_ = ViewDrag::None;
+    bool showStatistics_ = true;
+    bool statisticsCollapsed_ = false;
+    FrameTimings timings_, averageTimings_;
     bool showGrid_ = true, orthographic_ = false, close_ = false;
     bool dirty_ = false, showFiles_ = false, saving_ = true, confirmClose_ = false;
     /// Project-relative path of the open level.
