@@ -456,6 +456,47 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         }
         ImGui::PopID();
     };
+    const auto texturePath=[&](const char* label,std::string& path) {
+        char text[256]; fill(text,path); bool edited=ImGui::InputText(label,text,sizeof text); track();
+        if(edited) path=text; return edited;
+    };
+    component("PBS Material",value.material,&SceneNode::material,&NodeOverride::material,[&](auto& c) {
+        bool edited=scalar("Roughness",c.roughness,.02f,1);
+        bool metallic=c.metalness>=0;
+        if(ImGui::Checkbox("Metallic Workflow",&metallic)) { c.metalness=metallic?0.0f:-1.0f; edited=true; } track();
+        if(metallic) edited|=scalar("Metalness",c.metalness,0,1);
+        else { edited|=ImGui::ColorEdit3("Fresnel F0",c.fresnel.data()); track(); }
+        edited|=ImGui::ColorEdit3("Emissive",c.emissive.data(),ImGuiColorEditFlags_HDR|ImGuiColorEditFlags_Float); track();
+        edited|=scalar("UV Scale",c.uvScale,.001f,10000);
+        edited|=texturePath("Diffuse Map",c.diffuseMap); edited|=texturePath("Normal Map",c.normalMap);
+        edited|=texturePath("Roughness Map",c.roughnessMap); edited|=texturePath("Specular Map",c.specularMap);
+        edited|=texturePath("Reflection Cubemap",c.reflectionMap); return edited;
+    });
+    component("Light",value.light,&SceneNode::light,&NodeOverride::light,[&](auto& c) {
+        int type=static_cast<int>(c.type);
+        bool edited=ImGui::Combo("Type",&type,"Directional\0Point\0Spot\0Area Approx\0Area LTC\0"); track();
+        c.type=static_cast<LightType>(type);
+        edited|=ImGui::Checkbox("Enabled",&c.enabled); track(); edited|=colour(c);
+        edited|=scalar("Power",c.power,0);
+        auto direction=c.direction;
+        if(vector("Direction (local)",direction) && direction.x*direction.x+direction.y*direction.y+direction.z*direction.z>1e-10f) { c.direction=direction; edited=true; }
+        if(c.type!=LightType::Directional) {
+            edited|=scalar("Radius",c.radius); edited|=scalar("Falloff Threshold",c.threshold,.00001f,.999f);
+        }
+        if(c.type==LightType::Spot) {
+            edited|=scalar("Inner Angle",c.innerAngle,.01f,179);
+            c.outerAngle=(std::max)(c.outerAngle,c.innerAngle);
+            edited|=scalar("Outer Angle",c.outerAngle,c.innerAngle,179);
+        }
+        if(c.type==LightType::AreaApprox || c.type==LightType::AreaLtc) {
+            edited|=scalar("Width",c.width); edited|=scalar("Height",c.height);
+            edited|=ImGui::Checkbox("Two Sided",&c.twoSided); track();
+            edited|=ImGui::Checkbox("Show Emitter",&c.showEmitter); track();
+            edited|=texturePath("Approx Mask",c.mask);
+            ImGui::TextDisabled("Area lights use Forward; shadows are not generated.");
+        }
+        return edited;
+    });
     component("Sphere Primitive",value.sphere,&SceneNode::sphere,&NodeOverride::sphere,[&](auto& c) {
         bool edited=colour(c); edited|=scalar("Radius",c.radius); return edited;
     });
@@ -499,6 +540,8 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         };
         addPrimitive("Box Primitive",PrimitiveKind::Box); addPrimitive("Sphere Primitive",PrimitiveKind::Sphere);
         addPrimitive("Capsule Primitive",PrimitiveKind::Capsule); addPrimitive("Plane Primitive",PrimitiveKind::Plane);
+        if(!own->material && ImGui::Selectable("PBS Material")) checkpoint(),own->material.emplace();
+        if(!own->light && ImGui::Selectable("Light")) checkpoint(),own->light.emplace();
         if(!own->boxCollider && ImGui::Selectable("Box Collider")) checkpoint(),own->boxCollider.emplace();
         if(!own->sphereCollider && ImGui::Selectable("Sphere Collider")) checkpoint(),own->sphereCollider.emplace();
         if(!own->capsuleCollider && ImGui::Selectable("Capsule Collider")) checkpoint(),own->capsuleCollider.emplace();

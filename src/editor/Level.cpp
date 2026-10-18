@@ -25,6 +25,15 @@ void Level::save(const std::filesystem::path& path) const {
     const auto root = out.table();
     out.set(root, "format", out.string(levelFormat));
     out.set(root, "version", lhat_integer(levelVersion));
+    const auto settings=out.table();
+    const auto& r=rendering;
+    for(const auto& v:{std::pair{"defaultSun",r.defaultSun},std::pair{"sky",r.sky},std::pair{"grid",r.grid},std::pair{"clustered",r.clustered},
+        std::pair{"debugClusters",r.debugClusters},std::pair{"openingCamera",r.openingCamera}}) out.set(settings,v.first,lhat_bool(v.second));
+    for(const auto& v:{std::pair{"ambientUpper",&r.ambientUpper},std::pair{"ambientLower",&r.ambientLower},
+        std::pair{"ambientDirection",&r.ambientDirection},std::pair{"target",&r.target}}) out.set(settings,v.first,out.vector(v.second->data()));
+    for(const auto& v:{std::pair{"minDistance",r.minDistance},std::pair{"maxDistance",r.maxDistance},
+        std::pair{"yaw",r.yaw},std::pair{"pitch",r.pitch},std::pair{"distance",r.distance}}) out.set(settings,v.first,lhat_real(v.second));
+    out.set(root,"rendering",settings);
     const auto list = out.table();
     for (const auto& instance : scenes) {
         const auto item = out.table();
@@ -58,6 +67,24 @@ Level Level::load(const std::filesystem::path& path) {
     const lton::Document document(path);
     document.expect(levelFormat, levelVersion);
     Level result;
+    if(const auto value=lton::field(document.root(),"rendering"); !lhat_is_nil(value)) {
+        const auto& t=lton::table(value); auto& r=result.rendering;
+        for(const auto& v:{std::pair{"defaultSun",&r.defaultSun},std::pair{"sky",&r.sky},std::pair{"grid",&r.grid},std::pair{"clustered",&r.clustered},
+            std::pair{"debugClusters",&r.debugClusters},std::pair{"openingCamera",&r.openingCamera}}) {
+            if(const auto f=lton::field(t,v.first); !lhat_is_nil(f)) {
+                if(!lhat_is_bool(f)) lton::invalid(); *v.second=lhat_as_bool(f);
+            }
+        }
+        for(const auto& v:{std::pair{"ambientUpper",&r.ambientUpper},std::pair{"ambientLower",&r.ambientLower},
+            std::pair{"ambientDirection",&r.ambientDirection},std::pair{"target",&r.target}})
+            if(const auto f=lton::field(t,v.first); !lhat_is_nil(f)) lton::vector(f,v.second->data());
+        for(const auto& v:{std::pair{"minDistance",&r.minDistance},std::pair{"maxDistance",&r.maxDistance},
+            std::pair{"yaw",&r.yaw},std::pair{"pitch",&r.pitch},std::pair{"distance",&r.distance}})
+            if(const auto f=lton::field(t,v.first); !lhat_is_nil(f)) *v.second=static_cast<float>(lton::number(f));
+        if(r.minDistance<=0 || r.maxDistance<=r.minDistance || r.distance<.1f || r.pitch< -1.55f || r.pitch>1.55f) lton::invalid();
+        for(const auto* c:{&r.ambientUpper,&r.ambientLower}) for(float v:{c->x,c->y,c->z}) if(v<0) lton::invalid();
+        if(r.ambientDirection.x*r.ambientDirection.x+r.ambientDirection.y*r.ambientDirection.y+r.ambientDirection.z*r.ambientDirection.z<1e-10f) lton::invalid();
+    }
     const auto& list = lton::table(lton::field(document.root(), "scenes"));
     for (std::size_t i = 0, count = lton::sequence(list); i < count; ++i) {
         const auto& item = lton::table(lton::at(list, i));

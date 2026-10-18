@@ -66,6 +66,11 @@ THRONE_BIND_COMPONENT(SphereCollider, sphereCollider)
 THRONE_BIND_COMPONENT(CapsuleCollider, capsuleCollider)
 THRONE_BIND_COMPONENT(PlaneCollider, planeCollider)
 THRONE_BIND_COMPONENT(RigidBody, rigidBody)
+THRONE_BIND_COMPONENT(PbsMaterial, material)
+template <> struct ComponentBinding<LightComponent> {
+    static constexpr const char* name = "Light";
+    static constexpr auto member = &SceneNode::light;
+};
 #undef THRONE_BIND_COMPONENT
 
 /// Returns a number argument as a double, accepting integers and reals.
@@ -555,6 +560,8 @@ void query(LhatMachine* machine, void* context, const LhatValue* arguments, std:
                 if(name=="CapsuleCollider") present=bool(node.capsuleCollider);
                 if(name=="PlaneCollider") present=bool(node.planeCollider);
                 if(name=="RigidBody") present=bool(node.rigidBody);
+                if(name=="PbsMaterial") present=bool(node.material);
+                if(name=="Light") present=bool(node.light);
                 if(!s.componentTags.count(std::string(name))) present=node.scriptComponents.count(std::string(name))!=0;
                 matches=matches && present;
             }
@@ -581,7 +588,7 @@ bool registerThrone(LhatProgram* program, State& s) {
     if (!s.vec3 || !s.sceneNode || !s.runner || !s.transform || !s.box) return false;
     s.componentTags["Transform"]=s.transform;
     s.componentTags["BoxPrimitive"]=s.box;
-    for(const char* name:{"SpherePrimitive","CapsulePrimitive","PlanePrimitive","BoxCollider","SphereCollider","CapsuleCollider","PlaneCollider","RigidBody"}) {
+    for(const char* name:{"SpherePrimitive","CapsulePrimitive","PlanePrimitive","BoxCollider","SphereCollider","CapsuleCollider","PlaneCollider","RigidBody","PbsMaterial","Light"}) {
         auto* tag=lhat_register_hostdata_type(program,moduleName,name);
         if(!tag) return false;
         s.componentTags[name]=tag;
@@ -649,6 +656,14 @@ bool registerThrone(LhatProgram* program, State& s) {
         {"PlaneCollider", "centre", "f^self^ -> throne.Vec3;", componentVector<PlaneCollider, &Collider::centre>},
         {"PlaneCollider", "width", "f^self^ -> number^;", componentScalar<PlaneCollider, &PlaneCollider::width>},
         {"PlaneCollider", "depth", "f^self^ -> number^;", componentScalar<PlaneCollider, &PlaneCollider::depth>},
+        {"SceneNode", "material", "f^self^ -> throne.PbsMaterial|nil^;", nodeComponent<PbsMaterial, &SceneNode::material>},
+        {"PbsMaterial", "roughness", "f^self^ -> number^;", componentScalar<PbsMaterial, &PbsMaterial::roughness>},
+        {"PbsMaterial", "metalness", "f^self^ -> number^;", componentScalar<PbsMaterial, &PbsMaterial::metalness>},
+        {"SceneNode", "light", "f^self^ -> throne.Light|nil^;", nodeComponent<LightComponent, &SceneNode::light>},
+        {"Light", "colour", "f^self^ -> throne.Vec3;", primitiveColourGet<LightComponent>},
+        {"Light", "setColour", "p^self^, throne.Vec3;", primitiveColourSet<LightComponent>},
+        {"Light", "power", "f^self^ -> number^;", componentScalar<LightComponent, &LightComponent::power>},
+        {"Light", "radius", "f^self^ -> number^;", componentScalar<LightComponent, &LightComponent::radius>},
         {"SceneNode", "rigidBody", "f^self^ -> throne.RigidBody|nil^;", nodeComponent<RigidBody, &SceneNode::rigidBody>},
         {"RigidBody", "type", "f^self^ -> string^;", bodyMotionType},
         {"RigidBody", "linearVelocity", "f^self^ -> throne.Vec3;", componentVector<RigidBody, &RigidBody::linearVelocity>},

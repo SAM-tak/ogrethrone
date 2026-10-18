@@ -90,6 +90,14 @@ public:
     void setSkyboxEnabled(bool enabled);
     /// Downloads the rendered viewport to a portable RGB image for visual smoke checks.
     void captureViewport(const std::filesystem::path& path);
+    /// Opens a project-relative level; returns false if loading fails or Play is active.
+    bool openLevel(const std::string& path);
+    /// Selects the viewport's local-light culling algorithm.
+    void setForwardClustered(bool enabled) { doc_.world.level.rendering.clustered=enabled; }
+    /// Shows the Forward+ light-density debug overlay.
+    void setClusterDebug(bool enabled) { doc_.world.level.rendering.debugClusters=enabled; }
+    /// Preview override: -1 authored, 0 textured approximation, 1 LTC.
+    void setAreaLightModel(int model) { areaLightModel_=model; }
     /// Whether a Play session currently owns the expanded world.
     bool playing() const { return runtime_ != nullptr; }
     /// Whether Play is suspended while viewport navigation and rendering remain active.
@@ -130,6 +138,15 @@ private:
         std::string materialName;
         PrimitiveShape shape;
         Vec3 lower, upper;
+        float uvScale = 1;
+        Ogre::Light* light = nullptr;
+        Ogre::SceneNode* lightNode = nullptr;
+        Ogre::SceneNode* emitterNode = nullptr;
+        Ogre::ManualObject* emitter = nullptr;
+        Ogre::HlmsUnlitDatablock* emitterMaterial = nullptr;
+        std::optional<PbsMaterial> surface;
+        PrimitiveShape emitterShape;
+
     };
     /// Everything the editor edits; one undo step is a copy of it.
     struct Document {
@@ -208,6 +225,10 @@ private:
     void destroyRenderObjects();
     /// Copies node transforms and colours to the render objects and the selection outline.
     void syncTransforms(const LevelExpansion* snapshot = nullptr);
+    /// Applies persisted lighting settings, including the Forward+ method.
+    void syncLighting();
+    /// Loads one project texture with a project-qualified cache key; masks share an R8 pool.
+    Ogre::TextureGpu* projectTexture(const std::string& path, int kind, bool mask = false);
     /// Records the current world for undo before an edit.
     void checkpoint();
     /// Records @p before for undo when an edit that started from it has finished.
@@ -352,6 +373,11 @@ private:
     bool skyboxEnabled_ = true;
     Ogre::SceneNode* sunNode_ = nullptr;
     bool shadowsEnabled_ = true;
+    int areaLightModel_ = -1;
+    std::optional<bool> clustered_;
+    float clusterMin_ = 0, clusterMax_ = 0;
+    std::map<std::tuple<std::string,int,bool>,Ogre::TextureGpu*> projectTextures_;
+
     EditorPlatform platform_;
     std::unique_ptr<Ogre::ImguiManager> gui_;
     std::unique_ptr<Ogre::CompositorPassImguiProvider> guiPass_;

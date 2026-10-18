@@ -16,7 +16,7 @@ struct PrimitiveShape {
     bool operator!=(const PrimitiveShape& other) const { return !(*this==other); }
 };
 /// One vertex with a unit outward normal for physically based lighting.
-struct PrimitiveVertex { Vec3 position, normal; };
+struct PrimitiveVertex { Vec3 position, normal; float u = 0, v = 0; Vec3 tangent{1,0,0}; };
 /// Engine-neutral triangles and their local bounds, used for rendering and picking.
 struct PrimitiveMesh {
     std::vector<PrimitiveVertex> vertices;

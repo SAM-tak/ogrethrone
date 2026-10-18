@@ -137,6 +137,41 @@ void readExtraComponents(const LhatTable& table, Node& node) {
         if (const auto v = lton::field(t, "colour"); !lhat_is_nil(v)) lton::vector(v, c.colour.data());
         for (float v : c.colour) if (v < 0 || v > 1) lton::invalid();
     };
+    read("material", node.material, [&](const auto& t, auto& c) {
+        c.roughness = scalar(t,"roughness",c.roughness,0.02f,1);
+        c.metalness = scalar(t,"metalness",c.metalness,-1,1);
+        c.uvScale = scalar(t,"uvScale",c.uvScale,0.001f,10000);
+        for (const auto& entry : {std::pair{"fresnel",&c.fresnel},std::pair{"emissive",&c.emissive}}) {
+            if (const auto v=lton::field(t,entry.first); !lhat_is_nil(v)) lton::vector(v,entry.second->data());
+            for (float v:*entry.second) if (v<0 || v>(std::string_view(entry.first)=="fresnel"?1.0f:1.0e6f)) lton::invalid();
+        }
+        for (const auto& entry : {std::pair{"diffuseMap",&c.diffuseMap},std::pair{"normalMap",&c.normalMap},
+            std::pair{"roughnessMap",&c.roughnessMap},std::pair{"specularMap",&c.specularMap},std::pair{"reflectionMap",&c.reflectionMap}})
+            if (const auto v=lton::field(t,entry.first); !lhat_is_nil(v)) *entry.second=lton::relativePath(v);
+    });
+    read("light", node.light, [&](const auto& t, auto& c) {
+        if (const auto v=lton::field(t,"type"); !lhat_is_nil(v)) {
+            const auto type=lton::string(v);
+            if(type=="Directional") c.type=LightType::Directional;
+            else if(type=="Point") c.type=LightType::Point;
+            else if(type=="Spot") c.type=LightType::Spot;
+            else if(type=="AreaApprox") c.type=LightType::AreaApprox;
+            else if(type=="AreaLtc") c.type=LightType::AreaLtc;
+            else lton::invalid();
+        }
+        colour(t,c);
+        c.power=scalar(t,"power",c.power);
+        c.radius=scalar(t,"radius",c.radius,0.001f);
+        c.threshold=scalar(t,"threshold",c.threshold,0.00001f,0.999f);
+        c.innerAngle=scalar(t,"innerAngle",c.innerAngle,0.01f,179);
+        c.outerAngle=scalar(t,"outerAngle",c.outerAngle,c.innerAngle,179);
+        c.width=scalar(t,"width",c.width,0.001f); c.height=scalar(t,"height",c.height,0.001f);
+        c.enabled=flag(t,"enabled",c.enabled); c.twoSided=flag(t,"twoSided",c.twoSided);
+        c.showEmitter=flag(t,"showEmitter",c.showEmitter);
+        if(const auto v=lton::field(t,"direction"); !lhat_is_nil(v)) lton::vector(v,c.direction.data());
+        if(c.direction.x*c.direction.x+c.direction.y*c.direction.y+c.direction.z*c.direction.z < 1.0e-10f) lton::invalid();
+        if(const auto v=lton::field(t,"mask"); !lhat_is_nil(v)) c.mask=lton::relativePath(v);
+    });
     read("sphere", node.sphere, [&](const auto& t, auto& c) {
         colour(t, c); c.radius = scalar(t, "radius", c.radius, 0.001f);
     });
@@ -194,6 +229,25 @@ void writeExtraComponents(lton::Writer& out, LhatValue table, const Node& node) 
         const auto value = out.table(); fields(value, *component); out.set(table, key, value);
     };
     const auto colour = [&](LhatValue t, const auto& c) { out.set(t, "colour", out.vector(c.colour.data())); };
+    write("material", node.material, [&](auto t, const auto& c) {
+        out.set(t,"roughness",lhat_real(c.roughness)); out.set(t,"metalness",lhat_real(c.metalness));
+        out.set(t,"fresnel",out.vector(c.fresnel.data())); out.set(t,"emissive",out.vector(c.emissive.data()));
+        out.set(t,"uvScale",lhat_real(c.uvScale));
+        for(const auto& entry:{std::pair{"diffuseMap",&c.diffuseMap},std::pair{"normalMap",&c.normalMap},
+            std::pair{"roughnessMap",&c.roughnessMap},std::pair{"specularMap",&c.specularMap},std::pair{"reflectionMap",&c.reflectionMap}})
+            if(!entry.second->empty()) out.set(t,entry.first,out.string(*entry.second));
+    });
+    write("light", node.light, [&](auto t,const auto& c) {
+        const char* types[]={"Directional","Point","Spot","AreaApprox","AreaLtc"};
+        out.set(t,"type",out.string(types[static_cast<int>(c.type)])); colour(t,c);
+        out.set(t,"direction",out.vector(c.direction.data()));
+        for(const auto& entry:{std::pair{"power",c.power},std::pair{"radius",c.radius},std::pair{"threshold",c.threshold},
+            std::pair{"innerAngle",c.innerAngle},std::pair{"outerAngle",c.outerAngle},std::pair{"width",c.width},std::pair{"height",c.height}})
+            out.set(t,entry.first,lhat_real(entry.second));
+        out.set(t,"enabled",lhat_bool(c.enabled)); out.set(t,"twoSided",lhat_bool(c.twoSided));
+        out.set(t,"showEmitter",lhat_bool(c.showEmitter));
+        if(!c.mask.empty()) out.set(t,"mask",out.string(c.mask));
+    });
     write("sphere", node.sphere, [&](auto t, const auto& c) { colour(t, c); out.set(t, "radius", lhat_real(c.radius)); });
     write("capsule", node.capsule, [&](auto t, const auto& c) {
         colour(t, c); out.set(t, "radius", lhat_real(c.radius)); out.set(t, "height", lhat_real(c.height));
@@ -258,7 +312,7 @@ SceneNode readNode(const LhatTable& entry) {
             while (lhat_table_walk(&walk, &key, &value)) {
                 const auto componentName = name(key);
                 for(const char* builtIn:{"Transform","BoxPrimitive","SpherePrimitive","CapsulePrimitive","PlanePrimitive",
-                                        "BoxCollider","SphereCollider","CapsuleCollider","PlaneCollider","RigidBody"})
+                                        "BoxCollider","SphereCollider","CapsuleCollider","PlaneCollider","RigidBody","PbsMaterial","Light"})
                     if(componentName==builtIn) lton::invalid();
                 const auto& item = lton::table(value);
                 node.scriptComponents[componentName] = {lton::relativePath(lton::field(item, "script")),

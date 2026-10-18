@@ -1,0 +1,13 @@
+# A node attachment: each scene or prefab instance gets its own Behaviour.
+module^ samples.spin
+import^ throne
+
+public^let^ Behaviour = def^{
+    self^{ @export degreesPerSecond = 90 },
+    update = p^self^, node:throne.SceneNode, dt:number^ {
+        let^ t = node.transform()
+        if^ t != nil^ {
+            t.setRotation(t.rotation() + throne.vec3(0, self^.degreesPerSecond * dt, 0))
+        }
+    },
+}

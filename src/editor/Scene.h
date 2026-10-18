@@ -78,6 +78,32 @@ struct PlanePrimitive {
     std::array<float, 3> colour{0.35f, 0.45f, 0.35f};
     float width = 10, depth = 10;
 };
+/// Authored PBS surface settings; primitive colour supplies the diffuse/base colour.
+struct PbsMaterial {
+    float roughness = 0.65f;
+    std::array<float,3> fresnel{0.04f,0.04f,0.04f};
+    /// A negative value selects the specular/Fresnel workflow, otherwise metallic [0,1].
+    float metalness = -1;
+    std::array<float,3> emissive{0,0,0};
+    /// Project-relative textures; @ogre/ refers to the pinned OGRE sample media.
+    std::string diffuseMap, normalMap, roughnessMap, specularMap, reflectionMap;
+    float uvScale = 1;
+};
+/// Supported OGRE light models. Rectangular lights use regular Forward.
+enum class LightType { Directional, Point, Spot, AreaApprox, AreaLtc };
+/// A light attached to the node's transform; direction is in node-local space.
+struct LightComponent {
+    LightType type = LightType::Point;
+    std::array<float,3> colour{1,1,1};
+    float power = 3.14159265f, radius = 10, threshold = 0.01f;
+    Vec3 direction{0,0,-1};
+    float innerAngle = 30, outerAngle = 45;
+    float width = 1, height = 1;
+    bool enabled = true, twoSided = false, showEmitter = true;
+    /// A project-relative mask texture, used by AreaApprox only.
+    std::string mask;
+};
+
 /// Material and local offset shared by collision shapes. Density determines mass.
 struct Collider {
     Vec3 centre;
@@ -116,6 +142,8 @@ struct NodeOverride {
     std::optional<SpherePrimitive> sphere;
     std::optional<CapsulePrimitive> capsule;
     std::optional<PlanePrimitive> plane;
+    std::optional<PbsMaterial> material;
+    std::optional<LightComponent> light;
     std::optional<BoxCollider> boxCollider;
     std::optional<SphereCollider> sphereCollider;
     std::optional<CapsuleCollider> capsuleCollider;
@@ -203,6 +231,8 @@ struct SceneNode {
     std::optional<SpherePrimitive> sphere;
     std::optional<CapsulePrimitive> capsule;
     std::optional<PlanePrimitive> plane;
+    std::optional<PbsMaterial> material;
+    std::optional<LightComponent> light;
     std::optional<BoxCollider> boxCollider;
     std::optional<SphereCollider> sphereCollider;
     std::optional<CapsuleCollider> capsuleCollider;
@@ -221,6 +251,8 @@ struct SceneNode {
 
 /// Copies only overrides of components that the target already owns.
 inline void applyExtraComponents(SceneNode& node, const NodeOverride& layer) {
+    if (node.material && layer.material) node.material = layer.material;
+    if (node.light && layer.light) node.light = layer.light;
     if (node.sphere && layer.sphere) node.sphere = layer.sphere;
     if (node.capsule && layer.capsule) node.capsule = layer.capsule;
     if (node.plane && layer.plane) node.plane = layer.plane;

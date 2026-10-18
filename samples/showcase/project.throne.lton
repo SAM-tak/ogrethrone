@@ -1,0 +1,4 @@
+format = "ogrethrone-project",
+version = 1,
+name = "OGRE Lighting and Materials",
+mainLevel = "levels/area-lights.level.lton",

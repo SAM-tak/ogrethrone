@@ -44,6 +44,9 @@ PrimitiveMesh primitiveMesh(const PrimitiveShape& s) {
                 p.data()[(axis+2)%3]=corner>=2?.5f:-.5f;
                 Vec3 normal; normal.data()[axis]=side<0?-1.0f:1.0f;
                 vertex(p,normal);
+                auto& v=mesh.vertices.back();
+                v.u=p.data()[(axis+1)%3]+.5f; v.v=p.data()[(axis+2)%3]+.5f;
+                v.tangent={}; v.tangent.data()[(axis+1)%3]=1;
             }
             if(side<0) quad(base,base+3,base+2,base+1);
             else quad(base,base+1,base+2,base+3);
@@ -51,6 +54,7 @@ PrimitiveMesh primitiveMesh(const PrimitiveShape& s) {
     } else if(s.kind==PrimitiveKind::Plane) {
         vertex({-s.width/2,0,-s.depth/2},{0,1,0}); vertex({s.width/2,0,-s.depth/2},{0,1,0});
         vertex({s.width/2,0,s.depth/2},{0,1,0}); vertex({-s.width/2,0,s.depth/2},{0,1,0});
+        for(auto& v:mesh.vertices) { v.u=v.position.x/s.width+.5f; v.v=.5f-v.position.z/s.depth; }
         quad(0,3,2,1);
     } else if(s.kind==PrimitiveKind::Sphere || s.kind==PrimitiveKind::Capsule) {
         const float half=s.kind==PrimitiveKind::Capsule?(std::max)(0.0f,s.height/2-s.radius):0;
@@ -64,6 +68,8 @@ PrimitiveMesh primitiveMesh(const PrimitiveShape& s) {
             const float longitude=segment*2*pi/32;
             const Vec3 normal{std::cos(latitude)*std::cos(longitude),std::sin(latitude),std::cos(latitude)*std::sin(longitude)};
             vertex(normal*s.radius+Vec3{0,offset,0},normal);
+            auto& v=mesh.vertices.back(); v.u=segment/32.0f; v.v=.5f-latitude/pi;
+            v.tangent={-std::sin(longitude),0,std::cos(longitude)};
         }
         for(std::uint32_t ring=0;ring+1<rings.size();++ring)
             for(std::uint32_t segment=0;segment<32;++segment) {

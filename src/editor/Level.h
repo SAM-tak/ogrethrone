@@ -18,10 +18,23 @@ struct SceneInstance {
     Transform transform;
 };
 
+/// Persisted level lighting and the initial editor camera for authored showcases.
+struct RenderingSettings {
+    bool defaultSun = true, sky = true, grid = true, clustered = true, debugClusters = false;
+    Vec3 ambientUpper{.22f,.25f,.30f}, ambientLower{.06f,.07f,.09f};
+    Vec3 ambientDirection{0,1,0};
+    float minDistance = .1f, maxDistance = 100;
+    /// Optional opening view: orbit target, radians and distance.
+    bool openingCamera = false;
+    Vec3 target{0,.5f,0};
+    float yaw = .65f, pitch = .45f, distance = 9;
+};
+
 /// The game-side data of one level (TDDja/04, 05, 06): the scene instances it
 /// starts with and the runners that belong to the level itself. A level holds
 /// no scene nodes of its own. Independent of OGRE and the simulation world.
 struct Level : RunnerSet {
+    RenderingSettings rendering;
     /// Scene instances loaded when the level starts, in order.
     std::vector<SceneInstance> scenes;
     std::uint32_t nextSceneId = 1;

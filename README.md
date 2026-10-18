@@ -63,9 +63,16 @@ A project is a folder containing `project.throne.lton`:
     scripts/              # *.lh
 ```
 
-Every path inside a project, including those stored in levels and scenes, is
-relative to the project folder. [`samples/basic`](samples/basic) is a sample project; the VS Code
+Paths stored in levels and scenes are relative to the project folder; texture
+paths starting with `@ogre/` refer to the pinned OGRE sample media. [`samples/basic`](samples/basic) is a sample project; the VS Code
 launch configurations open it or show the launcher.
+
+[`samples/showcase`](samples/showcase) ports the OGRE Forward3D, PBS Materials and
+Area Lights scenes to editable Throne levels. Open the project and choose a level
+in **Browser > Levels**. **Lighting** switches Forward3D/Clustered, cluster debug
+and Approx/LTC area-light previews. Light and PBS Material components are editable
+in Inspector and persist with scenes and prefab overrides. See the sample's
+[README](samples/showcase/README.md) for controls and source attribution.
 
 The editor's dockable panels are Scene, Runners, Inspector, Viewport, Browser and Console
 (the layout is kept in `editor.ini` beside the project list). The data is split

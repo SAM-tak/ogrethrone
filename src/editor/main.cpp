@@ -30,6 +30,7 @@
 #include <array>
 #ifdef THRONE_NAVIGATION_SMOKE
 #include "navigation_smoke.h"
+#include "showcase_smoke.h"
 #endif
 
 namespace {
@@ -66,21 +67,22 @@ int main(int argc, char** argv) {
     }
     const bool physicsSmoke = argc > 1 && std::strcmp(argv[1], "--smoke-physics") == 0;
     const bool profilePhysics = argc > 1 && std::strcmp(argv[1], "--profile-physics") == 0;
-    bool navigationSmoke = false;
+    bool navigationSmoke = false, showcaseSmoke = false;
 #ifdef THRONE_NAVIGATION_SMOKE
+    showcaseSmoke = argc > 1 && std::strcmp(argv[1], "--smoke-showcases") == 0;
     navigationSmoke = argc > 1 && std::strcmp(argv[1], "--smoke-navigation") == 0;
 #endif
-    const bool smoke = physicsSmoke || profilePhysics || navigationSmoke || (argc > 1 && std::strcmp(argv[1], "--smoke") == 0);
+    const bool smoke = showcaseSmoke || physicsSmoke || profilePhysics || navigationSmoke || (argc > 1 && std::strcmp(argv[1], "--smoke") == 0);
     const auto captures = physicsSmoke ? std::filesystem::absolute(argc > 3 ? argv[3] : "out/physics-captures") : std::filesystem::path{};
     // `ogrethrone <folder>` opens that project; --smoke uses a throwaway one and leaves
     // the user's project list alone; otherwise the launcher is shown.
     std::filesystem::path project, projectList = throne::ProjectList::defaultFile();
     if (smoke) {
-        project = std::filesystem::temp_directory_path() / (profilePhysics ? "ogrethrone-physics-profile" : navigationSmoke ? "ogrethrone-navigation-smoke" :
+        project = std::filesystem::temp_directory_path() / (showcaseSmoke ? "ogrethrone-showcase-smoke" : profilePhysics ? "ogrethrone-physics-profile" : navigationSmoke ? "ogrethrone-navigation-smoke" :
             physicsSmoke ? "ogrethrone-physics-smoke" : "ogrethrone-smoke");
         std::filesystem::remove_all(project);
-        if (physicsSmoke || profilePhysics || navigationSmoke) {
-            const auto source=std::filesystem::absolute(argc>2?argv[2]:"samples/physics");
+        if (physicsSmoke || profilePhysics || navigationSmoke || showcaseSmoke) {
+            const auto source=std::filesystem::absolute(argc>2?argv[2]:showcaseSmoke?"samples/showcase":"samples/physics");
             std::filesystem::copy(source,project,std::filesystem::copy_options::recursive);
             if (physicsSmoke) std::filesystem::create_directories(captures);
         } else throne::Project::create(project.parent_path(), project.filename().u8string());
@@ -124,10 +126,11 @@ int main(int argc, char** argv) {
             Colibri::ColibriManager gui(&guiLog, &guiPlatform);
 #ifdef THRONE_NAVIGATION_SMOKE
             if (navigationSmoke) throne::navigationSmoke(editor, *camera);
+            if (showcaseSmoke) throne::showcaseSmoke(editor,*scene,*camera,std::filesystem::absolute(argc>3?argv[3]:"out/showcase-captures"));
 #endif
             auto previous = std::chrono::steady_clock::now();
             unsigned frames = 0;
-            bool running = !navigationSmoke, stepping = false;
+            bool running = !navigationSmoke && !showcaseSmoke, stepping = false;
             std::ofstream profile;
             std::array<double, 10> totals{};
             unsigned profileSamples = 0;

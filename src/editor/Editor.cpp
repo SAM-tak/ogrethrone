@@ -8,11 +8,15 @@
 #include <Compositor/OgreCompositorWorkspaceDef.h>
 #include <Compositor/OgreCompositorShadowNode.h>
 #include <OgreLight.h>
+#include <OgreForwardPlusBase.h>
+#include <OgreTextureFilters.h>
+#include <OgreTextureGpu.h>
 #include <OgreAtmosphereNpr.h>
 #include <OgreMaterialManager.h>
 #include <OgreResourceGroupManager.h>
 #include <OgreHlmsPbs.h>
 #include <OgreHlmsPbsDatablock.h>
+#include <OgreHlmsSamplerblock.h>
 #include <Compositor/Pass/OgreCompositorPassDef.h>
 #include <OgreCamera.h>
 #include <OgreCompositorPassImguiProvider.h>
@@ -106,6 +110,10 @@ Ogre::HlmsPbsDatablock* createPbsMaterial(Ogre::HlmsPbs& hlms,const std::string&
     material->setRoughness(0.65f);
     material->setFresnel(Ogre::Vector3(0.04f),false);
     material->setTwoSidedLighting(true);
+    Ogre::HlmsSamplerblock sampler;
+    sampler.mU=sampler.mV=sampler.mW=Ogre::TAM_WRAP;
+    for(auto slot:{Ogre::PBSM_DIFFUSE,Ogre::PBSM_NORMAL,Ogre::PBSM_ROUGHNESS,Ogre::PBSM_SPECULAR})
+        material->setSamplerblock(slot,sampler);
     return material;
 }
 
@@ -129,7 +137,7 @@ Ogre::HlmsUnlitDatablock* createMaterial(Ogre::HlmsUnlit& hlms, const std::strin
 }
 
 /// Uploads built-in triangle geometry to a manual object, returning local bounds.
-PrimitiveMesh addPrimitiveGeometry(Ogre::ManualObject& mesh, const std::string& material, const PrimitiveShape& shape) {
+PrimitiveMesh addPrimitiveGeometry(Ogre::ManualObject& mesh, const std::string& material, const PrimitiveShape& shape, float uvScale = 1) {
     auto data=primitiveMesh(shape);
     mesh.clear();
     if (!data.vertices.empty()) {
@@ -137,6 +145,8 @@ PrimitiveMesh addPrimitiveGeometry(Ogre::ManualObject& mesh, const std::string& 
         for (const auto& vertex:data.vertices) {
             mesh.position(toOgre(vertex.position));
             mesh.normal(toOgre(vertex.normal));
+            mesh.tangent(toOgre(vertex.tangent));
+            mesh.textureCoord(vertex.u*uvScale,vertex.v*uvScale);
         }
         for(auto index:data.indices) mesh.index(index);
         mesh.end();
@@ -310,6 +320,9 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
         auto stream = resources.openResource(script, skyGroup);
         Ogre::MaterialManager::getSingleton().parseScript(stream, skyGroup);
     }
+    // LTC requires these tables independently of whether a level currently uses LTC.
+    pbs_.loadLtcMatrix();
+    pbs_.setAreaLightMasks(root.getRenderSystem()->getTextureGpuManager()->reservePoolId(759384u,256u,256u,8u,9u,Ogre::PFG_R8_UNORM));
     sky_ = std::make_unique<Ogre::AtmosphereNpr>(root.getRenderSystem()->getVaoManager());
     auto preset = sky_->getPreset();
     preset.fogDensity = 0;
@@ -638,7 +651,7 @@ bool Editor::frame(float deltaSeconds, const std::function<void()>& input) {
         if (stage == "Animator") return;
         const auto gap = milliseconds(lastMainEnd, start);
         if (stage == "SyncSimulation") measured.waitMs += gap;
-        else measured.scriptMs += gap;
+        else if(!paused()) measured.scriptMs += gap;
         if (stage == "ApplyPhysics") {
             if (physics_) physics_->apply(view_);
             measured.physicsApplyMs = milliseconds(start, Clock::now());
@@ -690,6 +703,8 @@ bool Editor::frame(float deltaSeconds, const std::function<void()>& input) {
 void Editor::setShadowsEnabled(bool enabled) {
     shadowsEnabled_=enabled;
     sun_->setCastShadows(enabled);
+    for(auto& render:renderObjects_) if(render.light)
+        render.light->setCastShadows(enabled && render.light->getType()==Ogre::Light::LT_DIRECTIONAL);
 }
 
 void Editor::setSkyboxEnabled(bool enabled) {
@@ -913,6 +928,13 @@ void Editor::rebuildScene() {
 void Editor::destroyRenderObjects() {
     // Children before parents, so no node is destroyed while it still has children.
     for (auto it = renderObjects_.rbegin(); it != renderObjects_.rend(); ++it) {
+        if(it->light) scene_.destroyLight(it->light);
+        if(it->emitter) {
+            scene_.destroyManualObject(it->emitter);
+            scene_.destroySceneNode(it->emitterNode);
+            unlit_.destroyDatablock(it->emitterMaterial->getName());
+        }
+        if(it->lightNode) scene_.destroySceneNode(it->lightNode);
         scene_.destroyManualObject(it->mesh);
         scene_.destroySceneNode(it->node);
         pbs_.destroyDatablock(it->material->getName());
@@ -923,7 +945,52 @@ void Editor::destroyRenderObjects() {
     sceneNodes_.clear();
 }
 
+Ogre::TextureGpu* Editor::projectTexture(const std::string& path,int kind,bool mask) {
+    if(path.empty() || !project_) return nullptr;
+    const auto file=path.rfind("@ogre/",0)==0 ? std::filesystem::path(THRONE_OGRE_MEDIA_DIR)/path.substr(6) : project_->resolve(path);
+    const auto key=std::make_tuple(file.generic_u8string(),kind,mask);
+    if(const auto it=projectTextures_.find(key); it!=projectTextures_.end()) return it->second;
+    if(!std::filesystem::exists(file)) {
+        log("Texture not found: "+file.u8string()); projectTextures_[key]=nullptr; return nullptr;
+    }
+    // Keep resource names and aliases qualified to avoid collisions between projects.
+    auto& resources=Ogre::ResourceGroupManager::getSingleton();
+    const auto folder=file.parent_path().generic_u8string();
+    const Ogre::String group="ThroneTextures/"+folder;
+    if(!resources.resourceGroupExists(group)) resources.createResourceGroup(group);
+    if(!resources.resourceLocationExists(folder,group)) resources.addResourceLocation(folder,"FileSystem",group);
+    auto* manager=root_.getRenderSystem()->getTextureGpuManager();
+    auto* texture=manager->createOrRetrieveTexture(file.filename().u8string(),file.generic_u8string()+"/"+std::to_string(kind)+(mask?"/mask":""),
+        Ogre::GpuPageOutStrategy::Discard,static_cast<Ogre::CommonTextureTypes::CommonTextureTypes>(kind),group,mask?759384u:0u);
+    projectTextures_[key]=texture;
+    return texture;
+}
+
+void Editor::syncLighting() {
+    const auto& r=doc_.world.level.rendering;
+    if(!clustered_ || *clustered_!=r.clustered || clusterMin_!=r.minDistance || clusterMax_!=r.maxDistance) {
+        if(r.clustered) scene_.setForwardClustered(true,16,8,24,96,0,0,r.minDistance,r.maxDistance);
+        else scene_.setForward3D(true,4,4,5,96,r.minDistance,r.maxDistance);
+        clustered_=r.clustered; clusterMin_=r.minDistance; clusterMax_=r.maxDistance;
+    }
+    scene_.getForwardPlus()->setDebugMode(r.debugClusters);
+    sun_->setVisible(r.defaultSun);
+    scene_.setAmbientLight(Ogre::ColourValue(r.ambientUpper.x,r.ambientUpper.y,r.ambientUpper.z),
+        Ogre::ColourValue(r.ambientLower.x,r.ambientLower.y,r.ambientLower.z),toOgre(r.ambientDirection).normalisedCopy());
+    // Reserve enough Forward slots for every authored rectangular light, including hidden ones.
+    unsigned approx=0,ltc=0;
+    for(const auto& instance:view_.instances) for(const auto& n:instance.expansion.nodes) if(n.node.light) {
+        const auto type=n.node.light->type;
+        if(type==LightType::AreaApprox || type==LightType::AreaLtc) {
+            approx+=areaLightModel_==0 || (areaLightModel_<0 && type==LightType::AreaApprox);
+            ltc+=areaLightModel_==1 || (areaLightModel_<0 && type==LightType::AreaLtc);
+        }
+    }
+    pbs_.setAreaLightForwardSettings(static_cast<Ogre::uint16>(approx),static_cast<Ogre::uint16>(ltc));
+}
+
 void Editor::syncTransforms(const LevelExpansion* snapshot) {
+    syncLighting();
     const auto& shown = snapshot ? *snapshot : view_;
     // Stop or scene replacement may remove runtime nodes; discard their render resources.
     bool shrunk = sceneRoots_.size() > shown.instances.size();
@@ -960,8 +1027,10 @@ void Editor::syncTransforms(const LevelExpansion* snapshot) {
         const auto& expanded = shown.instances[render.instance].expansion.nodes[render.index];
         const auto& node = expanded.node;
         const auto shape=primitiveShape(node);
-        if (shape != render.shape) {
-            const auto geometry=addPrimitiveGeometry(*render.mesh,render.materialName,shape);
+        const auto surface=node.material.value_or(PbsMaterial{});
+        if (shape != render.shape || surface.uvScale!=render.uvScale) {
+            const auto geometry=addPrimitiveGeometry(*render.mesh,render.materialName,shape,surface.uvScale);
+            render.uvScale=surface.uvScale;
             render.lower=geometry.lower; render.upper=geometry.upper; render.shape=shape;
         }
         // Nodes without a Transform inherit the nearest ancestor's placement.
@@ -972,6 +1041,69 @@ void Editor::syncTransforms(const LevelExpansion* snapshot) {
         render.mesh->setVisible(shape.kind != PrimitiveKind::None);
         const auto colour=primitiveColour(node);
         render.material->setDiffuse(Ogre::Vector3(colour[0],colour[1],colour[2]));
+        render.material->setRoughness(surface.roughness);
+        render.material->setWorkflow(surface.metalness<0?Ogre::HlmsPbsDatablock::SpecularWorkflow:Ogre::HlmsPbsDatablock::MetallicWorkflow);
+        if(surface.metalness<0) render.material->setFresnel(Ogre::Vector3(surface.fresnel.data()),false);
+        else render.material->setMetalness(surface.metalness);
+        render.material->setEmissive(Ogre::Vector3(surface.emissive.data()));
+        const auto previous=render.surface.value_or(PbsMaterial{});
+        const auto texture=[&](Ogre::PbsTextureTypes slot,const std::string& path,const std::string& old,int kind) {
+            if(path!=old) render.material->setTexture(slot,projectTexture(path,kind));
+        };
+        texture(Ogre::PBSM_DIFFUSE,surface.diffuseMap,previous.diffuseMap,Ogre::CommonTextureTypes::Diffuse);
+        texture(Ogre::PBSM_NORMAL,surface.normalMap,previous.normalMap,Ogre::CommonTextureTypes::NormalMap);
+        texture(Ogre::PBSM_ROUGHNESS,surface.roughnessMap,previous.roughnessMap,Ogre::CommonTextureTypes::Monochrome);
+        texture(Ogre::PBSM_SPECULAR,surface.specularMap,previous.specularMap,Ogre::CommonTextureTypes::Diffuse);
+        texture(Ogre::PBSM_REFLECTION,surface.reflectionMap,previous.reflectionMap,Ogre::CommonTextureTypes::EnvMap);
+        render.surface=surface;
+        if(node.light && !render.light) {
+            if(!render.lightNode) {
+                render.lightNode=render.node->createChildSceneNode();
+                render.lightNode->setFixedYawAxis(false);
+            }
+            render.light=scene_.createLight(); render.lightNode->attachObject(render.light);
+        }
+        if(!node.light && render.light) { scene_.destroyLight(render.light); render.light=nullptr; }
+        if(node.light) {
+            auto c=*node.light; auto* light=render.light;
+            if(areaLightModel_>=0 && (c.type==LightType::AreaApprox || c.type==LightType::AreaLtc))
+                c.type=areaLightModel_==0?LightType::AreaApprox:LightType::AreaLtc;
+            const Ogre::Light::LightTypes types[]={Ogre::Light::LT_DIRECTIONAL,Ogre::Light::LT_POINT,Ogre::Light::LT_SPOTLIGHT,Ogre::Light::LT_AREA_APPROX,Ogre::Light::LT_AREA_LTC};
+            light->setType(types[static_cast<int>(c.type)]);
+            light->setVisible(c.enabled); light->setPowerScale(c.power);
+            light->setDiffuseColour(c.colour[0],c.colour[1],c.colour[2]);
+            light->setSpecularColour(c.colour[0],c.colour[1],c.colour[2]);
+            // Light::setDirection rotates its parent; reset the dedicated child to avoid roll drift.
+            render.lightNode->setOrientation(Ogre::Quaternion::IDENTITY);
+            light->setDirection(toOgre(c.direction).normalisedCopy());
+            light->setCastShadows(shadowsEnabled_ && c.type==LightType::Directional);
+            light->setAttenuationBasedOnRadius(c.radius,c.threshold);
+            light->setSpotlightRange(Ogre::Degree(c.innerAngle),Ogre::Degree(c.outerAngle));
+            light->setRectSize(Ogre::Vector2(c.width,c.height)); light->setDoubleSided(c.twoSided);
+            const bool area=c.type==LightType::AreaApprox || c.type==LightType::AreaLtc;
+            auto* mask=c.type==LightType::AreaApprox?projectTexture(c.mask,Ogre::CommonTextureTypes::Monochrome,true):nullptr;
+            if(mask) light->setTexture(mask); else light->mTextureLightMaskIdx=std::numeric_limits<Ogre::uint16>::max();
+            if(area && !render.emitter) {
+                const auto name=render.materialName+"/Emitter";
+                render.emitterMaterial=createMaterial(unlit_,name);
+                // The R8 area mask stores intensity, so replicate red into every channel.
+                render.emitterMaterial->setTextureSwizzle(0,Ogre::HlmsUnlitDatablock::R_MASK,
+                    Ogre::HlmsUnlitDatablock::R_MASK,Ogre::HlmsUnlitDatablock::R_MASK,Ogre::HlmsUnlitDatablock::R_MASK);
+                render.emitter=scene_.createManualObject(); render.emitter->setCastShadows(false);
+                render.emitterNode=render.lightNode->createChildSceneNode(); render.emitterNode->attachObject(render.emitter);
+            }
+            if(render.emitter) {
+                render.emitter->setVisible(area && c.showEmitter && c.enabled);
+                PrimitiveShape rect; rect.kind=PrimitiveKind::Plane; rect.width=c.width; rect.depth=c.height;
+                if(rect!=render.emitterShape) {
+                    addPrimitiveGeometry(*render.emitter,render.materialName+"/Emitter",rect);
+                    render.emitterShape=rect;
+                }
+                render.emitterNode->setOrientation(Ogre::Quaternion(Ogre::Degree(-90),Ogre::Vector3::UNIT_X));
+                render.emitterMaterial->setColour(Ogre::ColourValue(c.colour[0],c.colour[1],c.colour[2]));
+                render.emitterMaterial->setTexture(0,mask);
+            }
+        } else if(render.emitter) render.emitter->setVisible(false);
         if (selected_.kind == Selection::Kind::Node && selected_.instance == static_cast<int>(render.instance) &&
             selected_.path == expanded.path)
             outlined = &render;
@@ -1200,6 +1332,8 @@ void Editor::dropOnPrefab(int instance, NodeId id, const std::string& file) {
 namespace {
 /// Copies the properties @p from sets into @p into.
 void assign(NodeOverride& into, const NodeOverride& from) {
+    if (from.material) into.material = from.material;
+    if (from.light) into.light = from.light;
     if (from.sphere) into.sphere = from.sphere;
     if (from.capsule) into.capsule = from.capsule;
     if (from.plane) into.plane = from.plane;
@@ -1635,6 +1769,12 @@ void Editor::erase() {
     selected_ = {};
 }
 
+bool Editor::openLevel(const std::string& path) {
+    if(!project_ || runtime_) return false;
+    std::snprintf(levelPath_,sizeof levelPath_,"%s",path.c_str());
+    return open();
+}
+
 bool Editor::open() {
     try {
         Document loaded;
@@ -1655,10 +1795,15 @@ bool Editor::open() {
         navigate_.reset();
         dirty_ = false;
         selected_ = {};
+        areaLightModel_=-1;
         refreshView();
         if (!view_.instances.empty() && !view_.instances[0].expansion.nodes.empty())
             selected_ = {Selection::Kind::Node, 0, view_.instances[0].expansion.nodes[0].path};
         focusSelection();
+        const auto& r=doc_.world.level.rendering;
+        setSkyboxEnabled(r.sky);
+        showGrid_=r.grid;
+        if(r.openingCamera) { selected_={}; target_=toOgre(r.target); yaw_=r.yaw; pitch_=r.pitch; distance_=r.distance; updateCamera(); }
         log(std::string("Opened ") + levelPath_);
         return true;
     } catch (const std::exception& error) {
@@ -1750,6 +1895,26 @@ void Editor::menu() {
         if(ImGui::MenuItem("Shadows",nullptr,&shadows)) setShadowsEnabled(shadows);
         ImGui::MenuItem("Orthographic", nullptr, &orthographic_);
         if (ImGui::MenuItem("Focus Selection", "F")) focusSelection();
+        ImGui::EndMenu();
+    }
+    if(ImGui::BeginMenu("Lighting")) {
+        auto& r=doc_.world.level.rendering;
+        if(ImGui::MenuItem("Forward Clustered",nullptr,r.clustered)) { checkpoint(); r.clustered=true; }
+        if(ImGui::MenuItem("Forward3D",nullptr,!r.clustered)) { checkpoint(); r.clustered=false; }
+        bool debug=r.debugClusters;
+        if(ImGui::MenuItem("Show Clusters",nullptr,&debug)) { checkpoint(); r.debugClusters=debug; }
+        ImGui::Separator();
+        if(ImGui::MenuItem("Area Lights: Authored",nullptr,areaLightModel_<0)) areaLightModel_=-1;
+        if(ImGui::MenuItem("Area Lights: Approx (textured)",nullptr,areaLightModel_==0)) areaLightModel_=0;
+        if(ImGui::MenuItem("Area Lights: LTC",nullptr,areaLightModel_==1)) areaLightModel_=1;
+        ImGui::Separator();
+        ImGui::BeginDisabled(runtime_!=nullptr);
+        bool defaultSun=r.defaultSun;
+        if(ImGui::MenuItem("Default Sun",nullptr,&defaultSun)) { checkpoint(); r.defaultSun=defaultSun; }
+        auto upper=r.ambientUpper,lower=r.ambientLower;
+        if(ImGui::ColorEdit3("Ambient Upper",upper.data())) { checkpoint(); r.ambientUpper=upper; }
+        if(ImGui::ColorEdit3("Ambient Lower",lower.data())) { checkpoint(); r.ambientLower=lower; }
+        ImGui::EndDisabled();
         ImGui::EndMenu();
     }
     if (ImGui::MenuItem(runtime_ ? "Stop" : "Play", "F5")) runtime_ ? stop() : play();
