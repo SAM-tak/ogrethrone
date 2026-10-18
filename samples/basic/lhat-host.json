@@ -58,8 +58,13 @@
     {"kind": "func", "module": "throne", "name": "vec3", "signature": "f^number^, number^, number^ -> throne.Vec3;"},
     {"kind": "func", "module": "throne", "name": "find", "signature": "f^string^ -> throne.SceneNode|nil^;"},
     {"kind": "func", "module": "throne", "name": "log", "signature": "p^string^;"},
-    {"kind": "func", "module": "throne", "name": "time", "signature": "f^ -> number^;"}
+    {"kind": "func", "module": "throne", "name": "time", "signature": "f^ -> number^;"},
+    {"kind": "global", "name": "print", "signature": "f^...->nil^;"}
   ],
-  "annotations": [],
-  "bindings": []
+  "annotations": [
+    {"module": "throne", "name": "export", "targets": {"field": true}}
+  ],
+  "bindings": [
+    {"name": "print", "member": "L^.print"}
+  ]
 }

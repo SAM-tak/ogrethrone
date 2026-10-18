@@ -107,20 +107,25 @@ import^ throne
 
 public^let^Behaviour = def^{
     self^{
-        target : throne.SceneNode|nil^ = nil^,
-        degreesPerSecond = 90,
+        @export target : throne.SceneNode|nil^ = nil^,
+        @export degreesPerSecond = 90,
     },
     update = p^self^, runner:throne.Runner, dt:number^ {
         if^ self^.target != nil^ {
-            var^ r = self^.target.rotation()
-            r.y := r.y + self^.degreesPerSecond * dt
-            self^.target.setRotation(r)
+            let^ t = self^.target.transform()
+            if^ t != nil^ {
+                var^ r = t.rotation()
+                r.y := r.y + self^.degreesPerSecond * dt
+                t.setRotation(r)
+            }
         }
     },
 }
 ```
 
-［提案］`self^{ … }` の欄が、インスペクターで編集できる欄になる。型は L^ の検査器が決めたものを使う（02 の 4.2 の補足と同じく `lhat_unit_export_conforms` などで読む）。
+`self^{ … }` の欄のうち、`@export` の注釈を付けたものが、インスペクターで編集でき、Runner に値を保存する欄になる（Godot バインディングの `@export` と同じ考え方）。付けていない欄は、スクリプト自身のための欄（キャッシュなど）で、インスペクターにも保存にも出ない。`_` で始まる名前を特別に扱う規則は設けない（L^ に正式なプライベートメンバーが入る予定のため）。`@export` は throne が登録する注釈で、書けるのは `self^{ … }` の欄だけである。`@export` のない欄に値が保存されていた場合は、ログに警告を出して読み飛ばす。
+
+［提案］インスペクターで編集できる欄の型は、L^ の検査器が決めたものを使う。型は L^ の検査器が決めたものを使う（02 の 4.2 の補足と同じく `lhat_unit_export_conforms` などで読む）。
 
 - `number^`・`string^`・`bool^`: そのまま編集する
 - `throne.Vec3`: 3 つの数値として編集する

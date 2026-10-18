@@ -64,8 +64,9 @@ import^ throne
 
 public^let^Behaviour = def^{
     self^{
-        target : throne.SceneNode|nil^ = nil^,
-        degreesPerSecond = 90,
+        @export target : throne.SceneNode|nil^ = nil^,
+        @export degreesPerSecond = 90,
+        turns = 0,
     },
     start = p^self^, runner:throne.Runner {
         throne.log("start " .. runner.name())
@@ -151,8 +152,9 @@ int main(int argc, char** argv) {
     // lines, and a refused or failed one is reported without ending the session.
     {
         auto consoled = world(root, "scripts/spin.lh");
-        throne::ScriptRuntime runtime(consoled.world, consoled.expanded, root, [](const std::string&) {},
-                                      throne::PlayScope::Level);
+        std::vector<std::string> printed;
+        throne::ScriptRuntime runtime(consoled.world, consoled.expanded, root,
+                                      [&](const std::string& line) { printed.push_back(line); }, throne::PlayScope::Level);
         const auto bound = runtime.evaluate("let^ answer = 6 * 7");
         const auto read = runtime.evaluate("answer");
         const auto opened = runtime.evaluate("if^ answer > 40 {");
@@ -161,6 +163,10 @@ int main(int argc, char** argv) {
         const auto refused = runtime.evaluate("let^ = 1");
         const auto failed = runtime.evaluate("panic^ \"no\"");
         const auto after = runtime.evaluate("answer + 1");
+        const auto shown = runtime.evaluate("print(\"answer\", answer, true^)");
+        if (printed.empty() || printed.back() != "answer 42 true")
+            return fail("print did not log its arguments separated by spaces: " +
+                        (printed.empty() ? shown.text : printed.back()));
         if (bound.more || read.text != "42" || !opened.more || closed.more || found.text.find("Cube 2") == std::string::npos ||
             refused.text.empty() || failed.text.find("no") == std::string::npos || after.text != "43")
             return fail("The console did not run its lines as a session: " + read.text + " / " + found.text + " / " +

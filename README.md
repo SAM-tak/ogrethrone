@@ -226,8 +226,8 @@ import^ throne
 
 public^let^Behaviour = def^{
     self^{
-        target : throne.SceneNode|nil^ = nil^,
-        degreesPerSecond = 90,
+        @export target : throne.SceneNode|nil^ = nil^,
+        @export degreesPerSecond = 90,
     },
     start = p^self^, runner:throne.Runner { throne.log("hello " .. runner.name()) },
     update = p^self^, runner:throne.Runner, dt:number^ {
@@ -243,7 +243,8 @@ public^let^Behaviour = def^{
 }
 ```
 
-The `self^{ ... }` fields are what the Inspector shows for that behaviour: number,
+The `self^{ ... }` fields marked `@export` are what the Inspector shows for that
+behaviour and what a runner stores (other fields are the script's own): number,
 bool and string fields are edited directly, and `throne.SceneNode` fields pick a
 node: a level runner from any scene instance, a scene or prefab runner from its
 own hierarchy (each prefab instance gets its own copy of the prefab's runners,
@@ -273,6 +274,9 @@ The `throne` module provides:
 - `throne.Runner`: `name()`; passed to `start` and `update`.
 - `throne.find(name)` (the first node with that name, scene by scene),
   `throne.log(text)` and `throne.time()` (seconds since Play).
+
+`print(...)` (also `L^.print`) writes its arguments, separated by spaces, as one
+line of the log, as the L^ command line does.
 
 `std.math` is the only standard module scripts can import.
 

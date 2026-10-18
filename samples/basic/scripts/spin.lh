@@ -5,17 +5,26 @@ import^throne
 
 public^let^Behaviour = def^{
     self^{
-        target : throne.SceneNode|nil^ = nil^,
-        degreesPerSecond = 90,
+        @export target : throne.SceneNode|nil^ = nil^,
+        @export degreesPerSecond = 90,
+        _transform : throne.Transform|nil^ = nil^
     },
-    update = p^self^, runner:throne.Runner, dt:number^{
-        if^ self^.target != nil^ {
-            let^ t = self^.target.transform()
-            if^ t != nil^ {
-                var^ r = t.rotation()
-                r.y := r.y + self^.degreesPerSecond * dt
-                t.setRotation(r)
+
+    start = p^self^, runner:throne.Runner {
+        if^self^.target? {
+            self^._transform := self^.target.transform()
+            if^self^._transform? {
+                print("valid transform")
             }
+        }
+        print("started")
+    },
+
+    update = p^self^, runner:throne.Runner, dt:number^{
+        if^self^._transform? {
+            var^ r = self^._transform.rotation()
+            r.y := r.y + self^.degreesPerSecond * dt
+            self^._transform.setRotation(r)
         }
     },
 }

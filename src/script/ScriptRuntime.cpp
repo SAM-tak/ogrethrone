@@ -358,6 +358,17 @@ THRONE_HOST(time, {
 })
 #undef THRONE_HOST
 
+/// print(...): its arguments as text, separated by spaces, as one log line (like the L^ CLI's).
+void print(LhatMachine*, void* context, const LhatValue* arguments, std::size_t count, LhatValue*, int*) {
+    std::string line;
+    for (std::size_t i = 0; i < count; ++i) {
+        std::string text(lhat_value_text(arguments[i], nullptr, 0), '\0');
+        lhat_value_text(arguments[i], text.data(), text.size() + 1);
+        line += (i ? " " : "") + text;
+    }
+    state(context).log(line);
+}
+
 /// Registers the throne module: Vec3, SceneNode, Runner and the free functions.
 bool registerThrone(LhatProgram* program, State& s) {
     s.vec3 = lhat_register_hostvalue_type(program, moduleName, "Vec3", sizeof(Vec3));
@@ -413,7 +424,11 @@ bool registerThrone(LhatProgram* program, State& s) {
                                                                 entry.signature, entry.call, &s);
         if (!ok) return false;
     }
-    return true;
+    // @export marks the Behaviour fields the Inspector shows and a runner stores.
+    // print is a global, as the L^ CLI has it; also reachable as L^.print.
+    return lhat_register_annotation(program, moduleName, "export", LHAT_ANNOTATION_FIELD) &&
+           lhat_register_global(program, "print", "f^...->nil^;", print, &s) &&
+           lhat_bind_initial(program, "print", "L^.print");
 }
 
 /// Appends every diagnostic the program and its units reported to @p out.
@@ -446,6 +461,15 @@ bool publishes(const LhatUnit* unit, std::string_view name) {
 /// Whether the instances of @p unit's Behaviour have a member @p name of type @p type.
 bool behaviourHas(const LhatUnit* unit, const std::string& name, const char* type) {
     return lhat_unit_export_conforms(unit, "Behaviour", ("t^{ self^{ " + name + " : " + type + " } }").c_str());
+}
+
+/// Whether field @p name of @p unit's Behaviour is written with @export.
+bool exported(const LhatUnit* unit, const std::string& name) {
+    for (std::size_t i = 0, count = lhat_unit_annotation_count(unit, "Behaviour", name.c_str()); i < count; ++i) {
+        const auto annotation = lhat_unit_annotation(unit, "Behaviour", name.c_str(), i);
+        if (std::string_view(annotation.name, annotation.name_length) == "export") return true;
+    }
+    return false;
 }
 
 /// Creates @p s's program with everything scripts may name registered.
@@ -533,6 +557,7 @@ std::vector<FieldInfo> ScriptRuntime::fields(const std::filesystem::path& root, 
         const auto& member = type->instance->members[i];
         if (!member.type) continue;
         const std::string name(member.name->text, member.name->length);
+        if (!exported(unit, name)) continue;  // The script's own, not the Inspector's.
         const auto value = lhat_table_get_bytes(table, name.data(), name.size());
         bool node = member.type->kind == LHAT_TYPE_RT_HOSTDATA && member.type->hostdata_tag == s.sceneNode;
         for (std::size_t k = 0; member.type->kind == LHAT_TYPE_RT_UNION && k < member.type->part_count; ++k)
@@ -596,8 +621,9 @@ ScriptRuntime::ScriptRuntime(const World& world, LevelExpansion& expanded, const
             lhat_machine_call_member(s.machine.get(), definitions[path], "new", 3, nullptr, 0), item.what + " new"));
         auto* table = reinterpret_cast<LhatTable*>(lhat_as_object(instance));
         for (const auto& [name, value] : item.behaviour->fields) {
-            if (!behaviourHas(unit, name, fieldType(value))) {
-                s.log(item.what + ": field " + name + " ignored (the script has no " + fieldType(value) + " field of that name)");
+            if (!behaviourHas(unit, name, fieldType(value)) || !exported(unit, name)) {
+                s.log(item.what + ": field " + name + " ignored (the script has no @export " + fieldType(value) +
+                      " field of that name)");
                 continue;
             }
             LhatValue written = lhat_nil();
