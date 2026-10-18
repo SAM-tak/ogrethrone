@@ -15,8 +15,8 @@ struct PrimitiveShape {
     /// Negation of equality.
     bool operator!=(const PrimitiveShape& other) const { return !(*this==other); }
 };
-/// One vertex of unlit geometry with directional shading.
-struct PrimitiveVertex { Vec3 position; float shade; };
+/// One vertex with a unit outward normal for physically based lighting.
+struct PrimitiveVertex { Vec3 position, normal; };
 /// Engine-neutral triangles and their local bounds, used for rendering and picking.
 struct PrimitiveMesh {
     std::vector<PrimitiveVertex> vertices;

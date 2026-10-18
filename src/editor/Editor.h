@@ -28,6 +28,9 @@ class TextureGpu;
 class CompositorWorkspace;
 class ImguiManager;
 class CompositorPassImguiProvider;
+class HlmsPbs;
+class HlmsPbsDatablock;
+class Light;
 class HlmsUnlit;
 class HlmsUnlitDatablock;
 }
@@ -68,6 +71,8 @@ public:
     /// Builds the UI and runs a complete frame, including main-thread OGRE rendering.
     /// Returns false when the renderer requests shutdown.
     bool frame(float deltaSeconds);
+    /// Enables/disables shadow casting while preserving direct and ambient lighting.
+    void setShadowsEnabled(bool enabled);
     /// Downloads the rendered viewport to a portable RGB image for visual smoke checks.
     void captureViewport(const std::filesystem::path& path);
     /// Whether a Play session currently owns the expanded world.
@@ -104,7 +109,7 @@ private:
         std::size_t instance, index;
         Ogre::SceneNode* node;
         Ogre::ManualObject* mesh;
-        Ogre::HlmsUnlitDatablock* material;
+        Ogre::HlmsPbsDatablock* material;
         std::string materialName;
         PrimitiveShape shape;
         Vec3 lower, upper;
@@ -320,6 +325,10 @@ private:
     Ogre::SceneManager& scene_;
     Ogre::Camera& camera_;
     Ogre::HlmsUnlit& unlit_;
+    Ogre::HlmsPbs& pbs_;
+    Ogre::Light* sun_ = nullptr;
+    Ogre::SceneNode* sunNode_ = nullptr;
+    bool shadowsEnabled_ = true;
     EditorPlatform platform_;
     std::unique_ptr<Ogre::ImguiManager> gui_;
     std::unique_ptr<Ogre::CompositorPassImguiProvider> guiPass_;

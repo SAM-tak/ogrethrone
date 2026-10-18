@@ -86,7 +86,7 @@ if(THRONE_BUILD_GRAPHICS)
     # ImGuizmo is compiled here against the ImGui core that OgreNextImgui builds.
     add_executable(ogrethrone src/editor/main.cpp src/editor/Editor.cpp src/editor/EditorPanels.cpp
         src/editor/EditorPlatform.cpp src/editor/References.cpp third_party/imguizmo/src/ImGuizmo.cpp
-        src/editor/Editor.h src/editor/EditorPlatform.h src/editor/OgreMath.h src/editor/References.h)
+        src/editor/Editor.h src/editor/EditorPlatform.h src/editor/OgreConversions.h src/editor/References.h)
     if(WIN32)
         # The application icon and the manifest (visual styles, per-monitor DPI, UTF-8).
         target_sources(ogrethrone PRIVATE media/ogrethrone.rc media/ogrethrone.manifest)
@@ -99,6 +99,7 @@ if(THRONE_BUILD_GRAPHICS)
         third_party/ogre-next/Components/Imgui/include
         third_party/ogre-next/Components/Hlms/Common/include
         third_party/ogre-next/Components/Hlms/Unlit/include
+        third_party/ogre-next/Components/Hlms/Pbs/include
         third_party/imgui
         third_party/imguizmo/src)
     # Hlms shader templates are read from the pinned OGRE checkout until asset packaging exists.

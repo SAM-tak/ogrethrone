@@ -331,6 +331,24 @@ replaces its Hub attachment with a 360-degree-per-second version. Cube 2 demonst
 a script-defined Spin component processed by the level's Update System.
 The design is recorded in [TDDja/07-component.md](TDDja/07-component.md).
 
+## Default rendering
+
+The viewport uses OGRE-Next **Forward Clustered** and physically based (HlmsPbs)
+materials. A default directional sun casts **three-cascade PSSM/CSM shadows**, with
+3×3 PCF filtering, blended/faded splits, and the first two cascades stabilized.
+The 2048×3072 depth atlas packs a 2048² near cascade and two 1024² cascades; shadow
+range is 100 world units. The clustered grid is 16×8×24, with 64 local lights per
+cell and a 0.1–100 depth range. Local-light components and additional shadow slots
+are not exposed yet; the current preview light is the directional sun.
+
+Primitive colours are diffuse albedo. Materials use dielectric Fresnel 0.04 and
+roughness 0.65, with hemispherical ambient fill. Proper outward normals and triangle
+winding provide direct lighting and shadow reception. Planes are lit on both sides.
+Grid lines, selection outlines and ImGui retain their unlit appearance and do not
+cast shadows. **View → Shadows** toggles shadow casting while retaining direct and
+ambient lighting. These are viewport defaults; scene light authoring and persistent
+quality controls are not implemented yet.
+
 ## Physics playground
 
 Open `samples/physics` and press **F5**. The sphere bounces, the capsule tumbles, and
@@ -368,9 +386,12 @@ shape dimensions and collider centres are readable. Body transform edits become
 teleports at the next physics preparation step.
 
 For a reproducible graphical check, `--smoke-physics [project] [capture-directory]`
-plays a temporary project copy for 240 fixed frames, checks that Play remains active,
-then stops and checks that the rendered scene returns exactly to its starting image.
-Viewport frames 2, 60, 240 and 244 are downloaded as PPM images. Defaults are
+plays a temporary project copy for 240 fixed frames and checks that Play remains
+active and Forward Clustered is selected. Initial shadow ON/OFF frames must differ;
+after Stop, unshadowed rendering must exactly match the initial unshadowed frame,
+and enabling shadows must affect the restored frame. This keeps PCF edge sampling
+variation separate from exact geometry/lighting restoration. Viewport frames 2, 3,
+60, 240, 244 and 245 are downloaded as PPM images. Defaults are
 `samples/physics` and `out/physics-captures`; project files and the project list remain
 untouched. `runtime_smoke` covers collisions, deterministic serial/parallel replay,
 scene coordinate conversion, typed script access and component/prefab persistence.

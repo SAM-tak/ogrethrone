@@ -14,6 +14,7 @@ Ogre Throne の設計に関する文書を置く。
 | [06-prefab.md](06-prefab.md) | 入れ子のプレハブ（インスタンス・上書き・展開）、ドリルダウン、階層の編集、バリアント | 合意済み／段階 1・2・5 とプレハブ化を実装済み |
 | [07-component.md](07-component.md) | Component（Entity としてのシーンノード）、ノードの Behaviour、Runner による実行の段、System | 段階 1〜4 実装済み／物理との結線は 08、アニメーション処理は未実装 |
 | [08-physics.md](08-physics.md) | Primitive・Collider・RigidBody、Box3D とシーンの結線、物理サンプル | 実装済み |
+| [09-rendering.md](09-rendering.md) | 既定の Clustered Forward、PBS、太陽光の PSSM／PCF、検証 | 実装済み |
 
 ## 記法
 

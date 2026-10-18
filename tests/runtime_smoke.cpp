@@ -74,9 +74,23 @@ int main() {
             const auto mesh=throne::primitiveMesh(throne::primitiveShape(node));
             require(!mesh.vertices.empty() && !mesh.indices.empty(),"Primitive generated no triangles");
             for(auto index:mesh.indices) require(index<mesh.vertices.size(),"Primitive index exceeded its vertices");
-            for(const auto& v:mesh.vertices) for(int axis=0;axis<3;++axis)
-                require(std::isfinite(v.position.data()[axis]) && v.position.data()[axis]>=mesh.lower.data()[axis] &&
-                        v.position.data()[axis]<=mesh.upper.data()[axis],"Primitive bounds did not enclose its vertices");
+            for(const auto& v:mesh.vertices) {
+                for(int axis=0;axis<3;++axis)
+                    require(std::isfinite(v.position.data()[axis]) && v.position.data()[axis]>=mesh.lower.data()[axis] &&
+                            v.position.data()[axis]<=mesh.upper.data()[axis],"Primitive bounds did not enclose its vertices");
+                const auto n=v.normal;
+                require(std::abs(n.x*n.x+n.y*n.y+n.z*n.z-1)<1.0e-5f,"Primitive normal was not a unit vector");
+            }
+            for(std::size_t i=0;i<mesh.indices.size();i+=3) {
+                const auto& a=mesh.vertices[mesh.indices[i]];
+                const auto& b=mesh.vertices[mesh.indices[i+1]];
+                const auto& c=mesh.vertices[mesh.indices[i+2]];
+                const auto ab=b.position-a.position, ac=c.position-a.position;
+                const throne::Vec3 cross{ab.y*ac.z-ab.z*ac.y,ab.z*ac.x-ab.x*ac.z,ab.x*ac.y-ab.y*ac.x};
+                const auto normal=a.normal+b.normal+c.normal;
+                require(cross.x*normal.x+cross.y*normal.y+cross.z*normal.z>=-1e-8f,
+                        "Primitive triangle winding opposed its outward normals");
+            }
             if(kind==throne::PrimitiveKind::Capsule) require(std::abs(mesh.upper.y-1)<1e-5,"Capsule height excluded its hemispheres");
         }
         // All components and their prefab property overrides survive persistence.

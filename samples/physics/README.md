@@ -9,3 +9,8 @@ Select any body to inspect its Primitive, Collider and RigidBody. Collider-only
 objects are static. Use **Edit → Add Primitive** and **Inspector → Add Component**
 to build additional bodies. Mass is derived from collider density; restitution
 controls bouncing. PlaneCollider supports Static/Kinematic motion only.
+
+The default renderer is Forward Clustered with PBS materials and a directional sun.
+The ground and platform receive dynamic three-cascade PSSM shadows filtered with
+3×3 PCF. Use **View → Shadows** to compare the same lighting with shadow casting
+enabled or disabled. Moving bodies and their shadows use the same rendered pose.

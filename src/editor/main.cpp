@@ -8,8 +8,10 @@
 #include <Compositor/OgreCompositorManager2.h>
 #include <OgreHlmsManager.h>
 #include <OgreHlmsUnlit.h>
+#include <OgreHlmsPbs.h>
 #include <OgreRoot.h>
 #include <OgreSceneManager.h>
+#include <OgreForwardPlusBase.h>
 #include <OgreVulkanPlugin.h>
 #include <OgreWindow.h>
 #include <OgreTextureGpu.h>
@@ -27,20 +29,21 @@
 #include <stdexcept>
 
 namespace {
-/// Registers HlmsUnlit using the shader templates in THRONE_OGRE_MEDIA_DIR.
-void registerUnlit(Ogre::Root& root) {
+/// Registers an HLMS implementation from the pinned OGRE shader templates.
+template <typename Hlms>
+void registerHlms(Ogre::Root& root) {
     Ogre::String folder;
     Ogre::StringVector libraries;
-    Ogre::HlmsUnlit::getDefaultPaths(folder, libraries);
+    Hlms::getDefaultPaths(folder, libraries);
     auto& archives = Ogre::ArchiveManager::getSingleton();
     const Ogre::String media = THRONE_OGRE_MEDIA_DIR "/";
     Ogre::ArchiveVec libraryArchives;
     for (const auto& library : libraries)
         libraryArchives.push_back(archives.load(media + library, "FileSystem", true));
-    auto* unlit = OGRE_NEW Ogre::HlmsUnlit(archives.load(media + folder, "FileSystem", true), &libraryArchives);
+    auto* hlms = OGRE_NEW Hlms(archives.load(media + folder, "FileSystem", true), &libraryArchives);
     // Debug builds otherwise dump every generated shader into the working directory.
-    unlit->setDebugOutputPath(false, false);
-    root.getHlmsManager()->registerHlms(unlit);
+    hlms->setDebugOutputPath(false, false);
+    root.getHlmsManager()->registerHlms(hlms);
 }
 }
 
@@ -89,12 +92,16 @@ int main(int argc, char** argv) {
         auto* scene = root.createSceneManager(Ogre::ST_GENERIC, 1, "MainScene");
         auto* camera = scene->createCamera("MainCamera");
         camera->setNearClipDistance(0.1f);
-        registerUnlit(root);
+        registerHlms<Ogre::HlmsUnlit>(root);
+        registerHlms<Ogre::HlmsPbs>(root);
 
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
         {
             throne::Editor editor(root, *window, *scene, *camera, project, projectList);
+            if (physicsSmoke && (!scene->getForwardPlus() ||
+                scene->getForwardPlus()->getForwardPlusMethod()!=Ogre::ForwardPlusBase::MethodForwardClustered))
+                throw std::runtime_error("The viewport is not using Forward Clustered");
             Colibri::LogListener guiLog;
             Colibri::ColibriListener guiPlatform;
             Colibri::ColibriManager gui(&guiLog, &guiPlatform);
@@ -115,14 +122,17 @@ int main(int argc, char** argv) {
             editor.platform().modalFrame = [&] {
                 if (running && !window->isClosed()) step();
             };
-            while (running && !window->isClosed() && !editor.shouldClose() && (!smoke || frames < (physicsSmoke ? 244u : 3u))) {
+            while (running && !window->isClosed() && !editor.shouldClose() && (!smoke || frames < (physicsSmoke ? 245u : 3u))) {
                 Ogre::WindowEventUtilities::messagePump();
                 if (window->isClosed()) break;
                 if (smoke && frames == 1) ImGui::GetIO().AddKeyEvent(ImGuiKey_F5, true);
                 if (smoke && frames == 2) ImGui::GetIO().AddKeyEvent(ImGuiKey_F5, false);
+                if (physicsSmoke && frames == 2) editor.setShadowsEnabled(false);
+                if (physicsSmoke && frames == 3) editor.setShadowsEnabled(true);
                 if (physicsSmoke && frames == 240) ImGui::GetIO().AddKeyEvent(ImGuiKey_F5, true);
                 if (physicsSmoke && frames == 241) ImGui::GetIO().AddKeyEvent(ImGuiKey_F5, false);
-                const bool capture=physicsSmoke && (frames==1 || frames==59 || frames==239 || frames==243);
+                if (physicsSmoke && frames == 244) editor.setShadowsEnabled(false);
+                const bool capture=physicsSmoke && (frames==1 || frames==2 || frames==59 || frames==239 || frames==243 || frames==244);
                 step();
                 if(physicsSmoke && frames>=3 && frames<=240 && !editor.playing()) throw std::runtime_error("Physics smoke Play failed");
                 if(physicsSmoke && frames>=242 && editor.playing()) throw std::runtime_error("Physics smoke Stop failed");
@@ -135,8 +145,12 @@ int main(int argc, char** argv) {
                     return std::string(std::istreambuf_iterator<char>(file),{});
                 };
                 const auto initial=read("frame-2.ppm");
+                if(initial==read("frame-3.ppm")) throw std::runtime_error("Shadow toggle did not affect the rendered scene");
                 if(initial.empty() || initial==read("frame-240.ppm")) throw std::runtime_error("Physics did not move the rendered scene");
-                if(initial!=read("frame-244.ppm")) throw std::runtime_error("Stop did not restore the rendered scene");
+                // Shadow-camera fitting may move PCF edge samples despite identical scene poses.
+                // Compare without shadows to require exact restoration of geometry and lighting.
+                if(read("frame-3.ppm")!=read("frame-245.ppm")) throw std::runtime_error("Stop did not restore the rendered scene");
+                if(read("frame-244.ppm")==read("frame-245.ppm")) throw std::runtime_error("Restored scene lost its shadows");
             }
             editor.platform().modalFrame = nullptr;
         }

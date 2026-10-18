@@ -1,11 +1,15 @@
 #include "editor/Editor.h"
-#include "editor/OgreMath.h"
+#include "editor/OgreConversions.h"
 #include "editor/Lton.h"
 #include "script/ScriptRuntime.h"
 #include <Compositor/OgreCompositorManager2.h>
 #include <Compositor/OgreCompositorNodeDef.h>
 #include <Compositor/OgreCompositorWorkspace.h>
 #include <Compositor/OgreCompositorWorkspaceDef.h>
+#include <Compositor/OgreCompositorShadowNode.h>
+#include <OgreLight.h>
+#include <OgreHlmsPbs.h>
+#include <OgreHlmsPbsDatablock.h>
 #include <Compositor/Pass/OgreCompositorPassDef.h>
 #include <OgreCamera.h>
 #include <OgreCompositorPassImguiProvider.h>
@@ -66,6 +70,41 @@ Ogre::HlmsUnlit& unlitHlms(Ogre::Root& root) {
     return *static_cast<Ogre::HlmsUnlit*>(hlms);
 }
 
+/// Returns the registered physically based material implementation.
+Ogre::HlmsPbs& pbsHlms(Ogre::Root& root) {
+    auto* hlms=root.getHlmsManager()->getHlms(Ogre::HLMS_PBS);
+    if(!hlms) throw std::runtime_error("Editor requires HlmsPbs");
+    return *static_cast<Ogre::HlmsPbs*>(hlms);
+}
+
+/// Creates a three-cascade depth atlas for the default directional light.
+void createShadowNode(Ogre::Root& root) {
+    Ogre::ShadowNodeHelper::ShadowParam sun{};
+    sun.technique=Ogre::SHADOWMAP_PSSM;
+    sun.numPssmSplits=3;
+    sun.addLightType(Ogre::Light::LT_DIRECTIONAL);
+    sun.resolution[0]=Ogre::ShadowNodeHelper::Resolution(2048,2048);
+    sun.resolution[1]=sun.resolution[2]=Ogre::ShadowNodeHelper::Resolution(1024,1024);
+    sun.atlasStart[0]=Ogre::ShadowNodeHelper::Resolution(0,0);
+    sun.atlasStart[1]=Ogre::ShadowNodeHelper::Resolution(0,2048);
+    sun.atlasStart[2]=Ogre::ShadowNodeHelper::Resolution(1024,2048);
+    Ogre::ShadowNodeHelper::ShadowParamVec maps;
+    maps.push_back(sun);
+    Ogre::ShadowNodeHelper::createShadowNodeWithSettings(root.getCompositorManager2(),
+        root.getRenderSystem()->getCapabilities(),"ThroneEditor/SunShadows",maps,false,
+        1024,0.7f,1.0f,0.125f,0.2f,2);
+}
+
+/// Creates an opaque dielectric material. Plane backfaces are lit consistently too.
+Ogre::HlmsPbsDatablock* createPbsMaterial(Ogre::HlmsPbs& hlms,const std::string& name) {
+    auto* material=static_cast<Ogre::HlmsPbsDatablock*>(hlms.createDatablock(name,name,
+        Ogre::HlmsMacroblock(),Ogre::HlmsBlendblock(),Ogre::HlmsParamVec()));
+    material->setRoughness(0.65f);
+    material->setFresnel(Ogre::Vector3(0.04f),false);
+    material->setTwoSidedLighting(true);
+    return material;
+}
+
 /// Converts editor Euler angles (degrees, about X, then Y, then Z) to an OGRE orientation.
 Ogre::Quaternion orientation(Vec3 degrees) {
     const auto about = [](float angle, const Ogre::Vector3& axis) {
@@ -93,7 +132,7 @@ PrimitiveMesh addPrimitiveGeometry(Ogre::ManualObject& mesh, const std::string& 
         mesh.begin(material, Ogre::OT_TRIANGLE_LIST);
         for (const auto& vertex:data.vertices) {
             mesh.position(toOgre(vertex.position));
-            mesh.colour(vertex.shade,vertex.shade,vertex.shade);
+            mesh.normal(toOgre(vertex.normal));
         }
         for(auto index:data.indices) mesh.index(index);
         mesh.end();
@@ -225,7 +264,7 @@ void dockSpace() {
 
 Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene, Ogre::Camera& camera,
                const std::filesystem::path& project, std::filesystem::path projectList)
-    : root_(root), window_(window), scene_(scene), camera_(camera), unlit_(unlitHlms(root)),
+    : root_(root), window_(window), scene_(scene), camera_(camera), unlit_(unlitHlms(root)), pbs_(pbsHlms(root)),
       platform_(window), gui_(std::make_unique<Ogre::ImguiManager>()),
       guiPass_(std::make_unique<Ogre::CompositorPassImguiProvider>(gui_.get())),
       projects_(projectList.empty() ? ProjectList() : ProjectList::load(projectList)),
@@ -245,7 +284,19 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
     // The provider must be installed before the dear_imgui pass is defined.
     auto* compositor = root.getCompositorManager2();
     compositor->setCompositorPassProvider(guiPass_.get());
-    compositor->createBasicWorkspaceDef(viewportWorkspaceName, Ogre::ColourValue(0.11f, 0.12f, 0.14f));
+    pbs_.setShadowSettings(Ogre::HlmsPbs::PCF_3x3);
+    scene.setForwardClustered(true,16,8,24,64,0,0,0.1f,100.0f);
+    scene.setShadowFarDistance(100.0f);
+    scene.setAmbientLight(Ogre::ColourValue(.22f,.25f,.30f),Ogre::ColourValue(.06f,.07f,.09f),Ogre::Vector3::UNIT_Y);
+    sun_=scene.createLight();
+    sunNode_=scene.getRootSceneNode()->createChildSceneNode();
+    sunNode_->attachObject(sun_);
+    sun_->setType(Ogre::Light::LT_DIRECTIONAL);
+    sun_->setDirection(Ogre::Vector3(-.6f,-1.0f,-.4f).normalisedCopy());
+    sun_->setPowerScale(Ogre::Math::PI);
+    sun_->setCastShadows(true);
+    createShadowNode(root);
+    compositor->createBasicWorkspaceDef(viewportWorkspaceName, Ogre::ColourValue(0.11f, 0.12f, 0.14f),"ThroneEditor/SunShadows");
     auto* node = compositor->addNodeDefinition("ThroneEditor/WindowNode");
     node->addTextureSourceName("Window", 0, Ogre::TextureDefinitionBase::TEXTURE_INPUT);
     node->addTextureSourceName("Viewport", 1, Ogre::TextureDefinitionBase::TEXTURE_INPUT);
@@ -274,9 +325,11 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
 
     createMaterial(unlit_, lineMaterial)->setColour(Ogre::ColourValue::White);
     grid_ = scene.createManualObject();
+    grid_->setCastShadows(false);
     addLines(*grid_, gridLines(), Ogre::ColourValue(0.35f, 0.37f, 0.40f));
     gridNode_ = attach(scene, grid_);
     outline_ = scene.createManualObject();
+    outline_->setCastShadows(false);
     addLines(*outline_, cubeEdges(), Ogre::ColourValue(1.0f, 0.75f, 0.2f));
     outlineNode_ = attach(scene, outline_);
     camera.setAutoAspectRatio(false);
@@ -493,6 +546,8 @@ Editor::~Editor() {
     for (auto* mesh : {grid_, outline_}) scene_.destroyManualObject(mesh);
     for (auto* node : {gridNode_, outlineNode_}) scene_.destroySceneNode(node);
     unlit_.destroyDatablock(lineMaterial);
+    scene_.destroyLight(sun_);
+    scene_.destroySceneNode(sunNode_);
 }
 
 bool Editor::frame(float deltaSeconds) {
@@ -558,6 +613,11 @@ bool Editor::frame(float deltaSeconds) {
         running = root_.renderOneFrame();
     }
     return running;
+}
+
+void Editor::setShadowsEnabled(bool enabled) {
+    shadowsEnabled_=enabled;
+    sun_->setCastShadows(enabled);
 }
 
 void Editor::captureViewport(const std::filesystem::path& path) {
@@ -779,8 +839,9 @@ void Editor::rebuildScene() {
             auto* parent = nodes[k].parent == Expansion::npos ? sceneRoots_[i] : created[nodes[k].parent];
             created[k] = parent->createChildSceneNode();
             const auto name = "ThroneEditor/Node/" + std::to_string(i) + "/" + std::to_string(k);
-            auto* material = createMaterial(unlit_, name);
+            auto* material = createPbsMaterial(pbs_, name);
             auto* mesh = scene_.createManualObject();
+            mesh->setCastShadows(true);
             created[k]->attachObject(mesh);
             renderObjects_.push_back({i, k, created[k], mesh, material, name});
         }
@@ -793,7 +854,7 @@ void Editor::destroyRenderObjects() {
     for (auto it = renderObjects_.rbegin(); it != renderObjects_.rend(); ++it) {
         scene_.destroyManualObject(it->mesh);
         scene_.destroySceneNode(it->node);
-        unlit_.destroyDatablock(it->material->getName());
+        pbs_.destroyDatablock(it->material->getName());
     }
     renderObjects_.clear();
     for (auto* root : sceneRoots_) scene_.destroySceneNode(root);
@@ -824,7 +885,7 @@ void Editor::syncTransforms(const LevelExpansion* snapshot) {
         render.node->setScale(toOgre(transform.scale));
         render.mesh->setVisible(shape.kind != PrimitiveKind::None);
         const auto colour=primitiveColour(node);
-        render.material->setColour(Ogre::ColourValue(colour[0],colour[1],colour[2]));
+        render.material->setDiffuse(Ogre::Vector3(colour[0],colour[1],colour[2]));
         if (selected_.kind == Selection::Kind::Node && selected_.instance == static_cast<int>(render.instance) &&
             selected_.path == expanded.path)
             outlined = &render;
@@ -1595,6 +1656,8 @@ void Editor::menu() {
     }
     if (ImGui::BeginMenu("View")) {
         ImGui::MenuItem("Grid", nullptr, &showGrid_);
+        bool shadows=shadowsEnabled_;
+        if(ImGui::MenuItem("Shadows",nullptr,&shadows)) setShadowsEnabled(shadows);
         ImGui::MenuItem("Orthographic", nullptr, &orthographic_);
         if (ImGui::MenuItem("Focus Selection", "F")) focusSelection();
         ImGui::EndMenu();
