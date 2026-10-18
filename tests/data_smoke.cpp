@@ -31,6 +31,11 @@ int main() {
     fs::remove_all(directory);
     const auto path = directory / "roundtrip.scene.lton";
 
+    // Node IDs are Snowflake IDs: positive, carrying the time they were made, and rising.
+    const auto firstId = throne::newNodeId(), secondId = throne::newNodeId();
+    if (firstId >> 63 || (firstId >> 22) == 0 || secondId <= firstId)
+        return fail("Node IDs were not rising positive Snowflake IDs");
+
     // Hierarchy: reparenting keeps parents before children and refuses cycles.
     auto original = throne::Scene::example();
     const auto parent = original.nodes[0].id, child = original.nodes[1].id;

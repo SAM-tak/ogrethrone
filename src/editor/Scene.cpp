@@ -1,4 +1,5 @@
 #include "editor/Scene.h"
+#include "core/Ids.h"
 #include <algorithm>
 #include <limits>
 #include <random>
@@ -280,12 +281,9 @@ Overrides readOverrides(LhatValue value) {
 }
 
 NodeId newNodeId() {
-    static std::mt19937_64 generator(std::random_device{}());
-    // Never below 32 bits, so a generated ID cannot pass for a small counter value.
-    NodeId id;
-    do id = generator() >> 1;
-    while (id < 0xFFFFFFFFu);
-    return id;
+    // Counting from 2026-01-01 UTC, the 41 bits of time last until 2095.
+    static Ids ids(1767225600000);
+    return ids.next();
 }
 
 std::uint32_t newRunnerId() {

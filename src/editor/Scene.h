@@ -12,8 +12,8 @@
 #include <vector>
 
 namespace throne {
-/// A scene node's ID: a random integer from 0xFFFFFFFF to 0x7FFFFFFFFFFFFFFF, so
-/// IDs from different files do not meet (TDDja/06 3). 0 means no node; files may
+/// A scene node's ID: a positive 64-bit Snowflake ID (see newNodeId()), so IDs
+/// from different files do not meet (TDDja/06 3). 0 means no node; files may
 /// hold any positive ID.
 using NodeId = std::uint64_t;
 
@@ -218,7 +218,7 @@ struct Scene : Prefab {
     static Scene example();
 };
 
-/// Returns a new random NodeId.
+/// Returns a new NodeId: a Snowflake ID (core/Ids.h) counted from 2026-01-01 UTC. Not thread safe.
 NodeId newNodeId();
 /// Returns a random runner ID from 0x80000000 up, for runners an instance adds:
 /// a file numbers its own runners from 1, so the two do not meet.
