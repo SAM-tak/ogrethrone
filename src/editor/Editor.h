@@ -91,6 +91,14 @@ public:
     };
     /// The last completed frame, for profiling without FPS averaging or fixed-delta assumptions.
     const FrameTimings& frameTimings() const { return timings_; }
+    /// Changes the user's viewport VSync preference; hidden views still force VSync on.
+    void setEditorVSync(bool enabled);
+    /// The user's preference, independent of the currently applied window setting.
+    bool editorVSync() const { return preferences_.vsync; }
+    /// Whether the scene workspace is enabled for this frame.
+    bool sceneViewVisible() const;
+    /// Selects OGRE's project and level rendering settings in the Inspector.
+    void selectRenderer();
     /// Enables/disables shadow casting while preserving direct and ambient lighting.
     void setShadowsEnabled(bool enabled);
     /// Shows or hides the procedural sky without modifying scene lights or physics.
@@ -173,6 +181,8 @@ private:
     /// Everything the editor edits; one undo step is a copy of it.
     struct Document {
         World world;
+        /// Project-wide game output settings participate in Save and Undo with the document.
+        GameRendering gameRendering;
         /// Prefabs opened for editing (TDDja/06 6), by path; saved with the level.
         std::map<std::string, Prefab> prefabs;
     };
@@ -184,7 +194,7 @@ private:
     };
     /// What the inspector shows: a node of view_, a system, or a scene instance of the level.
     struct Selection {
-        enum class Kind { None, Node, System, Scene } kind = Kind::None;
+        enum class Kind { None, Node, System, Scene, Renderer } kind = Kind::None;
         /// Index into view_.instances; -1 for a system of the level itself.
         int instance = -1;
         /// The node's path; for a system, the prefab instance it came from.
@@ -378,6 +388,10 @@ private:
     void systemInspector(const System& system);
     /// Draws the rendered scene and handles camera and picking input.
     void viewport();
+    /// Applies the editor's presentation policy and enables only visible scene rendering.
+    void applyDisplaySettings();
+    /// Draws OGRE's game output settings and the current level's rendering controls.
+    void rendererInspector();
     /// Draws the Browser panel: the project's levels, scenes and prefabs.
     void browser();
     /// Draws the Console panel: the log, and an L^ prompt below it.
@@ -464,6 +478,9 @@ private:
     std::optional<Project> project_;
     ProjectList projects_;
     std::filesystem::path projectListFile_;
+    std::filesystem::path preferencesFile_;
+    EditorPreferences preferences_;
+    bool viewportVisible_ = false;
     /// ImGui's settings file (the dock layout); kept alive because ImGui holds the pointer.
     std::string iniFile_;
     std::vector<Known> known_;

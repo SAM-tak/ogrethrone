@@ -72,13 +72,14 @@ int main(int argc, char** argv) {
     }
     const bool physicsSmoke = argc > 1 && std::strcmp(argv[1], "--smoke-physics") == 0;
     const bool profilePhysics = argc > 1 && std::strcmp(argv[1], "--profile-physics") == 0;
-    bool navigationSmoke = false, showcaseSmoke = false, closeSmoke = false;
+    bool navigationSmoke = false, showcaseSmoke = false, closeSmoke = false, launcherSmoke=false;
 #ifdef THRONE_NAVIGATION_SMOKE
     showcaseSmoke = argc > 1 && std::strcmp(argv[1], "--smoke-showcases") == 0;
     closeSmoke = argc > 1 && std::strcmp(argv[1], "--smoke-close") == 0;
     navigationSmoke = closeSmoke || (argc > 1 && std::strcmp(argv[1], "--smoke-navigation") == 0);
+    launcherSmoke=argc>1 && std::strcmp(argv[1],"--smoke-launcher")==0;
 #endif
-    const bool smoke = showcaseSmoke || physicsSmoke || profilePhysics || navigationSmoke || (argc > 1 && std::strcmp(argv[1], "--smoke") == 0);
+    const bool smoke = launcherSmoke || showcaseSmoke || physicsSmoke || profilePhysics || navigationSmoke || (argc > 1 && std::strcmp(argv[1], "--smoke") == 0);
     // --capture <folder> [file] [level]: opens the project (and the project-relative level,
     // else its main level), saves the settled viewport as PPM and exits. --bake-gi takes
     // the same arguments and first bakes and saves the level's global illumination.
@@ -124,7 +125,7 @@ int main(int argc, char** argv) {
         root.setRenderSystem(renderer);
         root.initialise(false);
         Ogre::NameValuePairList windowParameters;
-        if (profilePhysics) windowParameters["vsync"] = "false";
+        windowParameters["vsync"] = profilePhysics ? "false" : "true";
 #ifdef NDEBUG
         constexpr auto windowTitle = "Ogre Throne";
 #else
@@ -142,7 +143,8 @@ int main(int argc, char** argv) {
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
         {
-            throne::Editor editor(root, *window, *scene, *camera, project, projectList);
+            throne::Editor editor(root, *window, *scene, *camera, launcherSmoke?std::filesystem::path{}:project, projectList);
+            if (profilePhysics) editor.setEditorVSync(false);
             if (physicsSmoke && (!scene->getForwardPlus() ||
                 scene->getForwardPlus()->getForwardPlusMethod()!=Ogre::ForwardPlusBase::MethodForwardClustered))
                 throw std::runtime_error("The viewport is not using Forward Clustered");
@@ -150,13 +152,21 @@ int main(int argc, char** argv) {
             Colibri::ColibriListener guiPlatform;
             Colibri::ColibriManager gui(&guiLog, &guiPlatform);
 #ifdef THRONE_NAVIGATION_SMOKE
-            if (navigationSmoke) throne::navigationSmoke(editor, *window, *camera);
+            if (navigationSmoke) throne::navigationSmoke(editor, *window, *camera,project);
             if (showcaseSmoke) throne::showcaseSmoke(editor,*window,*scene,*camera,std::filesystem::absolute(argc>3?argv[3]:"out/showcase-captures"));
+            if(launcherSmoke) {
+                editor.setEditorVSync(false);
+                for(int i=0;i<3;++i) {
+                    if(!editor.frame(1.0f/60) || !window->getVSync() || editor.sceneViewVisible())
+                        throw std::runtime_error("Launcher must synchronize UI without rendering the scene");
+                }
+                std::puts("Launcher display smoke passed: forced VSync and disabled scene rendering");
+            }
 #endif
             if (captureRun && argc > 4 && !editor.openLevel(argv[4])) throw std::runtime_error(std::string("Could not open ") + argv[4]);
             auto previous = std::chrono::steady_clock::now();
             unsigned frames = 0;
-            bool running = !navigationSmoke && !showcaseSmoke, stepping = false;
+            bool running = !navigationSmoke && !showcaseSmoke && !launcherSmoke, stepping = false;
             std::ofstream profile;
             std::array<double, 10> totals{};
             unsigned profileSamples = 0;

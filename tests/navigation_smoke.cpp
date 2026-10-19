@@ -3,6 +3,7 @@
 #include "editor/Editor.h"
 #include <OgreCamera.h>
 #include <OgreRay.h>
+#include <OgreWindow.h>
 #include <imgui_internal.h>
 #include <cmath>
 #include <cstdio>
@@ -11,7 +12,7 @@
 #include <stdexcept>
 
 namespace throne {
-void navigationSmoke(Editor& editor, Ogre::Window& nativeWindow, Ogre::Camera& camera) {
+void navigationSmoke(Editor& editor, Ogre::Window& nativeWindow, Ogre::Camera& camera,const std::filesystem::path& project) {
     const auto require = [](bool condition, const char* message) {
         if (!condition) throw std::runtime_error(message);
     };
@@ -37,7 +38,7 @@ void navigationSmoke(Editor& editor, Ogre::Window& nativeWindow, Ogre::Camera& c
             io.AddKeyEvent(ImGuiMod_Shift, leftShift || rightShift);
             io.AddMouseWheelEvent(0, wheel);
             for (const auto k : {ImGuiKey_W, ImGuiKey_A, ImGuiKey_S, ImGuiKey_D, ImGuiKey_Q, ImGuiKey_E,
-                                 ImGuiKey_F5, ImGuiKey_Pause})
+                                 ImGuiKey_F5, ImGuiKey_Pause, ImGuiKey_Z})
                 io.AddKeyEvent(k, key == k);
         }), "Navigation smoke renderer stopped");
         wheel = 0;
@@ -76,6 +77,35 @@ void navigationSmoke(Editor& editor, Ogre::Window& nativeWindow, Ogre::Camera& c
     left = true; frame(); left = false; frame(); frame();
     require(statistics->Size.y == expandedHeight, "Statistics expand button did not restore the panel");
     require(near(beforeToggle, camera.getPosition()), "Statistics button moved the camera");
+    require(editor.editorVSync() && nativeWindow.getVSync() && editor.sceneViewVisible(),"Editor did not default to synchronized scene rendering");
+    mouse=ImVec2(statistics->Pos.x+36,statistics->Pos.y+10);
+    frame(); left=true; frame(); left=false; frame();
+    require(!editor.editorVSync() && !nativeWindow.getVSync(),"Viewport VSync checkbox did not change presentation");
+    // Activate another dock tab: the scene must stop rendering and force synchronized UI.
+    ImGui::DockBuilderDockWindow("Console",window->DockId);
+    ImGui::SetWindowFocus("Console");
+    for(int i=0;i<3;++i) frame();
+    require(!editor.sceneViewVisible() && nativeWindow.getVSync() && !editor.editorVSync(),
+            "Hidden viewport rendered, lost its preference, or failed to force VSync");
+    ImGui::SetWindowFocus("Viewport");
+    for(int i=0;i<3;++i) frame();
+    require(editor.sceneViewVisible() && !nativeWindow.getVSync(),"Visible viewport did not restore its VSync preference");
+    editor.selectRenderer(); frame();
+    const auto* inspector=ImGui::FindWindowByName("Inspector");
+    require(inspector && inspector->Active,"OGRE Inspector unavailable");
+    const auto& style=ImGui::GetStyle();
+    mouse=ImVec2(inspector->DC.CursorStartPos.x+8,inspector->DC.CursorStartPos.y+
+        ImGui::GetTextLineHeightWithSpacing()+ImGui::GetTextLineHeight()+2*style.SeparatorTextPadding.y+
+        style.ItemSpacing.y+ImGui::GetFrameHeight()*.5f);
+    frame(); left=true; frame(); left=false; frame();
+    const auto saveProject=[&] {
+        ctrl=true; key=ImGuiKey_S; frame(); key=ImGuiKey_None; ctrl=false; frame();
+    };
+    saveProject();
+    require(!Project::open(project).rendering.vsync && !nativeWindow.getVSync(),"OGRE game VSync did not save separately from editor presentation");
+    ctrl=true; key=ImGuiKey_Z; frame(); key=ImGuiKey_None; ctrl=false; frame();
+    saveProject();
+    require(Project::open(project).rendering.vsync && !nativeWindow.getVSync(),"Game VSync Undo changed the editor preference or failed to save");
     const auto origin = window->DC.CursorStartPos;
     const ImVec2 size(window->ContentRegionRect.Max.x - origin.x, window->ContentRegionRect.Max.y - origin.y);
     // Aim at an off-centre piece of ground, away from the other sample meshes.
@@ -187,6 +217,7 @@ void navigationSmoke(Editor& editor, Ogre::Window& nativeWindow, Ogre::Camera& c
     require(!editor.playing() && !editor.paused(), "Pause started an idle session");
     tap(ImGuiKey_F5);
     require(editor.playing() && !editor.paused(), "F5 did not start a running session");
+    require(!nativeWindow.getVSync(),"Editor Play used game VSync instead of the editor preference");
     for (int i = 0; i < 18; ++i) frame();
     tap(ImGuiKey_Pause);
     require(editor.playing() && editor.paused(), "Pause key did not suspend Play");
@@ -221,6 +252,6 @@ void navigationSmoke(Editor& editor, Ogre::Window& nativeWindow, Ogre::Camera& c
     std::filesystem::remove(pauseCapture);
     tap(ImGuiKey_F5); for(int i=0;i<600;++i) frame();
     closePlayingSmoke(editor,nativeWindow);
-    std::puts("Navigation smoke passed: camera controls, statistics, Pause/Resume, frozen poses/spawning and Stop restoration");
+    std::puts("Navigation smoke passed: camera controls, statistics/VSync, hidden scene rendering, OGRE settings Save/Undo, Pause/Resume and Stop restoration");
 }
 }

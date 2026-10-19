@@ -320,6 +320,8 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
       guiPass_(std::make_unique<Ogre::CompositorPassImguiProvider>(gui_.get())),
       projects_(projectList.empty() ? ProjectList() : ProjectList::load(projectList)),
       projectListFile_(std::move(projectList)) {
+    preferencesFile_=projectListFile_.empty()?std::filesystem::path{}:projectListFile_.parent_path()/"editor.lton";
+    preferences_=EditorPreferences::load(preferencesFile_);
     auto& io = ImGui::GetIO();
     // The dock layout is kept beside the project list; without one it is not persisted.
     iniFile_ = projectListFile_.empty() ? std::string() : (projectListFile_.parent_path() / "editor.ini").u8string();
@@ -494,6 +496,7 @@ void Editor::openProject(const std::filesystem::path& path) {
         std::snprintf(levelPath_, sizeof levelPath_, "%s", level.c_str());
         library_ = Library(project_->root);
         doc_ = Document();
+        doc_.gameRendering=project_->rendering;
         contexts_.resize(1);
         navigate_.reset();
         if (std::filesystem::exists(project_->resolve(level)) && !open()) throw std::runtime_error(fileError_);
@@ -730,8 +733,10 @@ bool Editor::frame(float deltaSeconds, const std::function<void()>& input) {
     ImGui::GetIO().DeltaTime = std::max(deltaSeconds, 1.0e-4f);
     ImGui::NewFrame();
     ImGuizmo::BeginFrame();
+    viewportVisible_=false;
     if (!project_) {
         launcher();
+        applyDisplaySettings();
         gui_->prepareForRender(&scene_);
         return root_.renderOneFrame();
     }
@@ -755,6 +760,7 @@ bool Editor::frame(float deltaSeconds, const std::function<void()>& input) {
     tasks_.draw();
     closeDialog();
     replaceDialog();
+    applyDisplaySettings();
     if(close_) {
         ImGui::EndFrame();
         return false;
@@ -786,9 +792,11 @@ bool Editor::frame(float deltaSeconds, const std::function<void()>& input) {
             if (physics_) physics_->prepare(view_);
             measured.physicsPrepareMs = milliseconds(prepare, Clock::now());
         } else if (stage == "OGRE") {
-            syncTransforms(runtime_ && renderSnapshot_ ? &*renderSnapshot_ : nullptr);
-            updateCamera();
-            scene_.getParticleSystemManager2()->setCameraPosition(camera_.getDerivedPosition());
+            if(viewportVisible_) {
+                syncTransforms(runtime_ && renderSnapshot_ ? &*renderSnapshot_ : nullptr);
+                updateCamera();
+                scene_.getParticleSystemManager2()->setCameraPosition(camera_.getDerivedPosition());
+            }
             gui_->prepareForRender(&scene_);
             // Scene RGB is already composited. Particle alpha must not blend the viewport again.
             // The pinned ImGui backend creates this per-texture material during prepareForRender.
@@ -834,6 +842,22 @@ bool Editor::frame(float deltaSeconds, const std::function<void()>& input) {
          &FrameTimings::physicsStepMs, &FrameTimings::renderSyncMs, &FrameTimings::renderMs, &FrameTimings::waitMs})
         averageTimings_.*member += weight * (measured.*member - averageTimings_.*member);
     return running;
+}
+
+void Editor::setEditorVSync(bool enabled) {
+    if(preferences_.vsync==enabled) return;
+    preferences_.vsync=enabled;
+    try { preferences_.save(preferencesFile_); }
+    catch(const std::exception& error) { log(std::string("Could not save editor preferences: ")+error.what()); }
+}
+
+bool Editor::sceneViewVisible() const { return viewportWorkspace_ && viewportWorkspace_->getEnabled(); }
+
+void Editor::applyDisplaySettings() {
+    const bool sceneVisible=project_.has_value() && viewportVisible_;
+    const bool vsync=!sceneVisible || preferences_.vsync;
+    if(window_.getVSync()!=vsync) window_.setVSync(vsync,1);
+    if(viewportWorkspace_) viewportWorkspace_->setEnabled(sceneVisible);
 }
 
 void Editor::setShadowsEnabled(bool enabled) {
@@ -2109,6 +2133,7 @@ bool Editor::openLevel(const std::string& path) {
 bool Editor::open() {
     try {
         Document loaded;
+        loaded.gameRendering=doc_.gameRendering;
         loaded.world.level = Level::load(project_->resolve(levelPath_));
         for (const auto& instance : loaded.world.level.scenes) {
             if (loaded.world.scenes.count(instance.scene)) continue;
@@ -2124,7 +2149,7 @@ bool Editor::open() {
         doc_ = std::move(loaded);
         contexts_.resize(1);
         navigate_.reset();
-        dirty_ = false;
+        dirty_ = doc_.gameRendering.vsync!=project_->rendering.vsync;
         selected_ = {};
         areaLightModel_=-1;
         refreshView();
@@ -2151,6 +2176,10 @@ bool Editor::save() {
         for (const auto& [scenePath, scene] : doc_.world.scenes) scene.save(project_->resolve(scenePath));
         for (const auto& [prefabPath, prefab] : doc_.prefabs) prefab.save(project_->resolve(prefabPath));
         doc_.world.level.save(project_->resolve(levelPath_));
+        auto project=*project_;
+        project.rendering=doc_.gameRendering;
+        project.save();
+        project_=std::move(project);
         dirty_ = false;
         log(std::string("Saved ") + levelPath_ + ", " + std::to_string(doc_.world.scenes.size()) + " scene(s) and " +
             std::to_string(doc_.prefabs.size()) + " prefab(s)");
@@ -2188,7 +2217,8 @@ void Editor::menu() {
     if (ImGui::BeginMenu("File")) {
         if (ImGui::MenuItem("New Level", nullptr, false, editing)) {
             checkpoint();
-            doc_ = Document();
+            doc_.world=World();
+            doc_.prefabs.clear();
             contexts_.resize(1);
             navigate_.reset();
             selected_ = {};
@@ -2360,6 +2390,7 @@ void Editor::viewport() {
         const ImVec2 size = ImGui::GetContentRegionAvail();
         if (size.x >= 1 && size.y >= 1) {
             visible = true;
+            viewportVisible_=true;
             resizeViewport(static_cast<unsigned>(size.x), static_cast<unsigned>(size.y));
             const ImVec2 origin = ImGui::GetCursorScreenPos();
             ImGui::Image(texture_, size);
@@ -2441,6 +2472,10 @@ void Editor::viewport() {
                                      ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoScrollbar)) {
                     if (ImGui::SmallButton(statisticsCollapsed_ ? "+" : "-")) statisticsCollapsed_ = !statisticsCollapsed_;
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip(statisticsCollapsed_ ? "Expand statistics" : "Minimize statistics");
+                    ImGui::SameLine();
+                    bool vsync=preferences_.vsync;
+                    if(ImGui::Checkbox("VSync",&vsync)) setEditorVSync(vsync);
+                    if(ImGui::IsItemHovered()) ImGui::SetTooltip("Editor window VSync. Game rendering has a separate setting in OGRE.");
                     ImGui::SameLine();
                     const auto fps = ImGui::GetIO().Framerate;
                     ImGui::Text("FPS %.1f | %.2f ms", fps, fps > 0 ? 1000.0f / fps : 0.0f);
@@ -2747,7 +2782,7 @@ void Editor::resizeViewport(unsigned width, unsigned height) {
 
 void Editor::createWorkspaces() {
     auto* compositor = root_.getCompositorManager2();
-    viewportWorkspace_ = compositor->addWorkspace(&scene_, texture_, &camera_, viewportWorkspaceName, true);
+    viewportWorkspace_ = compositor->addWorkspace(&scene_, texture_, &camera_, viewportWorkspaceName, project_.has_value() && viewportVisible_);
     const Ogre::CompositorChannelVec channels{window_.getTexture(), texture_};
     windowWorkspace_ = compositor->addWorkspace(&scene_, channels, &camera_, windowWorkspaceName, true);
 }

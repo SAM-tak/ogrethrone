@@ -266,6 +266,22 @@ The button becomes **Resume**; clicking it or pressing Pause again continues the
 same session. Rendering, statistics and viewport navigation remain active. Stop
 also works while paused, and a new Play session always starts unpaused.
 
+The editor defaults to **VSync on**. The statistics overlay's **VSync** checkbox
+controls the editor window, including Play, and remains available when statistics
+are minimized. It is saved per user in `editor.lton` beside the project list.
+The launcher and an inactive/hidden Viewport tab always use VSync; they also skip
+the scene workspace, so unseen scenes do not keep issuing draw calls. Returning
+to the Viewport restores the checkbox's preference. Synchronization uses Vulkan
+FIFO presentation; turning it off allows immediate presentation when supported.
+
+Select **Systems → Parallel → OGRE** to inspect rendering settings. **Game
+rendering (project) → VSync** is a separate project-wide setting, saved in
+`project.throne.lton` as `rendering = { vsync = true^ }`. It supports Save and Undo
+and never overrides editor Play's checkbox. Standalone game execution is not yet
+implemented; this setting records its presentation preference. The same Inspector
+also exposes the current level's Forward Clustered mode, tone mapping, exposure
+and field of view. Existing Lighting menu controls remain available.
+
 Paths are relative to the project folder. `main.lh` at the top of the project is the
 game's entry point and organizer (which levels to play, in what order); new
 projects get a placeholder one. It is a plain script (no `module^`); an `await^`

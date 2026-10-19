@@ -51,6 +51,13 @@ Project Project::open(const fs::path& path) {
     Project project{root, std::string(lton::string(lton::field(document.root(), "name"))), {}};
     if (const auto level = lton::field(document.root(), "mainLevel"); !lhat_is_nil(level))
         project.mainLevel = lton::relativePath(level);
+    if (const auto rendering=lton::field(document.root(),"rendering"); !lhat_is_nil(rendering)) {
+        const auto vsync=lton::field(lton::table(rendering),"vsync");
+        if (!lhat_is_nil(vsync)) {
+            if (!lhat_is_bool(vsync)) lton::invalid();
+            project.rendering.vsync=lhat_as_bool(vsync);
+        }
+    }
     return project;
 }
 
@@ -61,10 +68,38 @@ void Project::save() const {
     write.set(root, "version", lhat_integer(projectVersion));
     write.set(root, "name", write.string(name));
     if (!mainLevel.empty()) write.set(root, "mainLevel", write.string(mainLevel));
+    const auto rendering=write.table();
+    write.set(rendering,"vsync",lhat_bool(this->rendering.vsync));
+    write.set(root,"rendering",rendering);
     write.save(root, this->root / markerName);
 }
 
 fs::path Project::resolve(std::string_view relative) const { return root / fs::u8path(relative); }
+
+EditorPreferences EditorPreferences::load(const fs::path& file) {
+    EditorPreferences result;
+    if (file.empty() || !fs::exists(file)) return result;
+    try {
+        const lton::Document document(file);
+        document.expect("ogrethrone-editor",1);
+        const auto value=lton::field(document.root(),"vsync");
+        if (!lhat_is_nil(value)) {
+            if (!lhat_is_bool(value)) lton::invalid();
+            result.vsync=lhat_as_bool(value);
+        }
+    } catch(const std::exception&) { return {}; }
+    return result;
+}
+
+void EditorPreferences::save(const fs::path& file) const {
+    if (file.empty()) return;
+    lton::Writer write;
+    const auto root=write.table();
+    write.set(root,"format",write.string("ogrethrone-editor"));
+    write.set(root,"version",lhat_integer(1));
+    write.set(root,"vsync",lhat_bool(vsync));
+    write.save(root,file);
+}
 
 fs::path ProjectList::defaultFile() {
 #ifdef _WIN32

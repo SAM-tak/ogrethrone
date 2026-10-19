@@ -7,6 +7,20 @@
 #include <vector>
 
 namespace throne {
+/// Presentation settings for a standalone game, independent of editor preferences.
+struct GameRendering {
+    bool vsync = true;
+};
+
+/// Per-user editor preferences, stored beside the project list, never in a project.
+struct EditorPreferences {
+    bool vsync = true;
+    /// Missing or damaged preferences use the defaults; an empty path disables persistence.
+    static EditorPreferences load(const std::filesystem::path& file);
+    /// Saves preferences atomically; an empty path disables persistence.
+    void save(const std::filesystem::path& file) const;
+};
+
 /// A project folder (TDDja/03): `project.throne.lton` with `levels/`, `scripts/`
 /// and `lhat-host.json` beside it. Paths inside a project are relative to its root.
 struct Project {
@@ -19,6 +33,8 @@ struct Project {
     std::string name;
     /// Project-relative path of the level opened with the project; may be empty.
     std::string mainLevel;
+    /// Defaults used by the game's output window, not the editor's window.
+    GameRendering rendering;
 
     /// Creates `<parent>/<name>/` with the standard layout, a default `main.lh`, an
     /// example scene and a main level that loads it.

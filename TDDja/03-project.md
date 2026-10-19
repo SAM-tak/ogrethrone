@@ -30,10 +30,15 @@ format = "ogrethrone-project",
 version = 1,
 name = "My Game",
 mainLevel = "levels/main.level.lton",   # 省略可
+rendering = { vsync = true^ },          # 本番ゲームの出力設定。省略時もオン
 ```
 
 ［提案］`mainLevel` があれば、プロジェクトを開いたときにそのレベル（04）を開く。
 無いとき、またはファイルが無いときは、空のレベルで始める。
+
+本番ゲームの VSync はプロジェクト全体の `rendering.vsync` に保存する。Systems の OGRE を選択した Inspector で編集し、通常の Save／Undo の対象とする。エディターの VSync とは別で、エディター内の Play には適用しない。独立したゲーム実行はまだ未実装であり、その出力ウィンドウ用の設定を保持する。
+
+［補足］エディター用 VSync はプロジェクト一覧と同じユーザー設定フォルダの `editor.lton` に保存する。既定はオン。不在・破損時も既定値を使う。ランチャーやシーンビュー非表示時は保存したオフ設定を保持したまま VSync を強制オンにし、シーンの描画を止める。再表示でユーザー設定へ戻す。
 
 ### 3.2. 構成
 

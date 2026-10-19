@@ -106,6 +106,22 @@ int main() {
         throne::Scene::load(reopened.resolve(level.scenes[0].scene)).nodes.size() != 2 ||
         !fs::exists(reopened.resolve("main.lh")))
         return fail("Created project did not reopen with main.lh, its main level and scene");
+    if(!reopened.rendering.vsync) return fail("New projects must default to game VSync on");
+    auto configured=project;
+    configured.rendering.vsync=false;
+    configured.save();
+    if(throne::Project::open(project.root).rendering.vsync) return fail("Game VSync did not round-trip in the project");
+    const auto preferenceFile=directory/"editor.lton";
+    if(!throne::EditorPreferences::load(preferenceFile).vsync) return fail("Missing editor preferences must default to VSync on");
+    throne::EditorPreferences preferences;
+    preferences.vsync=false; preferences.save(preferenceFile);
+    if(throne::EditorPreferences::load(preferenceFile).vsync || throne::Project::open(project.root).rendering.vsync)
+        return fail("Editor/game display settings did not retain independent values");
+    preferences.vsync=true; preferences.save(preferenceFile);
+    if(!throne::EditorPreferences::load(preferenceFile).vsync || throne::Project::open(project.root).rendering.vsync)
+        return fail("Changing editor preferences changed game VSync");
+    std::ofstream(preferenceFile)<<"broken preferences";
+    if(!throne::EditorPreferences::load(preferenceFile).vsync) return fail("Damaged preferences must use safe defaults");
     try {
         throne::Project::create(directory, "My Game");
         return fail("A project was created in a non-empty folder");

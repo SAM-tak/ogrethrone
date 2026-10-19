@@ -310,7 +310,12 @@ void Editor::systemsPanel() {
                 ImGui::EndDisabled();
             }
             if (open) {
-                for (const auto& member : stage.parallel) ImGui::BulletText("%s", member.c_str());
+                for (const auto& member : stage.parallel) {
+                    if(member=="OGRE") {
+                        if(ImGui::Selectable("OGRE",selected_.kind==Selection::Kind::Renderer)) selectRenderer();
+                        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Rendering settings");
+                    } else ImGui::BulletText("%s",member.c_str());
+                }
                 // Script Systems own their stage; BehaviourSystems query node attachments below.
                 for (std::size_t i = 0; i < view_.instances.size(); ++i)
                     for (const auto& system : view_.instances[i].expansion.systems)
@@ -366,13 +371,40 @@ void Editor::systemsPanel() {
 void Editor::inspector() {
     if (ImGui::Begin("Inspector")) {
         ImGui::BeginDisabled(runtime_ != nullptr);
-        if (const auto* node = selectedNode()) nodeInspector(*node);
+        if (selected_.kind==Selection::Kind::Renderer) rendererInspector();
+        else if (const auto* node = selectedNode()) nodeInspector(*node);
         else if (const auto* system = selectedSystem()) systemInspector(*system);
         else if (auto* placed = selectedScene()) sceneInspector(*placed);
         else ImGui::TextDisabled("Nothing selected");
         ImGui::EndDisabled();
     }
     ImGui::End();
+}
+
+void Editor::selectRenderer() { selected_={Selection::Kind::Renderer}; }
+
+void Editor::rendererInspector() {
+    ImGui::TextUnformatted("OGRE");
+    ImGui::SeparatorText("Game rendering (project)");
+    bool vsync=doc_.gameRendering.vsync;
+    if(ImGui::Checkbox("VSync",&vsync)) { checkpoint(); doc_.gameRendering.vsync=vsync; }
+    ImGui::TextWrapped("Editor Play uses the VSync control in viewport statistics.");
+    ImGui::SeparatorText("Level rendering");
+    auto& rendering=doc_.world.level.rendering;
+    bool clustered=rendering.clustered;
+    if(ImGui::Checkbox("Forward Clustered",&clustered)) { checkpoint(); rendering.clustered=clustered; }
+    bool toneMapping=rendering.toneMapping;
+    if(ImGui::Checkbox("Filmic Tone Mapping",&toneMapping)) { checkpoint(); rendering.toneMapping=toneMapping; }
+    const auto track=[&] {
+        if(ImGui::IsItemActivated()) editStart_=doc_;
+        if(ImGui::IsItemDeactivatedAfterEdit()) commit(std::move(editStart_));
+    };
+    float exposure=rendering.exposure;
+    const bool exposureEdited=ImGui::DragFloat("Exposure (EV)",&exposure,.05f,-16,16);
+    track(); if(exposureEdited) rendering.exposure=exposure;
+    float fov=rendering.fieldOfView;
+    const bool fovEdited=ImGui::DragFloat("Field of View",&fov,.5f,1,170,"%.1f deg");
+    track(); if(fovEdited) rendering.fieldOfView=fov;
 }
 
 void Editor::nodeInspector(const ExpandedNode& expanded) {
