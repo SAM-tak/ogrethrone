@@ -57,6 +57,7 @@
 #include <cstring>
 #include <ctime>
 #include <fstream>
+#include <initializer_list>
 #include <iterator>
 #include <filesystem>
 #include <limits>
@@ -364,6 +365,10 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
     for (const auto* folder : {"", "/GLSL", "/Any"})
         resources.addResourceLocation(common + folder, "FileSystem", skyGroup);
     resources.addResourceLocation(THRONE_MEDIA_DIR "/postprocess", "FileSystem", skyGroup);
+    // Reuse OGRE's SMAA implementation and lookup tables, with a fixed High preset.
+    const Ogre::String smaa = THRONE_OGRE_MEDIA_DIR "/2.0/scripts/materials/Tutorial_SMAA";
+    resources.addResourceLocation(smaa, "FileSystem", skyGroup);
+    resources.addResourceLocation(smaa + "/Vulkan", "FileSystem", skyGroup);
     // The compute job that prefilters environment cubemaps for rough reflections.
     // ...and the compute jobs and workspaces that bake global illumination.
     for (const auto* folder : {"/Compute/Algorithms/IBL", "/Compute/Algorithms/IrradianceFields", "/Compute/Tools/Any",
@@ -373,7 +378,8 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
     for (const auto* jobs : {"IBL.material.json", "IrradianceField.material.json"})
         root.getHlmsManager()->loadMaterials(jobs, skyGroup, nullptr, "");
     for (const auto* script : {"Quad.program", "Atmosphere.material", "Sky.material", "DPSM.material", "Copyback.material",
-                               "PccDepthCompressor.material", "Tonemap.material", "IrradianceField.compositor", "ThroneGi.compositor"}) {
+                               "PccDepthCompressor.material", "Tonemap.material", "Bloom.material", "ThroneSmaa.material",
+                               "IrradianceField.compositor", "ThroneGi.compositor"}) {
         auto stream = resources.openResource(script, skyGroup);
         Ogre::MaterialManager::getSingleton().parseScript(stream, skyGroup);
     }
@@ -395,10 +401,11 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
     {
         // The scene renders in half float: render queues below 200 into Opaque, which is
         // copied to Hdr; refractive glass (queue 200 and up) then samples Opaque and its
-        // depth while drawing into Hdr. A quad pass exposes and tone maps Hdr into the viewport.
+        // depth while drawing into Hdr. Bloom is combined before tone mapping, then
+        // SMAA filters the LDR scene before ImGui presents it (the UI stays sharp).
         auto* node = compositor->addNodeDefinition("ThroneEditor/ViewportNode");
         node->addTextureSourceName("Viewport", 0, Ogre::TextureDefinitionBase::TEXTURE_INPUT);
-        node->setNumLocalTextureDefinitions(3);
+        node->setNumLocalTextureDefinitions(9);
         node->addTextureDefinition("Depth")->format = Ogre::PFG_D32_FLOAT;
         for (const auto* name : {"Opaque", "Hdr"}) {
             node->addTextureDefinition(name)->format = Ogre::PFG_RGBA16_FLOAT;
@@ -408,7 +415,19 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
             view->colourAttachments.push_back(attachment);
             view->depthAttachment.textureName = "Depth";
         }
-        node->setNumTargetPass(3);
+        for (const auto* name : {"BloomBright", "BloomHorizontal", "Bloom"}) {
+            auto* texture = node->addTextureDefinition(name);
+            texture->format = Ogre::PFG_RGBA16_FLOAT;
+            texture->widthFactor = texture->heightFactor = 0.25f;
+            texture->depthBufferId = Ogre::DepthBuffer::POOL_NO_DEPTH;
+        }
+        for (const auto* name : {"Tonemapped", "SmaaEdges", "SmaaWeights"}) {
+            auto* texture = node->addTextureDefinition(name);
+            texture->format = Ogre::String(name) == "Tonemapped" ? Ogre::PFG_RGBA8_UNORM_SRGB :
+                              Ogre::String(name) == "SmaaEdges" ? Ogre::PFG_RG8_UNORM : Ogre::PFG_RGBA8_UNORM;
+            texture->depthBufferId = Ogre::DepthBuffer::POOL_NO_DEPTH;
+        }
+        node->setNumTargetPass(9);
         auto* opaque = static_cast<Ogre::CompositorPassSceneDef*>(node->addTargetPass("Opaque")->addPass(Ogre::PASS_SCENE));
         opaque->mShadowNode = "ThroneEditor/SunShadows";
         opaque->setAllClearColours(Ogre::ColourValue(0.11f, 0.12f, 0.14f));
@@ -424,10 +443,33 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
         refractive->mStoreActionDepth = refractive->mStoreActionStencil = Ogre::StoreAction::DontCare;
         refractive->mFirstRQ = 200;
         refractive->setUseRefractions("Depth", "Opaque");
-        auto* quad = static_cast<Ogre::CompositorPassQuadDef*>(node->addTargetPass("Viewport")->addPass(Ogre::PASS_QUAD));
-        quad->mMaterialName = "Throne/Tonemap";
-        quad->addQuadTextureSource(0, "Hdr");
-        quad->setAllLoadActions(Ogre::LoadAction::DontCare);
+        const auto quad = [&](const char* target, const char* material, std::initializer_list<const char*> inputs) {
+            if (Ogre::String(target) != "Viewport") {
+                auto* view = node->addRenderTextureView(target);
+                Ogre::RenderTargetViewEntry attachment;
+                attachment.textureName = target;
+                view->colourAttachments.push_back(attachment);
+                view->depthBufferId = Ogre::DepthBuffer::POOL_NO_DEPTH;
+            }
+            auto* pass = static_cast<Ogre::CompositorPassQuadDef*>(node->addTargetPass(target)->addPass(Ogre::PASS_QUAD));
+            pass->mMaterialName = material;
+            Ogre::uint32 unit = 0;
+            for (const auto* input : inputs) pass->addQuadTextureSource(unit++, input);
+            pass->setAllLoadActions(Ogre::LoadAction::DontCare);
+            pass->mStoreActionDepth = pass->mStoreActionStencil = Ogre::StoreAction::DontCare;
+            return pass;
+        };
+        quad("BloomBright", "Throne/BloomExtract", {"Hdr"});
+        quad("BloomHorizontal", "Throne/BloomHorizontal", {"BloomBright"});
+        quad("Bloom", "Throne/BloomVertical", {"BloomHorizontal"});
+        quad("Tonemapped", "Throne/Tonemap", {"Hdr", "Bloom"});
+        // Edge detection discards pixels without edges, so clear them every frame.
+        // Run weights over the whole target instead of allocating a stencil buffer.
+        auto* edges = quad("SmaaEdges", "Throne/SmaaEdgeDetection", {"Tonemapped"});
+        edges->mLoadActionColour[0] = Ogre::LoadAction::Clear;
+        edges->setAllClearColours(Ogre::ColourValue(0, 0, 0, 0));
+        quad("SmaaWeights", "Throne/SmaaBlendingWeightCalculation", {"SmaaEdges"});
+        quad("Viewport", "Throne/SmaaNeighborhoodBlending", {"Tonemapped", "SmaaWeights"});
         compositor->addWorkspaceDefinition(viewportWorkspaceName)->connectExternal(0, node->getName(), 0);
     }
     {

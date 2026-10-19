@@ -1,0 +1,89 @@
+// Quarter-resolution HDR bloom with a soft threshold and separable Gaussian blur.
+
+fragment_program Throne/BloomExtract_ps glslvk
+{
+    source BloomExtract_ps.glsl
+    default_params
+    {
+        param_named_auto invTex0Size inverse_texture_size 0
+        param_named threshold float 1.5
+        param_named knee float 0.5
+    }
+}
+material Throne/BloomExtract
+{
+    technique
+    {
+        pass
+        {
+            depth_check off
+            depth_write off
+            cull_hardware none
+            vertex_program_ref Ogre/Compositor/Quad_vs {}
+            fragment_program_ref Throne/BloomExtract_ps {}
+            texture_unit
+            {
+                filtering bilinear
+                tex_address_mode clamp
+            }
+        }
+    }
+}
+
+fragment_program Throne/BloomHorizontal_ps glslvk
+{
+    source BloomBlur_ps.glsl
+    default_params
+    {
+        param_named_auto invTex0Size inverse_texture_size 0
+        param_named direction float2 1 0
+    }
+}
+material Throne/BloomHorizontal
+{
+    technique
+    {
+        pass
+        {
+            depth_check off
+            depth_write off
+            cull_hardware none
+            vertex_program_ref Ogre/Compositor/Quad_vs {}
+            fragment_program_ref Throne/BloomHorizontal_ps {}
+            texture_unit
+            {
+                filtering bilinear
+                tex_address_mode clamp
+            }
+        }
+    }
+}
+
+fragment_program Throne/BloomVertical_ps glslvk
+{
+    source BloomBlur_ps.glsl
+    default_params
+    {
+        param_named_auto invTex0Size inverse_texture_size 0
+        param_named direction float2 0 1
+    }
+}
+material Throne/BloomVertical
+{
+    technique
+    {
+        pass
+        {
+            depth_check off
+            depth_write off
+            cull_hardware none
+            vertex_program_ref Ogre/Compositor/Quad_vs {}
+            fragment_program_ref Throne/BloomVertical_ps {}
+            texture_unit
+            {
+                filtering bilinear
+                tex_address_mode clamp
+            }
+        }
+    }
+}

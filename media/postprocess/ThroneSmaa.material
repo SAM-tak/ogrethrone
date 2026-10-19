@@ -1,0 +1,159 @@
+// Fixed SMAA 1x High preset. Shaders and lookup tables come from bundled OGRE.
+
+vertex_program Throne/SmaaEdgeDetection_vs glslvk
+{
+    source SMAA_EdgeDetection_vs.vulkan.glsl
+    enable_include_header true
+    preprocessor_defines SMAA_INITIALIZED=1,SMAA_PRESET_HIGH=1,SMAA_GLSL_4=1,SMAA_EDGE_DETECTION_MODE=1
+    default_params
+    {
+        param_named_auto worldViewProj worldviewproj_matrix
+        param_named_auto viewportSize viewport_size
+    }
+}
+
+fragment_program Throne/SmaaEdgeDetection_ps glslvk
+{
+    source SMAA_EdgeDetection_ps.vulkan.glsl
+    enable_include_header true
+    preprocessor_defines SMAA_INITIALIZED=1,SMAA_PRESET_HIGH=1,SMAA_GLSL_4=1,SMAA_EDGE_DETECTION_MODE=1
+    default_params
+    {
+        param_named_auto viewportSize viewport_size
+    }
+}
+
+material Throne/SmaaEdgeDetection
+{
+    technique
+    {
+        pass
+        {
+            depth_check off
+            depth_write off
+            cull_hardware none
+            vertex_program_ref Throne/SmaaEdgeDetection_vs {}
+            fragment_program_ref Throne/SmaaEdgeDetection_ps {}
+
+            texture_unit
+            {
+                filtering none
+                tex_address_mode clamp
+            }
+
+            texture_unit
+            {
+                filtering bilinear
+                tex_address_mode clamp
+            }
+        }
+    }
+}
+
+vertex_program Throne/SmaaBlendingWeightCalculation_vs glslvk
+{
+    source SMAA_BlendingWeightCalculation_vs.vulkan.glsl
+    enable_include_header true
+    preprocessor_defines SMAA_INITIALIZED=1,SMAA_PRESET_HIGH=1,SMAA_GLSL_4=1,SMAA_EDGE_DETECTION_MODE=1
+    default_params
+    {
+        param_named_auto worldViewProj worldviewproj_matrix
+        param_named_auto viewportSize viewport_size
+    }
+}
+
+fragment_program Throne/SmaaBlendingWeightCalculation_ps glslvk
+{
+    source SMAA_BlendingWeightCalculation_ps.vulkan.glsl
+    enable_include_header true
+    preprocessor_defines SMAA_INITIALIZED=1,SMAA_PRESET_HIGH=1,SMAA_GLSL_4=1,SMAA_EDGE_DETECTION_MODE=1
+    default_params
+    {
+        param_named_auto viewportSize viewport_size
+    }
+}
+
+material Throne/SmaaBlendingWeightCalculation
+{
+    technique
+    {
+        pass
+        {
+            depth_check off
+            depth_write off
+            cull_hardware none
+            vertex_program_ref Throne/SmaaBlendingWeightCalculation_vs {}
+            fragment_program_ref Throne/SmaaBlendingWeightCalculation_ps {}
+
+            texture_unit
+            {
+                filtering bilinear
+                tex_address_mode clamp
+            }
+
+            texture_unit
+            {
+                texture AreaTexDX10.dds
+                filtering bilinear
+                tex_address_mode clamp
+            }
+
+            texture_unit
+            {
+                texture SearchTex.dds
+                filtering bilinear
+                tex_address_mode clamp
+            }
+        }
+    }
+}
+
+vertex_program Throne/SmaaNeighborhoodBlending_vs glslvk
+{
+    source SMAA_NeighborhoodBlending_vs.vulkan.glsl
+    enable_include_header true
+    preprocessor_defines SMAA_INITIALIZED=1,SMAA_PRESET_HIGH=1,SMAA_GLSL_4=1,SMAA_EDGE_DETECTION_MODE=1
+    default_params
+    {
+        param_named_auto worldViewProj worldviewproj_matrix
+        param_named_auto viewportSize viewport_size
+    }
+}
+
+fragment_program Throne/SmaaNeighborhoodBlending_ps glslvk
+{
+    source SMAA_NeighborhoodBlending_ps.vulkan.glsl
+    enable_include_header true
+    preprocessor_defines SMAA_INITIALIZED=1,SMAA_PRESET_HIGH=1,SMAA_GLSL_4=1,SMAA_EDGE_DETECTION_MODE=1
+    default_params
+    {
+        param_named_auto viewportSize viewport_size
+    }
+}
+
+material Throne/SmaaNeighborhoodBlending
+{
+    technique
+    {
+        pass
+        {
+            depth_check off
+            depth_write off
+            cull_hardware none
+            vertex_program_ref Throne/SmaaNeighborhoodBlending_vs {}
+            fragment_program_ref Throne/SmaaNeighborhoodBlending_ps {}
+
+            texture_unit
+            {
+                filtering bilinear
+                tex_address_mode clamp
+            }
+
+            texture_unit
+            {
+                filtering bilinear
+                tex_address_mode clamp
+            }
+        }
+    }
+}

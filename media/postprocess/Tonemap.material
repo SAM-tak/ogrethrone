@@ -6,6 +6,7 @@ fragment_program Throne/Tonemap_ps_VK glslvk
 	{
 		param_named exposure float 1
 		param_named filmic float 0
+		param_named bloomStrength float 0.08
 	}
 }
 
@@ -30,6 +31,11 @@ material Throne/Tonemap
 			texture_unit
 			{
 				filtering none
+				tex_address_mode clamp
+			}
+			texture_unit
+			{
+				filtering bilinear
 				tex_address_mode clamp
 			}
 		}

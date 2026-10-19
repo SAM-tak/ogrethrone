@@ -549,6 +549,13 @@ sample the first image and its depth. It then exposes the result.
 of clamping, **Exposure (EV)** scales it in stops and **Field of View** sets the
 camera's vertical angle; all are saved with the level.
 
+The viewport always applies subtle HDR bloom before exposure/tone mapping, then
+OGRE's SMAA 1x High preset to smooth edges. Editor UI is composed afterwards.
+Bloom uses a soft brightness threshold of 1.5 (knee 0.5), a quarter-resolution
+Gaussian blur, and strength 0.08. These defaults are in
+`media/postprocess/Bloom.material` and `Tonemap.material`; SMAA reuses the shaders
+and lookup textures bundled with OGRE rather than copying them.
+
 [`samples/bistro`](samples/bistro) reproduces the Amazon Lumberyard Bistro (exterior,
 interior and the wine-glass interior) from NVIDIA ORCA (CC BY 4.0). The asset is downloaded separately; see the
 sample's [README](samples/bistro/README.md).
