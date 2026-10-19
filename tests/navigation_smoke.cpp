@@ -243,7 +243,12 @@ void navigationSmoke(Editor& editor, Ogre::Window& nativeWindow, Ogre::Camera& c
     for (int i = 0; i < 12; ++i) frame();
     require(editor.frameTimings().bodies > pausedBodies && editor.frameTimings().physicsStepMs > 0,
             "Resume did not restart spawning and physics");
-    tap(ImGuiKey_Pause); tap(ImGuiKey_F5);
+    tap(ImGuiKey_Pause);
+    // Keep an authored node selected when Stop removes the spawned render objects.
+    const auto ground = camera.getProjectionMatrix() * (camera.getViewMatrix() * Ogre::Vector3(-1, 0, 0));
+    mouse = ImVec2(origin.x + (ground.x + 1) * .5f * size.x, origin.y + (1 - ground.y) * .5f * size.y);
+    frame(); left = true; frame(); left = false; frame();
+    tap(ImGuiKey_F5);
     require(!editor.playing() && !editor.paused() && editor.frameTimings().bodies == 0 &&
             editor.frameTimings().nodes == initialNodes, "Stop while paused did not restore the scene");
     tap(ImGuiKey_F5);

@@ -41,6 +41,7 @@
 #include <OgreManualObject2.h>
 #include <OgreRay.h>
 #include <OgreRenderSystem.h>
+#include <Vao/OgreVaoManager.h>
 #include <OgreRoot.h>
 #include <OgreSceneManager.h>
 #include <OgreSceneNode.h>
@@ -856,7 +857,12 @@ bool Editor::sceneViewVisible() const { return viewportWorkspace_ && viewportWor
 void Editor::applyDisplaySettings() {
     const bool sceneVisible=project_.has_value() && viewportVisible_;
     const bool vsync=!sceneVisible || preferences_.vsync;
-    if(window_.getVSync()!=vsync) window_.setVSync(vsync,1);
+    if(window_.getVSync()!=vsync) {
+        // setVSync recreates Vulkan's swapchain; finish its outstanding GPU work first.
+        auto* vao=root_.getRenderSystem()->getVaoManager();
+        vao->waitForSpecificFrameToFinish(vao->getFrameCount());
+        window_.setVSync(vsync,1);
+    }
     if(viewportWorkspace_) viewportWorkspace_->setEnabled(sceneVisible);
 }
 
@@ -911,7 +917,12 @@ void Editor::refreshView() {
     decltype(viewShape_) shape;
     for (std::size_t i = 0; i < view_.instances.size(); ++i)
         for (const auto& node : view_.instances[i].expansion.nodes) shape.emplace_back(i, node.path, node.parent);
-    if (shape != viewShape_) {
+    // Play can grow the rendered scene without updating the authored shape cache.
+    // Restore those objects before any panel (including picking and gizmos) uses their indices.
+    bool rebuild = shape != viewShape_ || sceneNodes_.size() != view_.instances.size();
+    for (std::size_t i = 0; i < sceneNodes_.size() && i < view_.instances.size(); ++i)
+        rebuild |= sceneNodes_[i].size() != view_.instances[i].expansion.nodes.size();
+    if (rebuild) {
         viewShape_ = std::move(shape);
         rebuildScene();
     }

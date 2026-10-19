@@ -281,6 +281,8 @@ and never overrides editor Play's checkbox. Standalone game execution is not yet
 implemented; this setting records its presentation preference. The same Inspector
 also exposes the current level's Forward Clustered mode, tone mapping, exposure
 and field of view. Existing Lighting menu controls remain available.
+Box3D and Animator are selectable too; their Inspectors currently show only the
+system name, reserving the same place for future settings.
 
 Paths are relative to the project folder. `main.lh` at the top of the project is the
 game's entry point and organizer (which levels to play, in what order); new

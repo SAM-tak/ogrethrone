@@ -194,13 +194,15 @@ private:
     };
     /// What the inspector shows: a node of view_, a system, or a scene instance of the level.
     struct Selection {
-        enum class Kind { None, Node, System, Scene, Renderer } kind = Kind::None;
+        enum class Kind { None, Node, System, Scene, EngineSystem } kind = Kind::None;
         /// Index into view_.instances; -1 for a system of the level itself.
         int instance = -1;
         /// The node's path; for a system, the prefab instance it came from.
         NodePath path;
         /// The system's ID.
         std::uint32_t system = 0;
+        /// Name of a built-in engine system, independent of authored System IDs.
+        std::string engine;
     };
     /// Where an edit of one node is written: the node itself (it belongs to the
     /// file being edited), or a property override of the instance that contains it.

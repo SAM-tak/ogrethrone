@@ -311,10 +311,9 @@ void Editor::systemsPanel() {
             }
             if (open) {
                 for (const auto& member : stage.parallel) {
-                    if(member=="OGRE") {
-                        if(ImGui::Selectable("OGRE",selected_.kind==Selection::Kind::Renderer)) selectRenderer();
-                        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Rendering settings");
-                    } else ImGui::BulletText("%s",member.c_str());
+                    if(ImGui::Selectable(member.c_str(),selected_.kind==Selection::Kind::EngineSystem && selected_.engine==member))
+                        selected_={Selection::Kind::EngineSystem,-1,{},0,member};
+                    if(member=="OGRE" && ImGui::IsItemHovered()) ImGui::SetTooltip("Rendering settings");
                 }
                 // Script Systems own their stage; BehaviourSystems query node attachments below.
                 for (std::size_t i = 0; i < view_.instances.size(); ++i)
@@ -371,7 +370,10 @@ void Editor::systemsPanel() {
 void Editor::inspector() {
     if (ImGui::Begin("Inspector")) {
         ImGui::BeginDisabled(runtime_ != nullptr);
-        if (selected_.kind==Selection::Kind::Renderer) rendererInspector();
+        if (selected_.kind==Selection::Kind::EngineSystem) {
+            ImGui::TextUnformatted(selected_.engine.c_str());
+            if(selected_.engine=="OGRE") rendererInspector();
+        }
         else if (const auto* node = selectedNode()) nodeInspector(*node);
         else if (const auto* system = selectedSystem()) systemInspector(*system);
         else if (auto* placed = selectedScene()) sceneInspector(*placed);
@@ -381,10 +383,9 @@ void Editor::inspector() {
     ImGui::End();
 }
 
-void Editor::selectRenderer() { selected_={Selection::Kind::Renderer}; }
+void Editor::selectRenderer() { selected_={Selection::Kind::EngineSystem,-1,{},0,"OGRE"}; }
 
 void Editor::rendererInspector() {
-    ImGui::TextUnformatted("OGRE");
     ImGui::SeparatorText("Game rendering (project)");
     bool vsync=doc_.gameRendering.vsync;
     if(ImGui::Checkbox("VSync",&vsync)) { checkpoint(); doc_.gameRendering.vsync=vsync; }
