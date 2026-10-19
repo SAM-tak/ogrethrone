@@ -110,6 +110,22 @@ struct LightComponent {
     std::string mask;
 };
 
+/// What a Model component changes in one of its file's materials (TDDja/09 8).
+struct ModelMaterial {
+    /// The material's name in the file.
+    std::string name;
+    /// Beer-Lambert absorption coefficients per metre (red, green, blue); a blended material
+    /// with any is a volume (a liquid, tinted glass) that multiplies what is seen through it
+    /// by exp(-absorption * thickness * cos(view angle)).
+    Vec3 absorption;
+    /// Distance through the volume, in metres, along the surface normal.
+    float thickness = .05f;
+    /// Equality, to tell when the drawn model must be rebuilt.
+    bool operator==(const ModelMaterial& other) const {
+        return name == other.name && absorption == other.absorption && thickness == other.thickness;
+    }
+};
+
 /// A model file (FBX) drawn at the node: its meshes with their own hierarchy and
 /// PBS materials (TDDja/09 8). Lights and cameras in the file are not imported.
 struct ModelComponent {
@@ -117,9 +133,15 @@ struct ModelComponent {
     std::string path;
     /// Whether the file's normal maps use DirectX's convention (green pointing down).
     bool directXNormals = true;
+    /// Radiance of its emissive maps' full value. Files carry no strength (lamps are 1),
+    /// which is dim beside a sun.
+    float emission = 1;
+    /// Changes to the file's materials, by material name.
+    std::vector<ModelMaterial> materials;
     /// Equality, to tell when the drawn model must be rebuilt.
     bool operator==(const ModelComponent& other) const {
-        return path == other.path && directXNormals == other.directXNormals;
+        return path == other.path && directXNormals == other.directXNormals && emission == other.emission &&
+               materials == other.materials;
     }
     /// Negation of equality.
     bool operator!=(const ModelComponent& other) const { return !(*this == other); }

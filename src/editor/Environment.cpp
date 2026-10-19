@@ -28,8 +28,9 @@ Ogre::Vector3 faceDirection(unsigned face, float s, float t) {
     default: return {-s, -t, -1};
     }
 }
-}
 
+/// The spherical harmonics of the diffuse irradiance that a radiance cubemap image
+/// (in OGRE's cubemap space, any colour format) gives, divided by pi.
 std::array<Ogre::Vector3, 9> irradianceHarmonics(const Ogre::Image2& cube) {
     std::array<Ogre::Vector3, 9> harmonics;
     harmonics.fill(Ogre::Vector3::ZERO);
@@ -53,9 +54,9 @@ std::array<Ogre::Vector3, 9> irradianceHarmonics(const Ogre::Image2& cube) {
     for (int i = 0; i < 9; ++i) harmonics[i] *= factors[i];
     return harmonics;
 }
+}
 
-Environment loadEnvironment(Ogre::TextureGpuManager& textures, const std::filesystem::path& file,
-                            const std::string& name, float scale, float limit) {
+EnvironmentImage readEnvironment(const std::filesystem::path& file, float scale, float limit) {
     std::ifstream in(file, std::ios::binary);
     std::vector<char> bytes(std::istreambuf_iterator<char>(in), {});
     if (bytes.empty()) throw std::runtime_error("Could not read " + file.u8string());
@@ -80,7 +81,9 @@ Environment loadEnvironment(Ogre::TextureGpuManager& textures, const std::filesy
                (texel(x, y + 1) * (1 - a) + texel(x + 1, y + 1) * a) * b;
     };
 
-    Ogre::Image2 cube;
+    EnvironmentImage result;
+    result.cube = std::make_shared<Ogre::Image2>();
+    auto& cube = *result.cube;
     cube.createEmptyImage(faceSize, faceSize, 6, Ogre::TextureTypes::TypeCube, Ogre::PFG_RGBA32_FLOAT,
                           Ogre::PixelFormatGpuUtils::getMaxMipmapCount(faceSize, faceSize));
     const auto faces = cube.getData(0);
@@ -97,10 +100,13 @@ Environment loadEnvironment(Ogre::TextureGpuManager& textures, const std::filesy
                 auto* out = static_cast<float*>(faces.at(x, y, face));
                 out[0] = radiance.x, out[1] = radiance.y, out[2] = radiance.z, out[3] = 1;
             }
-    Environment result;
     result.harmonics = irradianceHarmonics(cube);
-
     cube.generateMipmaps(false, Ogre::Image2::FILTER_BILINEAR);
+    return result;
+}
+
+Environment uploadEnvironment(Ogre::TextureGpuManager& textures, const EnvironmentImage& image, const std::string& name) {
+    auto& cube = *image.cube;
     auto* texture = textures.createTexture(name, Ogre::GpuPageOutStrategy::Discard, Ogre::TextureFlags::ManualTexture,
                                            Ogre::TextureTypes::TypeCube);
     texture->setResolution(faceSize, faceSize);
@@ -109,7 +115,6 @@ Environment loadEnvironment(Ogre::TextureGpuManager& textures, const std::filesy
     texture->_transitionTo(Ogre::GpuResidency::Resident, nullptr);
     texture->_setNextResidencyStatus(Ogre::GpuResidency::Resident);
     cube.uploadTo(texture, 0, cube.getNumMipmaps() - 1u);
-    result.cubemap = texture;
-    return result;
+    return {texture, image.harmonics};
 }
 }

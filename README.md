@@ -424,10 +424,14 @@ shared by every node placing it. Materials use the metal-rough workflow: a base
 colour map (alpha is opacity and enables alpha testing for DXT5 maps), a normal map
 (**DirectX normal maps** selects the green direction), an ORM map packed as glTF
 does (occlusion, roughness, metalness in R, G, B) and an emissive map, all repeating
-across their UVs with anisotropic filtering. A material with an FBX transparency
-colour (glass, liquids) is alpha blended and keeps its reflections; a nearly clear
-one (opacity below 0.25, such as glass) also refracts the scene behind it. Meshes made
-only of such materials cast no shadow. Lights and
+across their UVs with anisotropic filtering. FBX files carry no emissive strength;
+**Emission** sets the radiance of an emissive map's full value (1 by default, which is
+dim beside a strong sun). A material with an FBX transparency
+colour is a clear dielectric (glass, water): it refracts the scene behind it and keeps
+its reflections. A Model's **material changes** give named materials of its file a
+Beer-Lambert **absorption** (per metre, RGB) and **thickness**: such a volume (wine,
+beer, a tinted bottle) multiplies what is behind it by its transmittance, and glass in
+front of it shows it. Only opaque materials cast shadows. Lights and
 cameras in the file are not placed. A node with only a Model is picked and outlined
 by the model's bounds.
 
@@ -440,15 +444,21 @@ roughness. Radiance above 16 (a sun in the image) is clamped; use a directional
 Light component for the sun, which the sky's sun then follows.
 
 **Lighting → Global Illumination** bakes a level's indirect light over the box
-**GI Lower**–**GI Upper**: parallax-corrected reflection probes on a grid (fitted to
-the surrounding geometry) for reflections, and a raster irradiance field (DDGI-style
+**GI Lower**–**GI Upper**: parallax-corrected reflection probes on a grid for reflections, and a raster irradiance field (DDGI-style
 probes with depth) for diffuse light. **Bake Global Illumination** renders them from
-the level as drawn, once per **Bounces** (each pass lit by the previous one), and
+the level as drawn, once per **Bounces** (each pass lit by the previous one), a few
+probes per frame under a progress window (it waits for files being read), and
 saves the result in `levels/<level>.gi/` beside the level; opening the level reads
 it back without rendering it again. `ogrethrone --bake-gi <folder> [file] [level]`
 bakes from the command line, then captures like `--capture`. While a bake is in use
 it replaces the ambient light, and the environment map is drawn only as the sky.
 Changing the GI settings drops the bake until it is baked again.
+
+Long work runs while the editor keeps drawing: opening a level reads its models, HDR
+environment and GI bake on worker threads, then shows the models a couple of
+materials per frame (each compiles its shaders when first drawn). A **Working**
+window lists what is running, with a progress bar when the share done is known and
+a spinner otherwise.
 
 A Light component's **Temperature (K)** tints its colour like a black body (6500 K
 is white, lower is warmer; 0 leaves the colour as it is). **Environment Scale**

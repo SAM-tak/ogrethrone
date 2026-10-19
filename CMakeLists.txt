@@ -92,10 +92,10 @@ endif()
 if(THRONE_BUILD_GRAPHICS)
     # ImGuizmo is compiled here against the ImGui core that OgreNextImgui builds.
     add_executable(ogrethrone src/editor/main.cpp src/editor/Editor.cpp src/editor/EditorPanels.cpp
-        src/editor/EditorPlatform.cpp src/editor/EditorParticles.cpp src/editor/References.cpp src/editor/Model.cpp src/editor/Environment.cpp src/editor/GlobalIllumination.cpp
+        src/editor/EditorPlatform.cpp src/editor/EditorParticles.cpp src/editor/References.cpp src/editor/Model.cpp src/editor/Environment.cpp src/editor/GlobalIllumination.cpp src/editor/Tasks.cpp
         third_party/imguizmo/src/ImGuizmo.cpp third_party/ufbx/ufbx.c
         src/editor/Editor.h src/editor/EditorPlatform.h src/editor/OgreConversions.h src/editor/References.h
-        src/editor/Model.h src/editor/Environment.h src/editor/GlobalIllumination.h)
+        src/editor/Model.h src/editor/Environment.h src/editor/GlobalIllumination.h src/editor/Tasks.h)
     # ufbx reads FBX for the Model component; its warnings are its own.
     set_source_files_properties(third_party/ufbx/ufbx.c PROPERTIES COMPILE_OPTIONS "$<IF:$<BOOL:${MSVC}>,/w,-w>")
     if(WIN32)

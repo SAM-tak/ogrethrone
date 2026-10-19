@@ -145,6 +145,20 @@ void readExtraComponents(const LhatTable& table, Node& node) {
     read("model", node.model, [&](const auto& t, auto& c) {
         if(const auto v=lton::field(t,"path"); !lhat_is_nil(v)) c.path=lton::relativePath(v);
         c.directXNormals=flag(t,"directXNormals",c.directXNormals);
+        c.emission=scalar(t,"emission",c.emission,0,100000);
+        c.materials.clear();
+        if(const auto list=lton::field(t,"materials"); !lhat_is_nil(list)) {
+            const auto& items=lton::table(list);
+            for(std::size_t i=0,count=lton::sequence(items);i<count;++i) {
+                const auto& item=lton::table(lton::at(items,i));
+                ModelMaterial m;
+                m.name=std::string(lton::string(lton::field(item,"name")));
+                if(const auto v=lton::field(item,"absorption"); !lhat_is_nil(v)) lton::vector(v,m.absorption.data());
+                m.thickness=scalar(item,"thickness",m.thickness,0.0001f,100);
+                for(const float a:{m.absorption.x,m.absorption.y,m.absorption.z}) if(!(a>=0)) lton::invalid();
+                c.materials.push_back(m);
+            }
+        }
     });
     read("material", node.material, [&](const auto& t, auto& c) {
         c.roughness = scalar(t,"roughness",c.roughness,0.02f,1);
@@ -245,6 +259,18 @@ void writeExtraComponents(lton::Writer& out, LhatValue table, const Node& node) 
     });
     write("model", node.model, [&](auto t,const auto& c) {
         out.set(t,"path",out.string(c.path)); out.set(t,"directXNormals",lhat_bool(c.directXNormals));
+        out.set(t,"emission",lhat_real(c.emission));
+        if(!c.materials.empty()) {
+            const auto list=out.table();
+            for(const auto& m:c.materials) {
+                const auto item=out.table();
+                out.set(item,"name",out.string(m.name));
+                out.set(item,"absorption",out.vector(m.absorption.data()));
+                out.set(item,"thickness",lhat_real(m.thickness));
+                out.push(list,item);
+            }
+            out.set(t,"materials",list);
+        }
     });
     write("material", node.material, [&](auto t, const auto& c) {
         out.set(t,"roughness",lhat_real(c.roughness)); out.set(t,"metalness",lhat_real(c.metalness));

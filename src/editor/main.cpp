@@ -213,9 +213,17 @@ int main(int argc, char** argv) {
                 if (!profilePhysics) std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
             if (captureRun) {
+                // Models and environments are read on worker threads; a bake takes many frames.
+                const auto finish = [&] {
+                    while (editor.busy() && !window->isClosed()) {
+                        Ogre::WindowEventUtilities::messagePump();
+                        editor.frame(1.0f / 60);
+                    }
+                };
+                finish();
                 root.getRenderSystem()->getTextureGpuManager()->waitForStreamingCompletion();
                 if (bakeRun) editor.requestGlobalIlluminationBake();
-                while (editor.bakingGlobalIllumination()) editor.frame(1.0f / 60);
+                finish();
                 for (int i = 0; i < 4; ++i) editor.frame(1.0f / 60);
                 editor.captureViewport(std::filesystem::u8path(argc > 3 ? argv[3] : "out/capture.ppm"));
             }

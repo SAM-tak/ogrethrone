@@ -5,6 +5,7 @@
 #include "editor/Environment.h"
 #include "editor/GlobalIllumination.h"
 #include "editor/Model.h"
+#include "editor/Tasks.h"
 #include "editor/PrimitiveGeometry.h"
 #include "editor/References.h"
 #include "editor/Project.h"
@@ -95,12 +96,9 @@ public:
     /// Shows or hides the procedural sky without modifying scene lights or physics.
     void setSkyboxEnabled(bool enabled);
     /// Bakes the level's global illumination into its project folder once textures have streamed in.
-    void requestGlobalIlluminationBake() {
-        bakePasses_ = doc_.world.level.rendering.gi.bounces;
-        bakeFromScratch_ = true;
-    }
-    /// Whether a requested bake is still running.
-    bool bakingGlobalIllumination() const { return bakePasses_ != 0; }
+    void requestGlobalIlluminationBake();
+    /// Whether long work (reading models or environments, baking) is still running.
+    bool busy() const { return tasks_.busy(); }
     /// Downloads the rendered viewport to a portable RGB image for visual smoke checks.
     void captureViewport(const std::filesystem::path& path);
     /// Opens a project-relative level; returns false if loading fails or Play is active.
@@ -167,6 +165,8 @@ private:
         /// The Model component last placed, and what placing it created.
         std::optional<ModelComponent> model;
         ModelLibrary::Placed placedModel;
+        /// The library key the model is read under; empty when there is nothing to place.
+        std::string modelKey;
         std::optional<ParticleSystemComponent> particleConfig;
 
     };
@@ -328,6 +328,15 @@ private:
     void shortcuts();
     /// Draws the main menu bar.
     void menu();
+    /// Reads the open level's baked global illumination on a worker thread, then uses it.
+    void readGlobalIllumination();
+    /// Shows newly placed model parts a few materials per frame, under a progress entry.
+    void revealModels();
+    /// Reads a model on a worker thread, then adds it to the library under @p key.
+    void readModel(const ModelComponent& model, const std::string& key);
+    /// Reads the project-relative environment @p path on a worker thread, then uploads it
+    /// into environments_[@p key].
+    void readEnvironmentFile(const std::string& path, float scale, const std::string& key);
     /// Draws the modal open/save dialog requested through showFiles_.
     void fileDialog();
     /// Enters Play mode on the level's expansion (TDDja/02 3, 06 6); scripts change
@@ -425,11 +434,14 @@ private:
     const Environment* environment_ = nullptr;
     /// The viewport's exposure and tone-mapping pass material.
     Ogre::MaterialPtr tonemap_;
-    /// The level's baked global illumination, the bake passes still to render (one per
-    /// frame once textures have streamed in), and whether the next pass starts afresh.
+    /// The level's baked global illumination, and whether a bake runs.
     std::unique_ptr<GlobalIllumination> gi_;
-    unsigned bakePasses_ = 0;
-    bool bakeFromScratch_ = false;
+    bool baking_ = false, revealing_ = false;
+    /// Long work kept running across frames, with its progress window.
+    Tasks tasks_;
+    /// Files being read on worker threads (a bake waits for them), and the model keys among them.
+    unsigned reads_ = 0;
+    std::set<std::string> modelsReading_;
     /// The reflection last given to model materials.
     Ogre::TextureGpu* modelReflection_ = nullptr;
 

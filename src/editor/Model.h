@@ -1,10 +1,12 @@
 #pragma once
 
-#include "core/Math.h"
+#include "editor/Scene.h"
 #include <OgreMesh2.h>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -26,9 +28,14 @@ namespace throne {
 /// Files are converted to metres, +Y up and right-handed. Materials follow the
 /// metallic workflow: a base colour map (its alpha is opacity), a normal map, an
 /// ORM map packed as glTF does (occlusion, roughness, metalness in R, G, B) and an
-/// emissive map. A material with an FBX transparency colour is blended and keeps its
-/// reflections; a nearly clear one (glass) also refracts, so its items are drawn in
-/// render queue 200, after the scene they sample. Lights and cameras in the file are left out.
+/// emissive map. A material with an FBX transparency colour is a clear dielectric: it
+/// refracts the opaque pass and keeps its reflections, in render queue 200. One the
+/// component gives absorption to is a volume instead, multiplying what is behind it by its
+/// Beer-Lambert transmittance last in the opaque pass (queue 99), so glass in front of a
+/// liquid refracts it. Lights and cameras in the file are left out.
+///
+/// Reading a file is split so the editor can keep drawing: parse() does the slow part
+/// without OGRE, on any thread, and add() makes the OGRE objects on the main thread.
 class ModelLibrary {
 public:
     /// Receives problems reading a file.
@@ -41,6 +48,45 @@ public:
         Vec3 lower, upper;
     };
 
+    /// What parse() reads from a file: plain data, made without OGRE.
+    struct Parsed {
+        /// One material, with the texture files it uses (empty when it has none).
+        struct Material {
+            std::string name;
+            std::filesystem::path diffuse, normal, orm, emissive;
+            Vec3 colour{1, 1, 1};
+            /// The emissive map's scale (ModelComponent::emission).
+            float emission = 1;
+            float opacity = 1;
+            bool alphaTested = false, blended = false;
+            /// The custom pixel-shader pieces (ORM channels, absorption) it needs.
+            std::string pieces;
+            /// The render queue its items draw in (see Part::renderQueue); 99 when it absorbs.
+            std::uint8_t renderQueue = 0;
+        };
+        /// One submesh: interleaved position, normal, tangent and uv (12 floats a vertex).
+        struct Submesh {
+            std::vector<float> vertices;
+            std::vector<std::uint32_t> indices;
+            std::size_t material = 0;
+        };
+        struct Mesh {
+            std::vector<Submesh> submeshes;
+            Vec3 lower, upper;
+        };
+        struct Part {
+            std::size_t mesh = 0;
+            Vec3 position, scale{1, 1, 1};
+            float rotation[4] = {0, 0, 0, 1};
+        };
+        std::vector<Material> materials;
+        std::vector<Mesh> meshes;
+        std::vector<Part> parts;
+        Vec3 lower, upper;
+        /// Problems found while reading, logged by add().
+        std::vector<std::string> messages;
+    };
+
     /// @param scene Where placed models are created; must outlive the library.
     ModelLibrary(Ogre::Root& root, Ogre::SceneManager& scene, Ogre::HlmsPbs& pbs, Log log);
     /// Destroys the meshes and materials of every file read.
@@ -48,23 +94,38 @@ public:
     ModelLibrary(const ModelLibrary&) = delete;
     ModelLibrary& operator=(const ModelLibrary&) = delete;
 
-    /// Places the model in @p file under @p parent, reading the file on first use.
-    /// @p directXNormals says which way the file's normal maps point green. Answers
-    /// an empty Placed, after logging why, when the file cannot be read.
-    Placed place(const std::filesystem::path& file, bool directXNormals, Ogre::SceneNode& parent);
+    /// The name a component's model is read under: its file, normal maps and material changes.
+    static std::string key(const ModelComponent& model, const std::filesystem::path& file);
+    /// Reads @p file as @p model asks; safe on a worker thread, as it touches no OGRE state.
+    static Parsed parse(const std::filesystem::path& file, const ModelComponent& model);
+    /// Makes the OGRE meshes and materials of @p parsed under @p key, logging its messages.
+    void add(const std::string& key, const Parsed& parsed);
+    /// Whether add() has made the model read under @p key.
+    bool has(const std::string& key) const { return models_.count(key) != 0; }
+    /// Places the model added under @p key below @p parent; empty when it has no meshes.
+    /// Its items start hidden; reveal() shows them.
+    Placed place(const std::string& key, Ogre::SceneNode& parent);
     /// Destroys what place() created; leaves @p placed empty.
     void remove(Placed& placed);
+    /// Shows hidden placed items: every one whose materials have been shown already, and
+    /// those bringing up to @p materials new ones. A material's first drawing compiles its
+    /// shaders, so showing a few per frame spreads that work and keeps frames short.
+    void reveal(unsigned materials);
+    /// Placed items still hidden, and placed items hidden since all were last shown.
+    std::size_t hidden() const { return hidden_.size(); }
+    std::size_t hiddenTotal() const { return hiddenTotal_; }
     /// Sets the cubemap every model material reflects, or none.
     void setReflection(Ogre::TextureGpu* cubemap);
 
 private:
-    /// One mesh instance of a file: its mesh and its placement in the file.
+    /// One submesh of a mesh instance of a file (so one material): its mesh and its
+    /// placement in the file.
     struct Part {
         Ogre::MeshPtr mesh;
-        /// False when every material of the mesh is blended (glass casts no shadow).
-        bool castShadows = true;
-        /// True when any material of the mesh refracts; it is drawn in the refraction pass.
-        bool refractive = false;
+        /// The render queue its item draws in: 0 for opaque materials, 99 for absorbing
+        /// volumes (last in the opaque pass), 200 for refracting ones (the refraction pass).
+        /// Only opaque parts cast shadows.
+        Ogre::uint8 renderQueue = 0;
         Vec3 position, scale{1, 1, 1};
         /// Rotation as a quaternion (x, y, z, w).
         float rotation[4] = {0, 0, 0, 1};
@@ -77,14 +138,15 @@ private:
         std::vector<Ogre::HlmsPbsDatablock*> materials;
     };
 
-    /// Reads @p file into a Model; answers false after logging when it cannot.
-    bool load(const std::filesystem::path& file, bool directXNormals, Model& out);
-
     Ogre::Root& root_;
     Ogre::SceneManager& scene_;
     Ogre::HlmsPbs& pbs_;
     Log log_;
-    /// Files read, by path and normal-map convention.
+    /// Placed items not shown yet, how many were hidden since none were, and the materials shown.
+    std::vector<Ogre::Item*> hidden_;
+    std::size_t hiddenTotal_ = 0;
+    std::set<const void*> shownMaterials_;
+    /// Models made, by key().
     std::map<std::string, Model> models_;
     Ogre::TextureGpu* reflection_ = nullptr;
 };

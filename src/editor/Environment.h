@@ -3,6 +3,7 @@
 #include <OgreVector3.h>
 #include <array>
 #include <filesystem>
+#include <memory>
 #include <string>
 
 namespace Ogre {
@@ -23,13 +24,18 @@ struct Environment {
     std::array<Ogre::Vector3, 9> harmonics;
 };
 
-/// The spherical harmonics of the diffuse irradiance that a radiance cubemap image
-/// (in OGRE's cubemap space, any colour format) gives, divided by pi.
-std::array<Ogre::Vector3, 9> irradianceHarmonics(const Ogre::Image2& cube);
+/// An environment as read from its file, before it reaches the GPU.
+struct EnvironmentImage {
+    /// The radiance cubemap with box-filtered mipmaps.
+    std::shared_ptr<Ogre::Image2> cube;
+    /// As Environment::harmonics.
+    std::array<Ogre::Vector3, 9> harmonics;
+};
 
-/// Reads @p file into an Environment whose cubemap is named @p name, multiplying its
-/// radiance by @p scale. Radiance above @p limit before scaling (the sun, which a Light
-/// component draws) is clamped. Throws when the file cannot be read as an HDR image.
-Environment loadEnvironment(Ogre::TextureGpuManager& textures, const std::filesystem::path& file,
-                            const std::string& name, float scale = 1.0f, float limit = 16.0f);
+/// Reads @p file, multiplying its radiance by @p scale. Radiance above @p limit before
+/// scaling (the sun, which a Light component draws) is clamped. Touches no GPU state, so
+/// it can run on a worker thread. Throws when the file cannot be read as an HDR image.
+EnvironmentImage readEnvironment(const std::filesystem::path& file, float scale = 1.0f, float limit = 16.0f);
+/// Uploads @p image into an Environment whose cubemap is named @p name.
+Environment uploadEnvironment(Ogre::TextureGpuManager& textures, const EnvironmentImage& image, const std::string& name);
 }

@@ -463,7 +463,22 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
     component("Model",value.model,&SceneNode::model,&NodeOverride::model,[&](auto& c) {
         bool edited=texturePath("File",c.path);
         edited|=ImGui::Checkbox("DirectX normal maps",&c.directXNormals); track();
+        edited|=ImGui::DragFloat("Emission",&c.emission,.1f,0,100000); track();
         ImGui::TextDisabled("A project-relative FBX file: its meshes and PBS materials.");
+        // Changes to named materials of the file: absorbing volumes such as liquids.
+        for(std::size_t i=0;i<c.materials.size();) {
+            ImGui::PushID(int(i));
+            auto& m=c.materials[i];
+            ImGui::Separator();
+            edited|=texturePath("Material",m.name);
+            edited|=vector("Absorption (1/m)",m.absorption);
+            edited|=scalar("Thickness (m)",m.thickness,.0001f,100);
+            const bool removed=ImGui::SmallButton("Remove Material Change");
+            ImGui::PopID();
+            if(removed) { c.materials.erase(c.materials.begin()+std::ptrdiff_t(i)); edited=true; }
+            else ++i;
+        }
+        if(ImGui::SmallButton("Add Material Change")) { c.materials.push_back({}); edited=true; }
         return edited;
     });
     component("Particle System",value.particles,&SceneNode::particles,&NodeOverride::particles,[&](auto& c) {

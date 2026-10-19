@@ -752,6 +752,7 @@ bool Editor::frame(float deltaSeconds, const std::function<void()>& input) {
     browser();
     console();
     fileDialog();
+    tasks_.draw();
     closeDialog();
     replaceDialog();
     if(close_) {
@@ -1129,6 +1130,99 @@ Ogre::TextureGpu* Editor::environmentReflection() const {
     return environment_ && !gi_->active() ? environment_->cubemap : nullptr;
 }
 
+void Editor::requestGlobalIlluminationBake() {
+    if(baking_) return;
+    baking_=true;
+    struct Bake { unsigned passes, left; bool dropped=false; };
+    const unsigned passes=doc_.world.level.rendering.gi.bounces;
+    auto bake=std::make_shared<Bake>(Bake{passes,passes});
+    tasks_.add("Baking global illumination",[this,bake] {
+        // The first pass sees only the environment's light: an earlier bake is dropped and the
+        // lighting it replaced returns next frame. Each later pass, a frame after the one before,
+        // is lit by it and adds a bounce. Passes wait for files being read and for textures.
+        if(!bake->dropped) {
+            bake->dropped=true;
+            if(gi_->active()) { gi_->clear(); return false; }
+        }
+        if(!gi_->baking()) {
+            if(reads_ || revealing_ || !root_.getRenderSystem()->getTextureGpuManager()->isDoneStreaming()) return false;
+            gi_->beginBake(doc_.world.level.rendering.gi,camera_);
+            return false;
+        }
+        // Probes render for about a tenth of a second each frame.
+        gi_->continueBake(std::chrono::milliseconds(100));
+        if(gi_->baking() || --bake->left) return false;
+        gi_->save(giFolder());
+        log("Global illumination saved into "+giFolder().u8string());
+        baking_=false;
+        return true;
+    },[this,bake] {
+        return (float(bake->passes-bake->left)+(gi_->baking() ? gi_->bakeProgress() : 0.0f))/float(bake->passes);
+    },[this,bake] {
+        return "Pass "+std::to_string(bake->passes-bake->left+1)+" of "+std::to_string(bake->passes)+" (one bounce each)"+
+            (gi_->baking() ? ": "+gi_->bakeStatus() : std::string());
+    });
+}
+
+void Editor::readGlobalIllumination() {
+    ++reads_;
+    const auto folder=giFolder();
+    const auto settings=doc_.world.level.rendering.gi;
+    tasks_.background<GlobalIllumination::Stored>("Reading global illumination",[folder,settings] {
+        return GlobalIllumination::read(folder,settings);
+    },[this,settings](GlobalIllumination::Stored& stored) {
+        --reads_;
+        // A bake for the level and settings still open.
+        if(!baking_ && doc_.world.level.rendering.gi==settings) gi_->use(stored);
+    });
+}
+
+void Editor::revealModels() {
+    if(revealing_ || !models_->hidden()) return;
+    revealing_=true;
+    tasks_.add("Preparing materials",[this] {
+        // Two new materials a frame: each compiles its shaders the first time it is drawn.
+        // It waits for files being read, as an environment or bake arriving later changes
+        // every pass, which would compile all shaders shown so far again.
+        if(reads_) return false;
+        models_->reveal(2);
+        revealing_=models_->hidden()!=0;
+        return !revealing_;
+    },[this] { return models_->hiddenTotal() ? 1.0f-float(models_->hidden())/float(models_->hiddenTotal()) : 1.0f; },
+    [this] { return std::to_string(models_->hiddenTotal()-models_->hidden())+" of "+std::to_string(models_->hiddenTotal())+" model parts shown"; });
+}
+
+void Editor::readModel(const ModelComponent& model, const std::string& key) {
+    ++reads_;
+    const auto file=project_->resolve(model.path);
+    tasks_.background<ModelLibrary::Parsed>("Reading "+model.path,[file,model] { return ModelLibrary::parse(file,model); },
+        [this,key](ModelLibrary::Parsed& parsed) {
+            models_->add(key,parsed);
+            modelsReading_.erase(key);
+            --reads_;
+        });
+}
+
+void Editor::readEnvironmentFile(const std::string& path, float scale, const std::string& key) {
+    ++reads_;
+    environments_[key];
+    struct Read { EnvironmentImage image; std::string error; };
+    const auto file=project_->resolve(path);
+    tasks_.background<Read>("Reading environment "+path,[file,scale] {
+        Read read;
+        try { read.image=readEnvironment(file,scale); } catch(const std::exception& error) { read.error=error.what(); }
+        return read;
+    },[this,key](Read& read) {
+        --reads_;
+        if(!read.error.empty()) { log("Environment not loaded: "+read.error); return; }
+        auto& slot=environments_[key];
+        slot=uploadEnvironment(*root_.getRenderSystem()->getTextureGpuManager(),read.image,"ThroneEnvironment/"+key);
+        prefilter(*slot->cubemap);
+        // The next lighting update picks it up.
+        environmentFile_.clear();
+    });
+}
+
 std::filesystem::path Editor::giFolder() const {
     // levels/exterior.level.lton keeps its bake in levels/exterior.gi.
     const auto level=project_ ? project_->resolve(levelPath_) : std::filesystem::path(levelPath_);
@@ -1150,15 +1244,9 @@ void Editor::syncLighting() {
         : project_->resolve(r.environment).generic_u8string()+"#"+std::to_string(r.environmentScale);
     if(environmentFile!=environmentFile_) {
         environmentFile_=environmentFile;
-        auto [it,added]=environments_.try_emplace(environmentFile);
-        if(added && !environmentFile.empty()) try {
-            const auto start=std::chrono::steady_clock::now();
-            it->second=loadEnvironment(*root_.getRenderSystem()->getTextureGpuManager(),project_->resolve(r.environment),
-                "ThroneEnvironment/"+environmentFile,r.environmentScale);
-            prefilter(*it->second->cubemap);
-            log("Environment "+r.environment+" read in "+std::to_string(std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count())+" s");
-        } catch(const std::exception& error) { log("Environment not loaded: "+std::string(error.what())); }
-        environment_=it->second ? &*it->second : nullptr;
+        if(!environmentFile.empty() && !environments_.count(environmentFile)) readEnvironmentFile(r.environment,r.environmentScale,environmentFile);
+        const auto it=environments_.find(environmentFile);
+        environment_=it!=environments_.end() && it->second ? &*it->second : nullptr;
         setSkyboxEnabled(skyboxEnabled_);
     }
     camera_.setFOVy(Ogre::Degree(r.fieldOfView));
@@ -1195,21 +1283,8 @@ void Editor::syncLighting() {
 }
 
 void Editor::syncTransforms(const LevelExpansion* snapshot) {
-    // A requested bake sees the level placed in earlier frames once its textures have streamed
-    // in; it runs before lighting so this frame's materials already switch to its probes. An
-    // earlier bake is dropped first, so the first pass sees only the environment's light; each
-    // later pass, one frame on, is lit by the one before and adds a bounce.
-    if(bakePasses_ && bakeFromScratch_ && gi_->active()) gi_->clear();
-    else if(bakePasses_ && root_.getRenderSystem()->getTextureGpuManager()->isDoneStreaming()) {
-        bakeFromScratch_=false;
-        const auto start=std::chrono::steady_clock::now();
-        gi_->bake(doc_.world.level.rendering.gi,camera_);
-        log("Global illumination pass baked in "+std::to_string(std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count())+" s");
-        if(--bakePasses_==0) {
-            gi_->save(giFolder());
-            log("Global illumination saved into "+giFolder().u8string());
-        }
-    }
+    // Before lighting, so a bake that finishes switches this frame's materials to its probes.
+    tasks_.update();
     syncLighting();
     const auto& shown = snapshot ? *snapshot : view_;
     // Stop or scene replacement may remove runtime nodes; discard their render resources.
@@ -1261,13 +1336,21 @@ void Editor::syncTransforms(const LevelExpansion* snapshot) {
         render.node->setOrientation(orientation(transform.rotation));
         render.node->setScale(toOgre(transform.scale));
         render.mesh->setVisible(shape.kind != PrimitiveKind::None);
-        // A Model component places its file's meshes under the node; its bounds stand in
-        // for a primitive's when the node has none.
+        // A Model component places its file's meshes under the node once a worker has read the
+        // file; its bounds stand in for a primitive's when the node has none.
         if (node.model != render.model) {
             models_->remove(render.placedModel);
-            if (node.model && !node.model->path.empty() && project_)
-                render.placedModel = models_->place(project_->resolve(node.model->path), node.model->directXNormals, *render.node);
             render.model = node.model;
+            render.modelKey = node.model && !node.model->path.empty() && project_
+                ? ModelLibrary::key(*node.model, project_->resolve(node.model->path)) : std::string{};
+        }
+        if (!render.modelKey.empty() && !render.placedModel.root) {
+            if (models_->has(render.modelKey)) {
+                render.placedModel = models_->place(render.modelKey, *render.node);
+                revealModels();
+                // A file without meshes is not tried again.
+                if (!render.placedModel.root) render.modelKey.clear();
+            } else if (modelsReading_.insert(render.modelKey).second) readModel(*node.model, render.modelKey);
         }
         if (render.placedModel.root && shape.kind == PrimitiveKind::None)
             render.lower = render.placedModel.lower, render.upper = render.placedModel.upper;
@@ -2050,7 +2133,8 @@ bool Editor::open() {
         focusSelection();
         const auto& r=doc_.world.level.rendering;
         setSkyboxEnabled(r.sky);
-        if(r.gi.enabled) gi_->load(giFolder(),r.gi); else gi_->clear();
+        gi_->clear();
+        if(r.gi.enabled) readGlobalIllumination();
         showGrid_=r.grid;
         if(r.openingCamera) { selected_={}; target_=toOgre(r.target); yaw_=r.yaw; pitch_=r.pitch; distance_=r.distance; updateCamera(); }
         log(std::string("Opened ") + levelPath_);

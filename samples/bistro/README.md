@@ -35,7 +35,8 @@ GGX-prefiltered cubemap for reflections).
 four ceiling lights (which cast shadows) and at the wall lights and lanterns. `interior-wine.level.lton`
 places `BistroInterior_Wine.fbx`, the larger interior with filled wine glasses; the
 file has no lights, so point lights sit at its ceiling lights, wall lights and
-lanterns. Clear glass refracts; wine and bottles are alpha blended. The path tracer that ORCA's renders use
+lanterns. Clear glass refracts; red and white wine, beer and the wine bottles absorb
+light with the coefficients of ORCA's `BistroInterior_Wine.pyscene`. The path tracer that ORCA's renders use
 lights these rooms from their emissive surfaces; point lights stand in for that.
 Their exposure is -1.5 EV.
 
@@ -47,10 +48,14 @@ out/build/windows-clang-ninja/bin/Release/ogrethrone.exe --bake-gi samples/bistr
 ```
 
 The results are written to `levels/*.gi/` (about 50 MB each) and ignored by Git.
-The sun uses power 150 at 6500 K, and the exterior levels scale the environment by
-20, so the lighting ratio between sun, sky and shade follows ORCA's preview renders.
+The sun uses power 150 at 5000 K, the exterior levels scale the environment by 200
+at -3.45 EV, and the exterior's lamps and signs glow with emission 30, so the
+balance of sun, sky, shade and lamps follows ORCA's preview renders. Bakes made
+before the irradiance-field fixes of October 2026 are too dark; bake them again.
 
-Reading a file takes several seconds on first open.
+Opening a level reads its files in the background and then shows the models a few
+materials at a time; the **Working** window shows the progress. In a Debug build this
+takes about 30 seconds the first time.
 
 Amazon Lumberyard Bistro, Open Research Content Archive (ORCA), by Amazon
 Lumberyard (2017), is licensed under

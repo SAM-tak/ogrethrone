@@ -2,6 +2,7 @@
 #include <OgreHlmsPbs.h>
 #include <OgreHlmsPbsDatablock.h>
 #include <OgreItem.h>
+#include <OgreSubItem.h>
 #include <OgreMeshManager2.h>
 #include <OgreResourceGroupManager.h>
 #include <OgreRoot.h>
@@ -16,6 +17,7 @@
 #include <cmath>
 #include <cstring>
 #include <fstream>
+#include <functional>
 #include <limits>
 
 namespace throne {
@@ -30,6 +32,20 @@ constexpr const char* ormPiece = R"(@piece( custom_ps_posMaterialLoad )
 	#define SampleRoughness( tex, sampler, uv, arrayIdx ) OGRE_SampleArray2DF16( tex, sampler, uv, arrayIdx ).yyyy
 @end
 )";
+
+/// The pixel-shader piece that outputs a volume's Beer-Lambert transmittance over a path
+/// of @p thickness times the cosine of the view angle (the chord through a rounded volume
+/// is longest through its middle); a multiplying blend then tints what is behind it. The
+/// cosine ignores which way the file's normal points, as some liquids face inwards.
+std::string absorptionPiece(const Vec3& absorption, float thickness) {
+    char text[384];
+    std::snprintf(text, sizeof text,
+                  "@piece( custom_ps_posExecution )\n@property( !hlms_shadowcaster )\n"
+                  "\toutPs_colour0 = midf4_c( exp( -float3( %g, %g, %g ) * ( %g * abs( float( dot( pixelData.normal, pixelData.viewDir ) ) ) ) ), 1.0 );\n"
+                  "@end\n@end\n",
+                  absorption.x, absorption.y, absorption.z, thickness);
+    return text;
+}
 
 /// One vertex as the file gives it, before tangents are derived.
 struct Corner {
@@ -106,15 +122,17 @@ ModelLibrary::~ModelLibrary() {
     }
 }
 
-ModelLibrary::Placed ModelLibrary::place(const std::filesystem::path& file, bool directXNormals,
-                                         Ogre::SceneNode& parent) {
-    const auto key = file.generic_u8string() + (directXNormals ? "#dx" : "#gl");
-    auto found = models_.find(key);
-    if (found == models_.end()) {
-        Model model;
-        if (!load(file, directXNormals, model)) return {};
-        found = models_.emplace(key, std::move(model)).first;
-    }
+std::string ModelLibrary::key(const ModelComponent& component, const std::filesystem::path& file) {
+    auto key = file.generic_u8string() + (component.directXNormals ? "#dx" : "#gl") + "#" + std::to_string(component.emission);
+    for (const auto& m : component.materials)
+        key += "#" + m.name + "=" + std::to_string(m.absorption.x) + "," + std::to_string(m.absorption.y) + "," +
+               std::to_string(m.absorption.z) + "/" + std::to_string(m.thickness);
+    return key;
+}
+
+ModelLibrary::Placed ModelLibrary::place(const std::string& key, Ogre::SceneNode& parent) {
+    const auto found = models_.find(key);
+    if (found == models_.end() || found->second.parts.empty()) return {};
     const auto& model = found->second;
     Placed placed{parent.createChildSceneNode(), {}, model.lower, model.upper};
     for (const auto& part : model.parts) {
@@ -123,16 +141,48 @@ ModelLibrary::Placed ModelLibrary::place(const std::filesystem::path& file, bool
         node->setOrientation(Ogre::Quaternion(part.rotation[3], part.rotation[0], part.rotation[1], part.rotation[2]));
         node->setScale(part.scale.x, part.scale.y, part.scale.z);
         auto* item = scene_.createItem(part.mesh);
-        item->setCastShadows(part.castShadows);
-        if (part.refractive) item->setRenderQueueGroup(200u);
+        item->setCastShadows(part.renderQueue == 0);
+        if (part.renderQueue) item->setRenderQueueGroup(part.renderQueue);
         node->attachObject(item);
+        // Hidden after attaching, which shows it.
+        item->setVisible(false);
         placed.items.push_back(item);
+        if (hidden_.empty()) hiddenTotal_ = 0;
+        hidden_.push_back(item);
+        ++hiddenTotal_;
     }
     return placed;
 }
 
+void ModelLibrary::reveal(unsigned materials) {
+    std::size_t kept = 0;
+    // The first item with new materials is shown even beyond the budget, or one using more
+    // new materials than it would never be.
+    bool spent = false;
+    for (auto* item : hidden_) {
+        std::vector<const void*> fresh;
+        for (std::size_t i = 0; i < item->getNumSubItems(); ++i) {
+            const void* material = item->getSubItem(i)->getDatablock();
+            if (!shownMaterials_.count(material) && std::find(fresh.begin(), fresh.end(), material) == fresh.end())
+                fresh.push_back(material);
+        }
+        if (!fresh.empty() && fresh.size() > materials && spent) {
+            hidden_[kept++] = item;
+            continue;
+        }
+        if (!fresh.empty()) spent = true;
+        materials -= (std::min)(materials, unsigned(fresh.size()));
+        shownMaterials_.insert(fresh.begin(), fresh.end());
+        item->setVisible(true);
+    }
+    hidden_.resize(kept);
+}
+
 void ModelLibrary::remove(Placed& placed) {
-    for (auto* item : placed.items) scene_.destroyItem(item);
+    for (auto* item : placed.items) {
+        hidden_.erase(std::remove(hidden_.begin(), hidden_.end(), item), hidden_.end());
+        scene_.destroyItem(item);
+    }
     if (placed.root) {
         placed.root->removeAndDestroyAllChildren();
         scene_.destroySceneNode(placed.root);
@@ -146,124 +196,67 @@ void ModelLibrary::setReflection(Ogre::TextureGpu* cubemap) {
         for (auto* material : model.materials) material->setTexture(Ogre::PBSM_REFLECTION, cubemap);
 }
 
-bool ModelLibrary::load(const std::filesystem::path& file, bool directXNormals, Model& out) {
+ModelLibrary::Parsed ModelLibrary::parse(const std::filesystem::path& file, const ModelComponent& component) {
+    Parsed out;
     ufbx_load_opts options = {};
     options.target_axes = ufbx_axes_right_handed_y_up;
     options.target_unit_meters = 1.0f;
     ufbx_error error;
     ufbx_scene* scene = ufbx_load_file(file.u8string().c_str(), &options, &error);
     if (!scene) {
-        log_("Cannot read model " + file.u8string() + ": " + error.description.data);
-        return false;
+        out.messages.push_back("Cannot read model " + file.u8string() + ": " + error.description.data);
+        return out;
     }
     const auto folder = file.parent_path();
-    const auto key = file.generic_u8string();
-    auto& resources = Ogre::ResourceGroupManager::getSingleton();
-    auto* textures = root_.getRenderSystem()->getTextureGpuManager();
-    // Textures are found through a resource group per folder, named after the folder.
-    const auto texture = [&](const ufbx_texture* source, Ogre::CommonTextureTypes::CommonTextureTypes kind,
-                             bool* alpha) -> Ogre::TextureGpu* {
-        if (!source) return nullptr;
+    // Texture files are named relative to the model, or found in its Textures folder.
+    const auto texture = [&](const ufbx_texture* source) -> std::filesystem::path {
+        if (!source) return {};
         std::string relative(source->relative_filename.data, source->relative_filename.length);
         std::replace(relative.begin(), relative.end(), '\\', '/');
         auto path = folder / std::filesystem::u8path(relative);
         if (!std::filesystem::exists(path)) path = folder / "Textures" / std::filesystem::u8path(relative).filename();
-        if (!std::filesystem::exists(path)) {
-            log_("Model texture not found: " + path.u8string());
-            return nullptr;
-        }
-        if (alpha) *alpha = ddsHasAlpha(path);
-        const auto location = path.parent_path().generic_u8string();
-        const Ogre::String group = "ThroneModels/" + location;
-        if (!resources.resourceGroupExists(group)) resources.createResourceGroup(group);
-        if (!resources.resourceLocationExists(location, group)) resources.addResourceLocation(location, "FileSystem", group);
-        return textures->createOrRetrieveTexture(path.filename().u8string(),
-                                                 path.generic_u8string() + "/" + std::to_string(kind),
-                                                 Ogre::GpuPageOutStrategy::Discard, kind, group);
+        if (std::filesystem::exists(path)) return path;
+        out.messages.push_back("Model texture not found: " + path.u8string());
+        return {};
     };
-
-    // File textures repeat across their UVs and are filtered anisotropically.
-    Ogre::HlmsSamplerblock tiled;
-    tiled.setAddressingMode(Ogre::TAM_WRAP);
-    tiled.setFiltering(Ogre::TFO_ANISOTROPIC);
-    tiled.mMaxAnisotropy = 8;
-    // One PBS datablock per material of the file.
-    std::vector<Ogre::String> materialNames(scene->materials.count);
-    std::vector<bool> blendedMaterials(scene->materials.count), refractiveMaterials(scene->materials.count);
     for (std::size_t i = 0; i < scene->materials.count; ++i) {
         const auto* source = scene->materials.data[i];
-        const auto name = "ThroneModel/" + key + "/" + std::to_string(i) + "/" + source->name.data;
-        bool alpha = false;
-        auto* base = texture(source->fbx.diffuse_color.texture, Ogre::CommonTextureTypes::Diffuse, &alpha);
+        Parsed::Material material;
+        material.name = source->name.data;
+        material.diffuse = texture(source->fbx.diffuse_color.texture);
         // The file's transparency colour makes glass and liquids blended; they keep their reflections.
         const auto& clear = source->fbx.transparency_color.value_vec3;
-        const float opacity = 1.0f - float(source->fbx.transparency_factor.value_real * (clear.x + clear.y + clear.z) / 3);
-        const bool blended = opacity < .99f;
-        alpha &= !blended;
-        Ogre::HlmsMacroblock macroblock;
-        // Cut-out surfaces (foliage, signs) and glass are seen from both sides.
-        if (alpha || blended) macroblock.mCullMode = Ogre::CULL_NONE;
-        if (blended) macroblock.mDepthWrite = false;
-        auto* material = static_cast<Ogre::HlmsPbsDatablock*>(
-            pbs_.createDatablock(name, name, macroblock, Ogre::HlmsBlendblock(), Ogre::HlmsParamVec()));
-        material->setWorkflow(Ogre::HlmsPbsDatablock::MetallicWorkflow);
-        material->setDiffuse(Ogre::Vector3(1, 1, 1));
-        material->setRoughness(1);
-        material->setMetalness(1);
-        if (base) material->setTexture(Ogre::PBSM_DIFFUSE, base, &tiled);
-        else {
-            const auto& colour = source->fbx.diffuse_color.value_vec3;
-            material->setDiffuse(Ogre::Vector3(float(colour.x), float(colour.y), float(colour.z)));
-        }
-        if (alpha) {
-            material->setAlphaTest(Ogre::CMPF_GREATER_EQUAL);
-            material->setAlphaTestThreshold(0.5f);
-        }
-        // Nearly clear glass refracts the scene drawn before it; denser liquids and bottles
-        // blend and are drawn with that scene, so glass in front of them still shows them.
-        const bool refracts = blended && opacity < .25f;
-        if (refracts) {
-            material->setTransparency(opacity, Ogre::HlmsPbsDatablock::Refractive, false);
-            material->setRefractionStrength(.05f);
-        } else if (blended)
-            material->setTransparency(opacity, Ogre::HlmsPbsDatablock::Transparent, false);
-        if (auto* normal = texture(source->fbx.normal_map.texture, Ogre::CommonTextureTypes::NormalMap, nullptr))
-            material->setTexture(Ogre::PBSM_NORMAL, normal, &tiled);
-        if (auto* orm = texture(source->fbx.specular_color.texture, Ogre::CommonTextureTypes::NonColourData, nullptr)) {
-            material->setTexture(Ogre::PBSM_SPECULAR, orm, &tiled);
-            material->setTexture(Ogre::PBSM_ROUGHNESS, orm, &tiled);
-            material->setCustomPieceCodeFromMemory("ThroneOrm", ormPiece, Ogre::CustomPieceStage::PixelShader);
-        } else {
-            material->setRoughness(0.7f);
-            material->setMetalness(0);
-        }
-        if (auto* emissive = texture(source->fbx.emission_color.texture, Ogre::CommonTextureTypes::Diffuse, nullptr)) {
-            material->setTexture(Ogre::PBSM_EMISSIVE, emissive, &tiled);
-            material->setEmissive(Ogre::Vector3(1, 1, 1));
-        }
-        materialNames[i] = name;
-        blendedMaterials[i] = blended;
-        refractiveMaterials[i] = refracts;
-        material->setTexture(Ogre::PBSM_REFLECTION, reflection_);
-        out.materials.push_back(material);
+        material.opacity = 1.0f - float(source->fbx.transparency_factor.value_real * (clear.x + clear.y + clear.z) / 3);
+        material.blended = material.opacity < .99f;
+        material.alphaTested = !material.blended && !material.diffuse.empty() && ddsHasAlpha(material.diffuse);
+        material.colour = vec(source->fbx.diffuse_color.value_vec3);
+        material.normal = texture(source->fbx.normal_map.texture);
+        // Glass and liquids are smooth dielectrics; their files' ORM maps make them look frosted.
+        if (!material.blended) material.orm = texture(source->fbx.specular_color.texture);
+        material.emissive = texture(source->fbx.emission_color.texture);
+        material.emission = component.emission;
+        // A volume with absorption (a liquid, tinted glass) multiplies what is drawn behind it
+        // by its transmittance, last in the opaque pass. Other blended surfaces (clear glass)
+        // refract that pass afterwards, so a glass shows the wine in it.
+        const auto change = std::find_if(component.materials.begin(), component.materials.end(),
+                                         [&](const ModelMaterial& m) { return m.name == material.name; });
+        const bool absorbs = material.blended && change != component.materials.end() &&
+                             (change->absorption.x > 0 || change->absorption.y > 0 || change->absorption.z > 0);
+        if (absorbs) material.pieces += absorptionPiece(change->absorption, change->thickness);
+        if (!material.orm.empty()) material.pieces += ormPiece;
+        material.renderQueue = absorbs ? 99 : material.blended ? 200 : 0;
+        out.materials.push_back(std::move(material));
     }
 
-    // One OGRE mesh per file mesh, one submesh per material it uses.
-    auto* vaos = root_.getRenderSystem()->getVaoManager();
-    const Ogre::VertexElement2Vec elements{{Ogre::VET_FLOAT3, Ogre::VES_POSITION},
-                                           {Ogre::VET_FLOAT3, Ogre::VES_NORMAL},
-                                           {Ogre::VET_FLOAT4, Ogre::VES_TANGENT},
-                                           {Ogre::VET_FLOAT2, Ogre::VES_TEXTURE_COORDINATES}};
-    std::map<const ufbx_mesh*, Ogre::MeshPtr> meshes;
-    std::map<const ufbx_mesh*, bool> opaqueMeshes, refractiveMeshes;
+    // One mesh per file mesh, one submesh per material it uses.
+    std::map<const ufbx_mesh*, std::size_t> meshes;
     std::vector<uint32_t> triangle;
     for (std::size_t m = 0; m < scene->meshes.count; ++m) {
         const auto* source = scene->meshes.data[m];
         if (!source->vertex_position.exists || source->num_triangles == 0) continue;
-        auto mesh = Ogre::MeshManager::getSingleton().createManual("ThroneModel/" + key + "/" + std::to_string(m),
-                                                                    Ogre::ResourceGroupManager::DEFAULT_RESOURCE_GROUP_NAME);
-        Vec3 lower{std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max()};
-        Vec3 upper = lower * -1.0f;
+        Parsed::Mesh mesh;
+        mesh.lower = {std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max()};
+        mesh.upper = mesh.lower * -1.0f;
         triangle.resize(source->max_face_triangles * 3);
         for (const auto& part : source->material_parts) {
             if (part.num_triangles == 0) continue;
@@ -289,39 +282,27 @@ bool ModelLibrary::load(const std::filesystem::path& file, bool directXNormals, 
                 }
             }
             // Shares identical corners between triangles.
-            std::vector<uint32_t> indices(corners.size());
+            Parsed::Submesh submesh;
+            submesh.indices.resize(corners.size());
             ufbx_vertex_stream stream{corners.data(), corners.size(), sizeof(Corner)};
-            const auto unique = ufbx_generate_indices(&stream, 1, indices.data(), indices.size(), nullptr, &error);
+            const auto unique = ufbx_generate_indices(&stream, 1, submesh.indices.data(), submesh.indices.size(), nullptr, &error);
             if (error.type != UFBX_ERROR_NONE) continue;
             corners.resize(unique);
             std::vector<Vertex> vertices;
-            deriveTangents(corners, indices, directXNormals, vertices);
+            deriveTangents(corners, submesh.indices, component.directXNormals, vertices);
             for (const auto& v : vertices) {
-                lower = {std::min(lower.x, v.position[0]), std::min(lower.y, v.position[1]), std::min(lower.z, v.position[2])};
-                upper = {std::max(upper.x, v.position[0]), std::max(upper.y, v.position[1]), std::max(upper.z, v.position[2])};
+                mesh.lower = {std::min(mesh.lower.x, v.position[0]), std::min(mesh.lower.y, v.position[1]), std::min(mesh.lower.z, v.position[2])};
+                mesh.upper = {std::max(mesh.upper.x, v.position[0]), std::max(mesh.upper.y, v.position[1]), std::max(mesh.upper.z, v.position[2])};
             }
-            // OGRE copies immutable buffers on creation, so the arrays are freed here.
-            auto* vertexBuffer = vaos->createVertexBuffer(elements, vertices.size(), Ogre::BT_IMMUTABLE, vertices.data(), false);
-            auto* indexBuffer = vaos->createIndexBuffer(Ogre::IndexBufferPacked::IT_32BIT, indices.size(),
-                                                        Ogre::BT_IMMUTABLE, indices.data(), false);
-            auto* vao = vaos->createVertexArrayObject({vertexBuffer}, indexBuffer, Ogre::OT_TRIANGLE_LIST);
-            auto* submesh = mesh->createSubMesh();
-            submesh->mVao[Ogre::VpNormal].push_back(vao);
-            submesh->mVao[Ogre::VpShadow].push_back(vao);
+            submesh.vertices.resize(vertices.size() * (sizeof(Vertex) / sizeof(float)));
+            std::memcpy(submesh.vertices.data(), vertices.data(), vertices.size() * sizeof(Vertex));
             const auto* material = part.index < source->materials.count ? source->materials.data[part.index] : nullptr;
-            if (material) submesh->setMaterialName(materialNames[material->typed_id]);
-            opaqueMeshes[source] = opaqueMeshes[source] || !material || !blendedMaterials[material->typed_id];
-            refractiveMeshes[source] = refractiveMeshes[source] || (material && refractiveMaterials[material->typed_id]);
+            submesh.material = material ? material->typed_id : out.materials.size();
+            mesh.submeshes.push_back(std::move(submesh));
         }
-        if (mesh->getNumSubMeshes() == 0) {
-            Ogre::MeshManager::getSingleton().remove(mesh);
-            continue;
-        }
-        const auto centre = (lower + upper) * 0.5f, half = (upper - lower) * 0.5f;
-        mesh->_setBounds(Ogre::Aabb(Ogre::Vector3(centre.x, centre.y, centre.z), Ogre::Vector3(half.x, half.y, half.z)), false);
-        mesh->_setBoundingSphereRadius(std::sqrt(dot(half, half)));
-        meshes[source] = mesh;
-        out.meshes.push_back(mesh);
+        if (mesh.submeshes.empty()) continue;
+        meshes[source] = out.meshes.size();
+        out.meshes.push_back(std::move(mesh));
     }
 
     // Every node with a mesh places it; the bounds gather the placed boxes' corners.
@@ -332,19 +313,16 @@ bool ModelLibrary::load(const std::filesystem::path& file, bool directXNormals, 
         const auto found = node->mesh ? meshes.find(node->mesh) : meshes.end();
         if (found == meshes.end()) continue;
         const auto transform = ufbx_matrix_to_transform(&node->geometry_to_world);
-        Part part;
+        Parsed::Part part;
         part.mesh = found->second;
-        part.castShadows = opaqueMeshes[node->mesh];
-        part.refractive = refractiveMeshes[node->mesh];
         part.position = vec(transform.translation);
         part.scale = vec(transform.scale);
         part.rotation[0] = float(transform.rotation.x), part.rotation[1] = float(transform.rotation.y);
         part.rotation[2] = float(transform.rotation.z), part.rotation[3] = float(transform.rotation.w);
-        const auto aabb = found->second->getAabb();
+        const auto& mesh = out.meshes[found->second];
         for (int corner = 0; corner < 8; ++corner) {
-            const Vec3 local{aabb.mCenter.x + (corner & 1 ? aabb.mHalfSize.x : -aabb.mHalfSize.x),
-                             aabb.mCenter.y + (corner & 2 ? aabb.mHalfSize.y : -aabb.mHalfSize.y),
-                             aabb.mCenter.z + (corner & 4 ? aabb.mHalfSize.z : -aabb.mHalfSize.z)};
+            const Vec3 local{corner & 1 ? mesh.upper.x : mesh.lower.x, corner & 2 ? mesh.upper.y : mesh.lower.y,
+                             corner & 4 ? mesh.upper.z : mesh.lower.z};
             const auto world = vec(ufbx_transform_position(&node->geometry_to_world, {local.x, local.y, local.z}));
             out.lower = {std::min(out.lower.x, world.x), std::min(out.lower.y, world.y), std::min(out.lower.z, world.z)};
             out.upper = {std::max(out.upper.x, world.x), std::max(out.upper.y, world.y), std::max(out.upper.z, world.z)};
@@ -353,9 +331,146 @@ bool ModelLibrary::load(const std::filesystem::path& file, bool directXNormals, 
     }
     ufbx_free_scene(scene);
     if (out.parts.empty()) {
-        log_("Model " + file.u8string() + " has no meshes");
+        out.messages.push_back("Model " + file.u8string() + " has no meshes");
         out.lower = out.upper = {};
     }
-    return true;
+    return out;
+}
+
+void ModelLibrary::add(const std::string& key, const Parsed& parsed) {
+    for (const auto& message : parsed.messages) log_(message);
+    Model out;
+    out.lower = parsed.lower, out.upper = parsed.upper;
+    // Names stay unique when the same file is read with other material changes.
+    const auto prefix = "ThroneModel/" + std::to_string(models_.size()) + "/";
+    auto& resources = Ogre::ResourceGroupManager::getSingleton();
+    auto* textures = root_.getRenderSystem()->getTextureGpuManager();
+    // Textures are found through a resource group per folder, named after the folder.
+    const auto texture = [&](const std::filesystem::path& path, Ogre::CommonTextureTypes::CommonTextureTypes kind) -> Ogre::TextureGpu* {
+        if (path.empty()) return nullptr;
+        const auto location = path.parent_path().generic_u8string();
+        const Ogre::String group = "ThroneModels/" + location;
+        if (!resources.resourceGroupExists(group)) resources.createResourceGroup(group);
+        if (!resources.resourceLocationExists(location, group)) resources.addResourceLocation(location, "FileSystem", group);
+        return textures->createOrRetrieveTexture(path.filename().u8string(), path.generic_u8string() + "/" + std::to_string(kind),
+                                                 Ogre::GpuPageOutStrategy::Discard, kind, group);
+    };
+    // File textures repeat across their UVs and are filtered anisotropically.
+    Ogre::HlmsSamplerblock tiled;
+    tiled.setAddressingMode(Ogre::TAM_WRAP);
+    tiled.setFiltering(Ogre::TFO_ANISOTROPIC);
+    tiled.mMaxAnisotropy = 8;
+    std::vector<Ogre::String> materialNames;
+    for (std::size_t i = 0; i < parsed.materials.size(); ++i) {
+        const auto& source = parsed.materials[i];
+        const auto name = prefix + std::to_string(i) + "/" + source.name;
+        Ogre::HlmsMacroblock macroblock;
+        // Cut-out surfaces (foliage, signs) and glass are seen from both sides.
+        if (source.alphaTested || source.blended) macroblock.mCullMode = Ogre::CULL_NONE;
+        if (source.blended) macroblock.mDepthWrite = false;
+        // A volume (queue 99) shows only its side facing the camera: a back face would absorb again.
+        if (source.renderQueue == 99) macroblock.mCullMode = Ogre::CULL_CLOCKWISE;
+        auto* material = static_cast<Ogre::HlmsPbsDatablock*>(
+            pbs_.createDatablock(name, name, macroblock, Ogre::HlmsBlendblock(), Ogre::HlmsParamVec()));
+        material->setWorkflow(Ogre::HlmsPbsDatablock::MetallicWorkflow);
+        material->setDiffuse(Ogre::Vector3(1, 1, 1));
+        material->setRoughness(1);
+        material->setMetalness(1);
+        // Clear dielectrics transmit instead of scattering: glass and liquids only reflect
+        // (and tint through their absorption), or bright rooms would frost them.
+        if (source.blended) material->setDiffuse(Ogre::Vector3::ZERO);
+        else if (auto* base = texture(source.diffuse, Ogre::CommonTextureTypes::Diffuse))
+            material->setTexture(Ogre::PBSM_DIFFUSE, base, &tiled);
+        else material->setDiffuse(Ogre::Vector3(source.colour.x, source.colour.y, source.colour.z));
+        if (source.alphaTested) {
+            material->setAlphaTest(Ogre::CMPF_GREATER_EQUAL);
+            material->setAlphaTestThreshold(0.5f);
+        }
+        if (source.renderQueue == 99) {
+            Ogre::HlmsBlendblock multiply;
+            multiply.mSourceBlendFactor = Ogre::SBF_ZERO;
+            multiply.mDestBlendFactor = Ogre::SBF_SOURCE_COLOUR;
+            material->setBlendblock(multiply);
+        } else if (source.blended) {
+            material->setTransparency(source.opacity, Ogre::HlmsPbsDatablock::Refractive, false);
+            material->setRefractionStrength(.05f);
+        }
+        if (auto* normal = texture(source.normal, Ogre::CommonTextureTypes::NormalMap))
+            material->setTexture(Ogre::PBSM_NORMAL, normal, &tiled);
+        if (source.blended) {
+            material->setRoughness(.05f);
+            material->setMetalness(0);
+        } else if (auto* orm = texture(source.orm, Ogre::CommonTextureTypes::NonColourData)) {
+            material->setTexture(Ogre::PBSM_SPECULAR, orm, &tiled);
+            material->setTexture(Ogre::PBSM_ROUGHNESS, orm, &tiled);
+        } else {
+            material->setRoughness(0.7f);
+            material->setMetalness(0);
+        }
+        if (auto* emissive = texture(source.emissive, Ogre::CommonTextureTypes::Diffuse)) {
+            material->setTexture(Ogre::PBSM_EMISSIVE, emissive, &tiled);
+            material->setEmissive(Ogre::Vector3(source.emission));
+        }
+        // A datablock takes one custom piece file per stage. It is named after its content, so
+        // materials with the same pieces share shaders (shadow casters included).
+        if (!source.pieces.empty())
+            material->setCustomPieceCodeFromMemory("Throne/" + std::to_string(std::hash<std::string>{}(source.pieces)), source.pieces,
+                                                   Ogre::CustomPieceStage::PixelShader);
+        material->setTexture(Ogre::PBSM_REFLECTION, reflection_);
+        materialNames.push_back(name);
+        out.materials.push_back(material);
+    }
+
+    auto* vaos = root_.getRenderSystem()->getVaoManager();
+    const Ogre::VertexElement2Vec elements{{Ogre::VET_FLOAT3, Ogre::VES_POSITION},
+                                           {Ogre::VET_FLOAT3, Ogre::VES_NORMAL},
+                                           {Ogre::VET_FLOAT4, Ogre::VES_TANGENT},
+                                           {Ogre::VET_FLOAT2, Ogre::VES_TEXTURE_COORDINATES}};
+    // A file mesh becomes one OGRE mesh per submesh, so every item has one material: items
+    // can be shown a material at a time (see reveal()), and each draws in its material's
+    // render queue, so opaque parts (which write depth) never draw in the refraction pass.
+    std::vector<std::vector<std::pair<Ogre::uint8, Ogre::MeshPtr>>> meshes(parsed.meshes.size());
+    for (std::size_t m = 0; m < parsed.meshes.size(); ++m) {
+        const auto& submeshes = parsed.meshes[m].submeshes;
+        for (std::size_t s = 0; s < submeshes.size(); ++s) {
+            const auto& part = submeshes[s];
+            const auto vertexCount = part.vertices.size() * sizeof(float) / sizeof(Vertex);
+            auto mesh = Ogre::MeshManager::getSingleton().createManual(prefix + "mesh/" + std::to_string(m) + "/" + std::to_string(s),
+                                                                        Ogre::ResourceGroupManager::DEFAULT_RESOURCE_GROUP_NAME);
+            // OGRE copies immutable buffers on creation.
+            auto* vertexBuffer = vaos->createVertexBuffer(elements, vertexCount, Ogre::BT_IMMUTABLE,
+                                                          const_cast<float*>(part.vertices.data()), false);
+            auto* indexBuffer = vaos->createIndexBuffer(Ogre::IndexBufferPacked::IT_32BIT, part.indices.size(), Ogre::BT_IMMUTABLE,
+                                                        const_cast<std::uint32_t*>(part.indices.data()), false);
+            auto* vao = vaos->createVertexArrayObject({vertexBuffer}, indexBuffer, Ogre::OT_TRIANGLE_LIST);
+            auto* submesh = mesh->createSubMesh();
+            submesh->mVao[Ogre::VpNormal].push_back(vao);
+            submesh->mVao[Ogre::VpShadow].push_back(vao);
+            if (part.material < materialNames.size()) submesh->setMaterialName(materialNames[part.material]);
+            Vec3 lower{std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max()};
+            Vec3 upper = lower * -1.0f;
+            for (std::size_t v = 0; v < vertexCount; ++v) {
+                const float* p = part.vertices.data() + v * (sizeof(Vertex) / sizeof(float));
+                lower = {std::min(lower.x, p[0]), std::min(lower.y, p[1]), std::min(lower.z, p[2])};
+                upper = {std::max(upper.x, p[0]), std::max(upper.y, p[1]), std::max(upper.z, p[2])};
+            }
+            const auto centre = (lower + upper) * 0.5f, half = (upper - lower) * 0.5f;
+            mesh->_setBounds(Ogre::Aabb(Ogre::Vector3(centre.x, centre.y, centre.z), Ogre::Vector3(half.x, half.y, half.z)), false);
+            mesh->_setBoundingSphereRadius(std::sqrt(dot(half, half)));
+            const Ogre::uint8 queue = part.material < parsed.materials.size() ? parsed.materials[part.material].renderQueue : 0;
+            meshes[m].emplace_back(queue, mesh);
+            out.meshes.push_back(mesh);
+        }
+    }
+    for (const auto& source : parsed.parts)
+        for (const auto& [queue, mesh] : meshes[source.mesh]) {
+            Part part;
+            part.mesh = mesh;
+            part.renderQueue = queue;
+            part.position = source.position, part.scale = source.scale;
+            std::copy(std::begin(source.rotation), std::end(source.rotation), part.rotation);
+            out.parts.push_back(part);
+        }
+    models_.emplace(key, std::move(out));
 }
 }
