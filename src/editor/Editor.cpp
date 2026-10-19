@@ -317,7 +317,7 @@ void dockSpace() {
 Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene, Ogre::Camera& camera,
                const std::filesystem::path& project, std::filesystem::path projectList)
     : root_(root), window_(window), scene_(scene), camera_(camera), unlit_(unlitHlms(root)), pbs_(pbsHlms(root)),
-      platform_(window), gui_(std::make_unique<Ogre::ImguiManager>()),
+      platform_(window), input_(window), gui_(std::make_unique<Ogre::ImguiManager>()),
       guiPass_(std::make_unique<Ogre::CompositorPassImguiProvider>(gui_.get())),
       projects_(projectList.empty() ? ProjectList() : ProjectList::load(projectList)),
       projectListFile_(std::move(projectList)) {
@@ -752,6 +752,7 @@ bool Editor::frame(float deltaSeconds, const std::function<void()>& input) {
     };
     FrameTimings measured;
     platform_.newFrame();
+    input_.capture();
     if (input) input();
     if (platform_.takeCloseRequest()) requestLeave(Leave::Exit);
     if (close_) return false;
@@ -842,7 +843,7 @@ bool Editor::frame(float deltaSeconds, const std::function<void()>& input) {
             measured.snapshotMs += milliseconds(start, Clock::now());
         }
         lastMainEnd = Clock::now();
-        // FetchInput has already collected this frame's OS/ImGui input above.
+        // FetchInput has already collected this frame's OS/ImGui/OIS input above.
         // Animator has no bindings until animation components exist.
     };
     try {

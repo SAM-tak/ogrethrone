@@ -95,6 +95,7 @@ endif()
 if(THRONE_BUILD_GRAPHICS)
     # ImGuizmo is compiled here against the ImGui core that OgreNextImgui builds.
     add_executable(ogrethrone src/editor/main.cpp src/editor/Editor.cpp src/editor/EditorPanels.cpp
+        src/input/OisInput.cpp src/input/OisInput.h
         src/editor/EditorPlatform.cpp src/editor/EditorParticles.cpp src/editor/References.cpp src/editor/Model.cpp src/editor/Environment.cpp src/editor/GlobalIllumination.cpp src/editor/Tasks.cpp
         third_party/imguizmo/src/ImGuizmo.cpp third_party/ufbx/ufbx.c
         src/editor/Editor.h src/editor/EditorPlatform.h src/editor/OgreConversions.h src/editor/References.h
@@ -106,7 +107,7 @@ if(THRONE_BUILD_GRAPHICS)
         target_sources(ogrethrone PRIVATE media/ogrethrone.rc media/ogrethrone.manifest)
         target_link_libraries(ogrethrone PRIVATE dwmapi ole32 shell32 uuid imm32)
     endif()
-    target_link_libraries(ogrethrone PRIVATE throne_runtime throne_audio throne_script OgreNextMain
+    target_link_libraries(ogrethrone PRIVATE throne_runtime throne_audio throne_script OIS::OIS OgreNextMain
         RenderSystem_Vulkan OgreNextHlmsPbs OgreNextHlmsUnlit OgreNextImgui OgreNextAtmosphere Plugin_ParticleFX2 ColibriGui)
     target_include_directories(ogrethrone PRIVATE
         third_party/ogre-next/RenderSystems/Vulkan/include

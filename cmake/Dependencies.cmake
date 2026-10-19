@@ -1,4 +1,4 @@
-foreach(dependency IN ITEMS ogre-next box3d imgui colibri rapidjson glslang)
+foreach(dependency IN ITEMS ogre-next box3d imgui colibri rapidjson glslang ois)
     if(NOT EXISTS "${PROJECT_SOURCE_DIR}/third_party/${dependency}/.git")
         message(FATAL_ERROR "Missing ${dependency}. Run: git submodule update --init --recursive")
     endif()
@@ -18,6 +18,13 @@ add_subdirectory("${THRONE_LHAT_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/third_party/lh
 if(NOT THRONE_BUILD_GRAPHICS)
     return()
 endif()
+
+set(OIS_BUILD_SHARED_LIBS OFF CACHE BOOL "Statically link input devices" FORCE)
+set(OIS_BUILD_DEMOS OFF CACHE BOOL "Do not build OIS demos" FORCE)
+set(OIS_WIN32_XINPUT_SUPPORT ON CACHE BOOL "Support XInput controllers" FORCE)
+add_subdirectory(third_party/ois EXCLUDE_FROM_ALL)
+target_include_directories(OIS SYSTEM PUBLIC "${PROJECT_SOURCE_DIR}/third_party/ois/includes")
+add_library(OIS::OIS ALIAS OIS)
 
 set(OGRE_SOURCE "${PROJECT_SOURCE_DIR}/third_party/ogre-next")
 set(OGRE_BINARIES "${PROJECT_BINARY_DIR}/third_party/ogre-next")

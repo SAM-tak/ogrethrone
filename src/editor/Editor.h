@@ -1,4 +1,5 @@
 #pragma once
+#include "input/OisInput.h"
 
 #include "editor/EditorPlatform.h"
 #include "editor/Expansion.h"
@@ -81,6 +82,8 @@ public:
     /// @param input Optional input replay hook, called after platform polling and before NewFrame.
     /// Returns false when the renderer requests shutdown.
     bool frame(float deltaSeconds, const std::function<void()>& input = {});
+    /// Physical joystick/gamepad states captured before this frame's UI and simulation.
+    const OisInput& input() const { return input_; }
     /// Wall-clock milliseconds for one completed frame. Physics runs alongside rendering;
     /// render/present includes driver/GPU/display waits, so these are not GPU timestamps.
     struct FrameTimings {
@@ -463,6 +466,7 @@ private:
     Ogre::TextureGpu* modelReflection_ = nullptr;
 
     EditorPlatform platform_;
+    OisInput input_;
     std::unique_ptr<Ogre::ImguiManager> gui_;
     std::unique_ptr<Ogre::CompositorPassImguiProvider> guiPass_;
     Ogre::TextureGpu* texture_ = nullptr;
