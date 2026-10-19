@@ -13,6 +13,8 @@
 #include <OgreTextureGpu.h>
 #include <OgreAtmosphereNpr.h>
 #include <OgreMaterialManager.h>
+#include <OgreDepthBuffer.h>
+#include <OgreTextureBox.h>
 #include <OgreMaterial.h>
 #include <OgreTechnique.h>
 #include <OgrePass.h>
@@ -21,6 +23,10 @@
 #include <OgreHlmsPbsDatablock.h>
 #include <OgreHlmsSamplerblock.h>
 #include <Compositor/Pass/OgreCompositorPassDef.h>
+#include <Compositor/Pass/PassDepthCopy/OgreCompositorPassDepthCopyDef.h>
+#include <Compositor/Pass/PassIblSpecular/OgreCompositorPassIblSpecularDef.h>
+#include <Compositor/Pass/PassQuad/OgreCompositorPassQuadDef.h>
+#include <Compositor/Pass/PassScene/OgreCompositorPassSceneDef.h>
 #include <OgreCamera.h>
 #include <OgreControllerManager.h>
 #include <ParticleSystem/OgreParticleSystemManager2.h>
@@ -90,7 +96,8 @@ Ogre::HlmsPbs& pbsHlms(Ogre::Root& root) {
     return *static_cast<Ogre::HlmsPbs*>(hlms);
 }
 
-/// Creates a three-cascade depth atlas for the default directional light.
+/// Creates a depth atlas with three cascades for one directional light and four
+/// 1024² maps for the nearest shadow-casting point or spot lights.
 void createShadowNode(Ogre::Root& root) {
     Ogre::ShadowNodeHelper::ShadowParam sun{};
     sun.technique=Ogre::SHADOWMAP_PSSM;
@@ -103,6 +110,15 @@ void createShadowNode(Ogre::Root& root) {
     sun.atlasStart[2]=Ogre::ShadowNodeHelper::Resolution(1024,2048);
     Ogre::ShadowNodeHelper::ShadowParamVec maps;
     maps.push_back(sun);
+    for(Ogre::uint32 i=0;i<4;++i) {
+        Ogre::ShadowNodeHelper::ShadowParam local{};
+        local.technique=Ogre::SHADOWMAP_FOCUSED;
+        local.addLightType(Ogre::Light::LT_POINT);
+        local.addLightType(Ogre::Light::LT_SPOTLIGHT);
+        local.resolution[0]=Ogre::ShadowNodeHelper::Resolution(1024,1024);
+        local.atlasStart[0]=Ogre::ShadowNodeHelper::Resolution(i*1024,3072);
+        maps.push_back(local);
+    }
     Ogre::ShadowNodeHelper::createShadowNodeWithSettings(root.getCompositorManager2(),
         root.getRenderSystem()->getCapabilities(),"ThroneEditor/SunShadows",maps,false,
         1024,0.7f,1.0f,0.125f,0.2f,2);
@@ -322,7 +338,12 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
     resources.createResourceGroup(skyGroup);
     for (const auto* folder : {"", "/GLSL", "/Any"})
         resources.addResourceLocation(common + folder, "FileSystem", skyGroup);
-    for (const auto* script : {"Quad.program", "Atmosphere.material"}) {
+    resources.addResourceLocation(THRONE_MEDIA_DIR "/postprocess", "FileSystem", skyGroup);
+    // The compute job that prefilters environment cubemaps for rough reflections.
+    for (const auto* folder : {"/Compute/Algorithms/IBL", "/Compute/Tools/Any", "/Hlms/Common/Any", "/Hlms/Common/GLSL"})
+        resources.addResourceLocation(THRONE_OGRE_MEDIA_DIR + Ogre::String(folder), "FileSystem", skyGroup);
+    root.getHlmsManager()->loadMaterials("IBL.material.json", skyGroup, nullptr, "");
+    for (const auto* script : {"Quad.program", "Atmosphere.material", "Sky.material", "DPSM.material", "Tonemap.material"}) {
         auto stream = resources.openResource(script, skyGroup);
         Ogre::MaterialManager::getSingleton().parseScript(stream, skyGroup);
     }
@@ -336,11 +357,82 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
     preset.horizonLimit = 0.15f;
     preset.skyPower = 0.5f;
     sky_->setPreset(preset);
-    // Match the visible sun to the existing directional light without relinking lighting.
-    sky_->setSunDir(sun_->getDirection(), std::asin(-sun_->getDirection().y) / Ogre::Math::PI);
     sky_->setSky(&scene_, true);
+    models_ = std::make_unique<ModelLibrary>(root, scene, pbs_, [this](const std::string& line) { log(line); });
     createShadowNode(root);
-    compositor->createBasicWorkspaceDef(viewportWorkspaceName, Ogre::ColourValue(0.11f, 0.12f, 0.14f),"ThroneEditor/SunShadows");
+    tonemap_ = Ogre::MaterialManager::getSingleton().getByName("Throne/Tonemap", skyGroup);
+    {
+        // The scene renders in half float: render queues below 200 into Opaque, which is
+        // copied to Hdr; refractive glass (queue 200 and up) then samples Opaque and its
+        // depth while drawing into Hdr. A quad pass exposes and tone maps Hdr into the viewport.
+        auto* node = compositor->addNodeDefinition("ThroneEditor/ViewportNode");
+        node->addTextureSourceName("Viewport", 0, Ogre::TextureDefinitionBase::TEXTURE_INPUT);
+        node->setNumLocalTextureDefinitions(3);
+        node->addTextureDefinition("Depth")->format = Ogre::PFG_D32_FLOAT;
+        for (const auto* name : {"Opaque", "Hdr"}) {
+            node->addTextureDefinition(name)->format = Ogre::PFG_RGBA16_FLOAT;
+            auto* view = node->addRenderTextureView(name);
+            Ogre::RenderTargetViewEntry attachment;
+            attachment.textureName = name;
+            view->colourAttachments.push_back(attachment);
+            view->depthAttachment.textureName = "Depth";
+        }
+        node->setNumTargetPass(3);
+        auto* opaque = static_cast<Ogre::CompositorPassSceneDef*>(node->addTargetPass("Opaque")->addPass(Ogre::PASS_SCENE));
+        opaque->mShadowNode = "ThroneEditor/SunShadows";
+        opaque->setAllClearColours(Ogre::ColourValue(0.11f, 0.12f, 0.14f));
+        opaque->setAllLoadActions(Ogre::LoadAction::Clear);
+        opaque->mStoreActionStencil = Ogre::StoreAction::DontCare;
+        opaque->mLastRQ = 199;
+        auto* hdr = node->addTargetPass("Hdr");
+        static_cast<Ogre::CompositorPassDepthCopyDef*>(hdr->addPass(Ogre::PASS_DEPTHCOPY))->setDepthTextureCopy("Opaque", "Hdr");
+        auto* refractive = static_cast<Ogre::CompositorPassSceneDef*>(hdr->addPass(Ogre::PASS_SCENE));
+        refractive->mShadowNode = "ThroneEditor/SunShadows";
+        refractive->mShadowNodeRecalculation = Ogre::SHADOW_NODE_REUSE;
+        refractive->setAllLoadActions(Ogre::LoadAction::Load);
+        refractive->mStoreActionDepth = refractive->mStoreActionStencil = Ogre::StoreAction::DontCare;
+        refractive->mFirstRQ = 200;
+        refractive->setUseRefractions("Depth", "Opaque");
+        auto* quad = static_cast<Ogre::CompositorPassQuadDef*>(node->addTargetPass("Viewport")->addPass(Ogre::PASS_QUAD));
+        quad->mMaterialName = "Throne/Tonemap";
+        quad->addQuadTextureSource(0, "Hdr");
+        quad->setAllLoadActions(Ogre::LoadAction::DontCare);
+        compositor->addWorkspaceDefinition(viewportWorkspaceName)->connectExternal(0, node->getName(), 0);
+    }
+    {
+        // Renders the level into the six faces of a light-probe cubemap: the scene before
+        // refractive glass (which needs the viewport's refraction pass), then the sky.
+        auto* node = compositor->addNodeDefinition("ThroneEditor/ProbeNode");
+        node->addTextureSourceName("Cube", 0, Ogre::TextureDefinitionBase::TEXTURE_INPUT);
+        node->setNumTargetPass(6);
+        for (Ogre::uint8 face = 0; face < 6; ++face) {
+            auto* target = node->addTargetPass("Cube", face);
+            for (int part = 0; part < 2; ++part) {
+                auto* pass = static_cast<Ogre::CompositorPassSceneDef*>(target->addPass(Ogre::PASS_SCENE));
+                pass->mShadowNode = "ThroneEditor/SunShadows";
+                pass->mShadowNodeRecalculation = part ? Ogre::SHADOW_NODE_REUSE : Ogre::SHADOW_NODE_RECALCULATE;
+                pass->mCameraCubemapReorient = true;
+                pass->setAllLoadActions(part ? Ogre::LoadAction::Load : Ogre::LoadAction::Clear);
+                pass->setAllClearColours(Ogre::ColourValue::Black);
+                if (part) pass->mFirstRQ = 201; else pass->mLastRQ = 199;
+            }
+        }
+        compositor->addWorkspaceDefinition("ThroneEditor/Probe")->connectExternal(0, node->getName(), 0);
+    }
+    {
+        // Integrates a radiance cubemap's GGX lobes into the mipmaps of a second cubemap.
+        auto* node = compositor->addNodeDefinition("ThroneEditor/IblNode");
+        node->addTextureSourceName("Radiance", 0, Ogre::TextureDefinitionBase::TEXTURE_INPUT);
+        node->addTextureSourceName("Prefiltered", 1, Ogre::TextureDefinitionBase::TEXTURE_INPUT);
+        node->setNumTargetPass(1);
+        auto* pass = static_cast<Ogre::CompositorPassIblSpecularDef*>(node->addTargetPass("Prefiltered")->addPass(Ogre::PASS_IBL_SPECULAR));
+        pass->setCubemapInput("Radiance");
+        pass->setCubemapOutput("Prefiltered");
+        pass->mAutogenInputMipmaps = false;
+        auto* workspace = compositor->addWorkspaceDefinition("ThroneEditor/Ibl");
+        workspace->connectExternal(0, node->getName(), 0);
+        workspace->connectExternal(1, node->getName(), 1);
+    }
     auto* node = compositor->addNodeDefinition("ThroneEditor/WindowNode");
     node->addTextureSourceName("Window", 0, Ogre::TextureDefinitionBase::TEXTURE_INPUT);
     node->addTextureSourceName("Viewport", 1, Ogre::TextureDefinitionBase::TEXTURE_INPUT);
@@ -600,6 +692,9 @@ Editor::~Editor() {
     if (io.IniFilename) ImGui::SaveIniSettingsToDisk(io.IniFilename);
     io.IniFilename = nullptr;
     destroyWorkspaces();
+    // The cubemap sky's material belongs to the resource group destroyed below.
+    scene_.setSky(false, Ogre::SceneManager::SkyCubemap, nullptr);
+    tonemap_.reset();
     sky_.reset();
     Ogre::ResourceGroupManager::getSingleton().destroyResourceGroup("ThroneEditorSky");
     root_.getCompositorManager2()->setCompositorPassProvider(nullptr);
@@ -608,6 +703,7 @@ Editor::~Editor() {
     gui_.reset();
     root_.getRenderSystem()->getTextureGpuManager()->destroyTexture(texture_);
     destroyRenderObjects();
+    models_.reset();
     for (auto* mesh : {grid_, outline_}) scene_.destroyManualObject(mesh);
     for (auto* node : {gridNode_, outlineNode_}) scene_.destroySceneNode(node);
     unlit_.destroyDatablock(lineMaterial);
@@ -744,7 +840,10 @@ void Editor::setShadowsEnabled(bool enabled) {
 
 void Editor::setSkyboxEnabled(bool enabled) {
     skyboxEnabled_ = enabled;
-    sky_->setSky(&scene_, enabled);
+    // An environment replaces the atmosphere as the sky.
+    auto* cubemap = environment_ ? environment_->cubemap : nullptr;
+    sky_->setSky(&scene_, enabled && !cubemap);
+    scene_.setSky(enabled && cubemap, Ogre::SceneManager::SkyCubemap, cubemap);
 }
 
 void Editor::captureViewport(const std::filesystem::path& path) {
@@ -971,6 +1070,7 @@ void Editor::destroyRenderObjects() {
             unlit_.destroyDatablock(it->emitterMaterial->getName());
         }
         if(it->lightNode) scene_.destroySceneNode(it->lightNode);
+        models_->remove(it->placedModel);
         scene_.destroyManualObject(it->mesh);
         scene_.destroySceneNode(it->node);
         pbs_.destroyDatablock(it->material->getName());
@@ -1002,6 +1102,51 @@ Ogre::TextureGpu* Editor::projectTexture(const std::string& path,int kind,bool m
     return texture;
 }
 
+void Editor::prefilter(Ogre::TextureGpu& cubemap) {
+    auto* textures=root_.getRenderSystem()->getTextureGpuManager();
+    auto* target=textures->createTexture("ThroneEditor/IblTarget",Ogre::GpuPageOutStrategy::Discard,
+        Ogre::TextureFlags::RenderToTexture|Ogre::TextureFlags::Uav|Ogre::TextureFlags::DiscardableContent,Ogre::TextureTypes::TypeCube);
+    target->copyParametersFrom(&cubemap);
+    target->_setDepthBufferDefaults(Ogre::DepthBuffer::POOL_NO_DEPTH,false,Ogre::PFG_UNKNOWN);
+    target->scheduleTransitionTo(Ogre::GpuResidency::Resident);
+    auto* compositor=root_.getCompositorManager2();
+    auto* workspace=compositor->addWorkspace(&scene_,Ogre::CompositorChannelVec{&cubemap,target},&camera_,"ThroneEditor/Ibl",false);
+    workspace->_update();
+    compositor->removeWorkspace(workspace);
+    // Mip 0 stays the mirror reflection; each further mip holds a rougher lobe.
+    for(Ogre::uint8 mip=1;mip<target->getNumMipmaps();++mip) {
+        const auto box=target->getEmptyBox(mip);
+        target->copyTo(&cubemap,box,mip,box,mip);
+    }
+    textures->destroyTexture(target);
+}
+
+void Editor::captureProbe(const Vec3& at) {
+    auto* textures=root_.getRenderSystem()->getTextureGpuManager();
+    auto* cube=textures->createTexture("ThroneEditor/Probe",Ogre::GpuPageOutStrategy::Discard,
+        Ogre::TextureFlags::RenderToTexture,Ogre::TextureTypes::TypeCube);
+    cube->setResolution(64,64);
+    cube->setPixelFormat(Ogre::PFG_RGBA16_FLOAT);
+    cube->scheduleTransitionTo(Ogre::GpuResidency::Resident);
+    auto* camera=scene_.createCamera("ThroneEditor/ProbeCamera");
+    camera->setFOVy(Ogre::Degree(90));
+    camera->setAspectRatio(1);
+    camera->setNearClipDistance(.05f);
+    camera->setPosition(toOgre(at));
+    auto* compositor=root_.getCompositorManager2();
+    auto* workspace=compositor->addWorkspace(&scene_,cube,camera,"ThroneEditor/Probe",false);
+    // Nodes moved this frame are drawn from their updated transforms.
+    scene_.updateSceneGraph();
+    workspace->_update();
+    compositor->removeWorkspace(workspace);
+    Ogre::Image2 image;
+    image.convertFromTexture(cube,0,0);
+    probeHarmonics_=irradianceHarmonics(image);
+    scene_.destroyCamera(camera);
+    textures->destroyTexture(cube);
+    probeAt_=at;
+}
+
 void Editor::syncLighting() {
     const auto& r=doc_.world.level.rendering;
     if(!clustered_ || *clustered_!=r.clustered || clusterMin_!=r.minDistance || clusterMax_!=r.maxDistance) {
@@ -1011,8 +1156,37 @@ void Editor::syncLighting() {
     }
     scene_.getForwardPlus()->setDebugMode(r.debugClusters);
     sun_->setVisible(r.defaultSun);
+    const auto environmentFile=r.environment.empty() || !project_ ? std::string{} : project_->resolve(r.environment).generic_u8string();
+    if(environmentFile!=environmentFile_) {
+        environmentFile_=environmentFile;
+        auto [it,added]=environments_.try_emplace(environmentFile);
+        if(added && !environmentFile.empty()) try {
+            const auto start=std::chrono::steady_clock::now();
+            it->second=loadEnvironment(*root_.getRenderSystem()->getTextureGpuManager(),std::filesystem::u8path(environmentFile),
+                "ThroneEnvironment/"+environmentFile);
+            prefilter(*it->second->cubemap);
+            log("Environment "+r.environment+" read in "+std::to_string(std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count())+" s");
+        } catch(const std::exception& error) { log("Environment not loaded: "+std::string(error.what())); }
+        environment_=it->second ? &*it->second : nullptr;
+        models_->setReflection(environment_ ? environment_->cubemap : nullptr);
+        setSkyboxEnabled(skyboxEnabled_);
+    }
+    camera_.setFOVy(Ogre::Degree(r.fieldOfView));
+    auto params=tonemap_->getTechnique(0)->getPass(0)->getFragmentProgramParameters();
+    params->setNamedConstant("exposure",std::exp2(r.exposure));
+    params->setNamedConstant("filmic",r.toneMapping?1.0f:0.0f);
+    if(!r.lightProbe) probeAt_.reset();
+    pbs_.setAmbientLightMode(environment_ || probeAt_ ? Ogre::HlmsPbs::AmbientSh : Ogre::HlmsPbs::AmbientAutoNormal);
+    if(probeAt_) scene_.setSphericalHarmonics(probeHarmonics_.data());
+    else if(environment_) {
+        // Spherical harmonics give the diffuse light, scaled like the reflections.
+        auto harmonics=environment_->harmonics;
+        for(auto& h:harmonics) h*=r.environmentScale;
+        scene_.setSphericalHarmonics(harmonics.data());
+    }
     scene_.setAmbientLight(Ogre::ColourValue(r.ambientUpper.x,r.ambientUpper.y,r.ambientUpper.z),
-        Ogre::ColourValue(r.ambientLower.x,r.ambientLower.y,r.ambientLower.z),toOgre(r.ambientDirection).normalisedCopy());
+        Ogre::ColourValue(r.ambientLower.x,r.ambientLower.y,r.ambientLower.z),toOgre(r.ambientDirection).normalisedCopy(),
+        environment_ ? r.environmentScale : 1.0f);
     // Reserve enough Forward slots for every authored rectangular light, including hidden ones.
     unsigned approx=0,ltc=0;
     for(const auto& instance:view_.instances) for(const auto& n:instance.expansion.nodes) if(n.node.light) {
@@ -1077,6 +1251,16 @@ void Editor::syncTransforms(const LevelExpansion* snapshot) {
         render.node->setOrientation(orientation(transform.rotation));
         render.node->setScale(toOgre(transform.scale));
         render.mesh->setVisible(shape.kind != PrimitiveKind::None);
+        // A Model component places its file's meshes under the node; its bounds stand in
+        // for a primitive's when the node has none.
+        if (node.model != render.model) {
+            models_->remove(render.placedModel);
+            if (node.model && !node.model->path.empty() && project_)
+                render.placedModel = models_->place(project_->resolve(node.model->path), node.model->directXNormals, *render.node);
+            render.model = node.model;
+        }
+        if (render.placedModel.root && shape.kind == PrimitiveKind::None)
+            render.lower = render.placedModel.lower, render.upper = render.placedModel.upper;
         const auto colour=primitiveColour(node);
         render.material->setDiffuse(Ogre::Vector3(colour[0],colour[1],colour[2]));
         render.material->setRoughness(surface.roughness);
@@ -1092,7 +1276,10 @@ void Editor::syncTransforms(const LevelExpansion* snapshot) {
         texture(Ogre::PBSM_NORMAL,surface.normalMap,previous.normalMap,Ogre::CommonTextureTypes::NormalMap);
         texture(Ogre::PBSM_ROUGHNESS,surface.roughnessMap,previous.roughnessMap,Ogre::CommonTextureTypes::Monochrome);
         texture(Ogre::PBSM_SPECULAR,surface.specularMap,previous.specularMap,Ogre::CommonTextureTypes::Diffuse);
-        texture(Ogre::PBSM_REFLECTION,surface.reflectionMap,previous.reflectionMap,Ogre::CommonTextureTypes::EnvMap);
+        // Without a reflection map of its own, a surface reflects the level's environment.
+        auto* reflection=surface.reflectionMap.empty() ? (environment_ ? environment_->cubemap : nullptr)
+            : projectTexture(surface.reflectionMap,Ogre::CommonTextureTypes::EnvMap);
+        if(render.material->getTexture(Ogre::PBSM_REFLECTION)!=reflection) render.material->setTexture(Ogre::PBSM_REFLECTION,reflection);
         render.surface=surface;
         if(node.light && !render.light) {
             if(!render.lightNode) {
@@ -1114,7 +1301,8 @@ void Editor::syncTransforms(const LevelExpansion* snapshot) {
             // Light::setDirection rotates its parent; reset the dedicated child to avoid roll drift.
             render.lightNode->setOrientation(Ogre::Quaternion::IDENTITY);
             light->setDirection(toOgre(c.direction).normalisedCopy());
-            light->setCastShadows(shadowsEnabled_ && c.type==LightType::Directional);
+            light->setCastShadows(shadowsEnabled_ && (c.type==LightType::Directional ||
+                (c.castShadows && (c.type==LightType::Point || c.type==LightType::Spot))));
             light->setAttenuationBasedOnRadius(c.radius,c.threshold);
             light->setSpotlightRange(Ogre::Degree(c.innerAngle),Ogre::Degree(c.outerAngle));
             light->setRectSize(Ogre::Vector2(c.width,c.height)); light->setDoubleSided(c.twoSided);
@@ -1147,6 +1335,18 @@ void Editor::syncTransforms(const LevelExpansion* snapshot) {
             outlined = &render;
     }
     if(hasParticles || particleSystemCount_) syncParticles(shown);
+    // The probe sees the placed level once its textures have streamed in.
+    const auto& r=doc_.world.level.rendering;
+    if(r.lightProbe && probeAt_!=std::optional<Vec3>(r.probePosition) && root_.getRenderSystem()->getTextureGpuManager()->isDoneStreaming())
+        captureProbe(r.probePosition);
+    // The sky's sun follows the default sun, or else the first directional Light component.
+    Ogre::Light* skySun=sun_->getVisible()?sun_:nullptr;
+    for(const auto& render:renderObjects_)
+        if(!skySun && render.light && render.light->getVisible() && render.light->getType()==Ogre::Light::LT_DIRECTIONAL) skySun=render.light;
+    if(skySun) {
+        const auto direction=skySun->getDerivedDirectionUpdated();
+        sky_->setSunDir(direction,std::asin(std::clamp(-direction.y,-1.0f,1.0f))/Ogre::Math::PI);
+    }
     gridNode_->setVisible(showGrid_);
     outlineNode_->setVisible(outlined != nullptr);
     if (outlined) {
@@ -1372,6 +1572,7 @@ namespace {
 /// Copies the properties @p from sets into @p into.
 void assign(NodeOverride& into, const NodeOverride& from) {
     if (from.particles) into.particles = from.particles;
+    if (from.model) into.model = from.model;
     if (from.material) into.material = from.material;
     if (from.light) into.light = from.light;
     if (from.sphere) into.sphere = from.sphere;
@@ -1954,6 +2155,21 @@ void Editor::menu() {
         auto upper=r.ambientUpper,lower=r.ambientLower;
         if(ImGui::ColorEdit3("Ambient Upper",upper.data())) { checkpoint(); r.ambientUpper=upper; }
         if(ImGui::ColorEdit3("Ambient Lower",lower.data())) { checkpoint(); r.ambientLower=lower; }
+        char environment[256]; std::snprintf(environment,sizeof environment,"%s",r.environment.c_str());
+        if(ImGui::InputText("Environment (HDR)",environment,sizeof environment,ImGuiInputTextFlags_EnterReturnsTrue)) { checkpoint(); r.environment=environment; }
+        float scale=r.environmentScale;
+        if(ImGui::DragFloat("Environment Scale",&scale,.01f,0,100)) { checkpoint(); r.environmentScale=scale; }
+        bool probe=r.lightProbe;
+        if(ImGui::MenuItem("Light Probe",nullptr,&probe)) { checkpoint(); r.lightProbe=probe; }
+        auto at=r.probePosition;
+        if(ImGui::DragFloat3("Probe Position",at.data(),.05f)) { checkpoint(); r.probePosition=at; }
+        if(ImGui::MenuItem("Recapture Probe",nullptr,false,r.lightProbe)) probeAt_.reset();
+        bool filmic=r.toneMapping;
+        if(ImGui::MenuItem("Filmic Tone Mapping",nullptr,&filmic)) { checkpoint(); r.toneMapping=filmic; }
+        float exposure=r.exposure;
+        if(ImGui::DragFloat("Exposure (EV)",&exposure,.05f,-16,16)) { checkpoint(); r.exposure=exposure; }
+        float fieldOfView=r.fieldOfView;
+        if(ImGui::DragFloat("Field of View",&fieldOfView,.5f,1,170,"%.1f deg")) { checkpoint(); r.fieldOfView=fieldOfView; }
         ImGui::EndDisabled();
         ImGui::EndMenu();
     }
@@ -2363,7 +2579,7 @@ void Editor::pick(float x, float y) {
     auto nearest = std::numeric_limits<Ogre::Real>::max();
     selected_ = {};
     for (const auto& render : renderObjects_) {
-        if (render.shape.kind==PrimitiveKind::None) continue;
+        if (render.shape.kind==PrimitiveKind::None && !render.placedModel.root) continue;
         auto lower=render.lower, upper=render.upper;
         if(upper.y-lower.y<.02f) lower.y-=.01f, upper.y+=.01f;
         const Ogre::AxisAlignedBox bounds(toOgre(lower),toOgre(upper));

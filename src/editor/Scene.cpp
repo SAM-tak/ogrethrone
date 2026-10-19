@@ -142,6 +142,10 @@ void readExtraComponents(const LhatTable& table, Node& node) {
         if(const auto v=lton::field(t,"script"); !lhat_is_nil(v)) c.script=lton::relativePath(v);
         c.enabled=flag(t,"enabled",c.enabled);
     });
+    read("model", node.model, [&](const auto& t, auto& c) {
+        if(const auto v=lton::field(t,"path"); !lhat_is_nil(v)) c.path=lton::relativePath(v);
+        c.directXNormals=flag(t,"directXNormals",c.directXNormals);
+    });
     read("material", node.material, [&](const auto& t, auto& c) {
         c.roughness = scalar(t,"roughness",c.roughness,0.02f,1);
         c.metalness = scalar(t,"metalness",c.metalness,-1,1);
@@ -172,7 +176,7 @@ void readExtraComponents(const LhatTable& table, Node& node) {
         c.outerAngle=scalar(t,"outerAngle",c.outerAngle,c.innerAngle,179);
         c.width=scalar(t,"width",c.width,0.001f); c.height=scalar(t,"height",c.height,0.001f);
         c.enabled=flag(t,"enabled",c.enabled); c.twoSided=flag(t,"twoSided",c.twoSided);
-        c.showEmitter=flag(t,"showEmitter",c.showEmitter);
+        c.showEmitter=flag(t,"showEmitter",c.showEmitter); c.castShadows=flag(t,"castShadows",c.castShadows);
         if(const auto v=lton::field(t,"direction"); !lhat_is_nil(v)) lton::vector(v,c.direction.data());
         if(c.direction.x*c.direction.x+c.direction.y*c.direction.y+c.direction.z*c.direction.z < 1.0e-10f) lton::invalid();
         if(const auto v=lton::field(t,"mask"); !lhat_is_nil(v)) c.mask=lton::relativePath(v);
@@ -238,6 +242,9 @@ void writeExtraComponents(lton::Writer& out, LhatValue table, const Node& node) 
         out.set(t,"definition",out.string(c.definition)); out.set(t,"enabled",lhat_bool(c.enabled));
         if(!c.script.empty()) out.set(t,"script",out.string(c.script));
     });
+    write("model", node.model, [&](auto t,const auto& c) {
+        out.set(t,"path",out.string(c.path)); out.set(t,"directXNormals",lhat_bool(c.directXNormals));
+    });
     write("material", node.material, [&](auto t, const auto& c) {
         out.set(t,"roughness",lhat_real(c.roughness)); out.set(t,"metalness",lhat_real(c.metalness));
         out.set(t,"fresnel",out.vector(c.fresnel.data())); out.set(t,"emissive",out.vector(c.emissive.data()));
@@ -254,7 +261,7 @@ void writeExtraComponents(lton::Writer& out, LhatValue table, const Node& node) 
             std::pair{"innerAngle",c.innerAngle},std::pair{"outerAngle",c.outerAngle},std::pair{"width",c.width},std::pair{"height",c.height}})
             out.set(t,entry.first,lhat_real(entry.second));
         out.set(t,"enabled",lhat_bool(c.enabled)); out.set(t,"twoSided",lhat_bool(c.twoSided));
-        out.set(t,"showEmitter",lhat_bool(c.showEmitter));
+        out.set(t,"showEmitter",lhat_bool(c.showEmitter)); out.set(t,"castShadows",lhat_bool(c.castShadows));
         if(!c.mask.empty()) out.set(t,"mask",out.string(c.mask));
     });
     write("sphere", node.sphere, [&](auto t, const auto& c) { colour(t, c); out.set(t, "radius", lhat_real(c.radius)); });

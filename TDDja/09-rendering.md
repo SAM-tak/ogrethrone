@@ -94,7 +94,54 @@ Vulkan の `--smoke-physics` は Forward Clustered が選択されているこ�
 
 ［補足］シーンの RGB は背景と粒子を合成済みだが、描画先の Alpha は粒子によって変わる。ImGui の標準 Image 材質でこれを再度透過合成すると、RGB のキャプチャでは正常でも UI には黒い四角が現れる。ビューポート専用の Image 材質だけを不透明コピーにする。固定済み ImGui バックエンドが prepareForRender で生成するテクスチャ別材質を設定し、フォントなど他の UI の透過は維持する。--smoke-showcases は影を有効にした粒子シーンについて、光輪単独と Alpha Blending／Hashing のウィンドウ出力を取得し、UI 表示部分を除いた画素がシーンの RGB と一致することも検査する。
 
-## 8. 参考
+## 8. モデルと環境マップ
+
+［補足］Model Component はプロジェクト相対の FBX パスと、法線マップが DirectX 規約かどうかのフラグを持つ。読み込みは ufbx（v0.23.1、MIT、third_party/ufbx）で、メートル・+Y 上・右手系へ変換する。ファイルは ModelLibrary が一度だけ読み、メッシュごとの OGRE Mesh とマテリアルごとの PBS データブロックを共有する。配置はメッシュインスタンスごとに Item を作る。ファイル内のライトとカメラは配置しない。Model だけのノードは、モデルの境界を選択枠とピックに使う。
+
+［補足］マテリアルはメタリックワークフロー。テクスチャは WRAP と異方性 8 でサンプルする（OGRE 既定の CLAMP では、UV が 0〜1 を超えるタイル模様が端の色一色になる）。FBX の透過色（transparency_color × factor）を持つマテリアルはアルファブレンド（深度書き込みなし、両面）とし、ガラスと液体の反射を残す。不透明度 0.25 未満（グラス、窓）は OGRE の Refractive モードで画面空間屈折（強さ 0.05）とし、その Item を描画キュー 200 に置く。液体と瓶は Transparent モードのまま第 1 パスに描き、手前のグラスの屈折に映す（屈折は第 1 パスの画像だけを背景にするため、同じパスの液体は上書きされる）。透過マテリアルだけでできたメッシュは影を落とさない。BaseColor（アルファは不透明度、DXT5 ならアルファテスト 0.5 と両面）、Normal、glTF 式 ORM（R=遮蔽、G=粗さ、B=金属度）、Emissive を使う。ORM はデータブロック単位のカスタムピースで SampleSpecular／SampleRoughness の参照チャンネルを差し替え、既存のショーケース材質には影響させない。DirectX 法線は接線の w 符号で扱う。
+
+［補足］レベルの rendering は environment（プロジェクト相対の正距円筒 HDR）と environmentScale を持つ。CPU で 512² のキューブマップ（2×2 スーパーサンプル）と 9 係数の球面調和へ変換する。ミップは OGRE の IblSpecular 計算パス（Compute/Algorithms/IBL）で GGX 粗さ別に事前フィルタする。キューブマップは空と、自前の反射マップを持たない全 PBS マテリアルの反射に、球面調和は AmbientSh の拡散環境光に使う。放射輝度は 64 で打ち切り、HDR 内の太陽は Light Component の平行光源に任せる。空の太陽は既定の太陽か、最初の平行光源 Component の向きに追従する。
+
+［補足］ビューポートはシーンを RGBA16F に 2 パスで描く。描画キュー 0〜199 を Opaque へ（深度は共有の D32 テクスチャ）、それを Hdr へ複製し、キュー 200 以上を Opaque と深度を屈折元として Hdr へ描く（影ノードは再利用）。その後クアッドパス（media/postprocess/Tonemap）で露出（EV）を掛けて表示先へ書く。レベルの toneMapping が真なら ACES フィルミック曲線（Narkowicz の近似）、偽なら従来どおりクランプする。既定は偽・EV 0 で、既存レベルの見た目は変わらない。
+
+［補足］samples/bistro は ORCA の Amazon Lumberyard Bistro（CC BY 4.0）を 3 レベルで再現する。データ（Bistro_v5_2/）は Git 管理外。
+
+- exterior: FBX の太陽の向きと色、カメラを開始視点に、同梱 HDR を環境マップに使う。
+- interior: FBX の 4 点光源（影あり）と、壁灯・ランタンの発光メッシュ重心に置いた点光源で照らす（Falcor はレイトレースで発光面を光源にする）。色は参照画像に合わせ FBX の暖色より白寄りにした。
+- interior-wine: 同じ内装を約 1.47 倍した版（光源なし）。天井灯・壁灯・ランタンの重心に点光源を置き、満たしたワイングラスを透過で描く。
+- plaza: exterior と同じシーンを ORCA の外観プレビュー 1 枚目（Le Petit Coin の角とスクーター）の視点で見る。参照のカメラ値は公開されていないため、構図を目視で合わせた。画角は FBX カメラと同じ 34°（レベルの fieldOfView）、露出 +1.3 EV。平均 RGB は 109/99/94（参照 104/103/102）。参照の方が中立色で、日向の石畳が明るい。
+
+`ogrethrone --capture <folder> [file] [level]` はプロジェクトとレベルを開き、テクスチャのストリーミング完了後のビューポートを PPM で保存して終了する。OGRE のアサートはダイアログでなく標準エラーへ出す。ORCA 公開の参照画像（外観 2、内装 3）と比較し、色調・素材・ガラスを確認した。
+
+［補足］固定済み OGRE fork に以下を加えた。
+
+- PBS テンプレート: 単チャンネルの発光マップで `.rrr` を midf4 へ代入していた誤りを `.rrra` に修正。
+- STBI コーデック: Radiance HDR（.hdr）を RGBA32F で読む。
+- HlmsPbs: アルファテストの影キャスターが反射マップを除いたテクスチャ数を宣言し、Vulkan が反射込みの記述子セット全体をバインドしてルートレイアウトと食い違っていた。反射マップも数に含める。
+- PBS 屈折テンプレート: GLSL の max に 3 引数を渡していた（金属ワークフローでコンパイル不能）。2 段の max に修正。
+- SceneManager::clearScene: ルートに付いたままのスカイ矩形を再アタッチして例外になっていた。未アタッチ時だけ付け直す。
+
+［補足］Point／Spot の Light Component は castShadows を持つ。影ノードは平行光源の 3 カスケードに加え、1024² の FOCUSED 影マップ 4 枠を同じアトラス（4096×4096）に持ち、OGRE がカメラに近い影付き局所光へ割り当てる。点光源はキューブから DPSM へ変換する（Common/DPSM.material を読む）。Bistro 内装では天井灯 4 灯が影を落とす。
+
+［未決］液体の吸収（体積）と間接光（GI）は扱わない。液体は色付きの半透明で近似する。参照はパストレースなので、日陰の明るさと色の中立さは近似にとどまる。
+
+## 9. 間接光（GI）
+
+［補足］Bistro の参照画像は Falcor のパストレースで、建物間の照り返しが日陰を明るく中立色にしている。現状は HDR 環境の球面調和と反射キューブマップのみで、plaza の平均 RGB は 109/99/94（参照 104/103/102）。差の主因は一次反射光の欠如。
+
+［提案］固定済み OGRE-Next の既存機能から次の 3 段階で選ぶ。
+
+- A. 局所キューブマッププローブ（ParallaxCorrectedCubemapAuto ＋ PccPerPixelGridPlacement）。シーンを数か所でキューブに描き、反射と EnvFeatures_DiffuseGiFromReflectionProbe による拡散 GI に使う。追加コードが最小で静的シーン向き。プローブ位置はレベルに保存し、エディターで再焼き込みする。
+- B. VCT（VctCascadedVoxelizer ＋ VctLighting）。シーンをボクセル化し、拡散・鏡面の間接光を円錐追跡で求める。動的光源にも追従するが、280 万三角形の外観ではボクセル化の時間とメモリが大きい。
+- C. IrradianceField（B のボクセルから放射照度プローブ格子を作る）。B より軽く、拡散 GI のみ。
+
+まず A を samples/bistro に入れ、参照との平均 RGB と日陰の明るさで効果を測る。足りなければ C、動的光源が必要になった時点で B へ進む。
+
+［補足］A〜C の判断までの暫定として、単一の光プローブを入れた。レベルの lightProbe と probePosition で指定し、テクスチャのストリーミング完了後に 1 回、その位置から 64² RGBA16F のキューブへシーンを描く（描画キュー 0〜199 と 201 以上。屈折ガラスの 200 は除く）。CPU へ読み戻して球面調和へ投影し、HDR 環境の拡散光（AmbientSh）を置き換える。反射は HDR 環境のまま（単一プローブの反射は視差が合わない）。撮影時のシーンは HDR 環境で照らされているので、空・太陽に加え周囲の面からの一次反射光が入り、建物に遮られた空の分は暗くなる。位置を変えるか Recapture で撮り直す。Bistro の 4 レベルで有効。plaza の平均 RGB は 100/91/87（参照 104/103/102）。残る差は主に色温度で、FBX の太陽色（橙寄り）による。
+
+［未決］A〜C のどれを採るか。焼き込み結果をプロジェクトに保存するか、レベルを開くたびに作るか。
+
+## 10. 参考
 
 - [OGRE-Next Compositor: PSSM / CSM と安定化](https://ogrecave.github.io/ogre-next/api/latest/compositor.html)
 - 固定済みソースの `ShadowMapFromCode` サンプル、`ShadowNodeHelper`、`HlmsPbs::ShadowFilter`。

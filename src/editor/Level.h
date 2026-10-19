@@ -21,13 +21,26 @@ struct SceneInstance {
 /// Persisted level lighting and the initial editor camera for authored showcases.
 struct RenderingSettings {
     bool defaultSun = true, sky = true, grid = true, clustered = true, debugClusters = false;
+    /// Filmic (ACES) tone mapping of the HDR scene instead of clamping it; exposure is in stops.
+    bool toneMapping = false;
+    float exposure = 0;
     Vec3 ambientUpper{.22f,.25f,.30f}, ambientLower{.06f,.07f,.09f};
     Vec3 ambientDirection{0,1,0};
     float minDistance = .1f, maxDistance = 100;
+    /// Optional project-relative equirectangular HDR file lighting the level and drawn as
+    /// its sky; environmentScale scales the light it gives.
+    std::string environment;
+    float environmentScale = 1;
+    /// When set, the level itself is captured at probePosition and its irradiance
+    /// replaces the environment's diffuse light, adding one bounce off nearby surfaces.
+    bool lightProbe = false;
+    Vec3 probePosition{0,1.5f,0};
     /// Optional opening view: orbit target, radians and distance.
     bool openingCamera = false;
     Vec3 target{0,.5f,0};
     float yaw = .65f, pitch = .45f, distance = 9;
+    /// Vertical field of view of the viewport camera, in degrees.
+    float fieldOfView = 45;
 };
 
 /// The game-side data of one level (TDDja/04, 05, 06): the scene instances it

@@ -1,0 +1,5 @@
+format = "ogrethrone-level",
+version = 3,
+scenes = {{id = 1, scene = "scenes/exterior.scene.lton"}},
+runners = {},
+rendering = {defaultSun = false^, toneMapping = true^, exposure = 0, grid = false^, sky = true^, clustered = true^, ambientUpper = {0.9, 1.05, 1.25}, ambientLower = {0.45, 0.4, 0.32}, ambientDirection = {0, 1, 0}, lightProbe = true^, probePosition = {11.4, 1.5, -32}, minDistance = 0.1, maxDistance = 250, environment = "Bistro_v5_2/san_giuseppe_bridge_4k.hdr", environmentScale = 1, fieldOfView = 34, openingCamera = true^, target = {11.43, 3.6, -32.35}, yaw = 2.817, pitch = 0.0695, distance = 10},

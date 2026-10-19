@@ -150,7 +150,7 @@ the runners that refer to it, referring to the copy), Delete
 removes the selected node or runner, Ctrl+S saves the level and its scenes and
 Ctrl+O opens a level. New and Open are undoable; closing the window or the project with
 unsaved changes asks to save or discard them (on Windows this also covers the
-window's close button). Colibri widgets and model import are not wired yet.
+window's close button). Colibri widgets are not wired yet.
 `ogrethrone --smoke` creates a throwaway project, runs the editor on it for three
 frames and exits, without touching the project list.
 With `BUILD_TESTING=ON`, `ogrethrone --smoke-navigation` replays mouse and keyboard
@@ -403,8 +403,9 @@ The default directional sun casts **three-cascade PSSM/CSM shadows**, with
 3×3 PCF filtering, blended/faded splits, and the first two cascades stabilized.
 The 2048×3072 depth atlas packs a 2048² near cascade and two 1024² cascades; shadow
 range is 100 world units. The clustered grid is 16×8×24, with 64 local lights per
-cell and a 0.1–100 depth range. Local-light components and additional shadow slots
-are not exposed yet; the current preview light is the directional sun.
+cell and a 0.1–100 depth range. Point and spot Light components with **Cast
+Shadows** share four further 1024² maps in the same atlas (point lights through
+dual-paraboloid maps); OGRE gives them to the nearest such lights.
 
 Primitive colours are diffuse albedo. Materials use dielectric Fresnel 0.04 and
 roughness 0.65, with hemispherical ambient fill. Proper outward normals and triangle
@@ -413,6 +414,53 @@ Grid lines, selection outlines and ImGui retain their unlit appearance and do no
 cast shadows. **View → Shadows** toggles shadow casting while retaining direct and
 ambient lighting. These are viewport defaults; scene light authoring and persistent
 quality controls are not implemented yet.
+
+## Models and environment maps
+
+A **Model** component draws a project-relative FBX file, read with the pinned
+[ufbx](https://github.com/ufbx/ufbx) (`third_party/ufbx`) and converted to metres,
++Y up and right-handed. Each file is read once; its meshes and PBS materials are
+shared by every node placing it. Materials use the metal-rough workflow: a base
+colour map (alpha is opacity and enables alpha testing for DXT5 maps), a normal map
+(**DirectX normal maps** selects the green direction), an ORM map packed as glTF
+does (occlusion, roughness, metalness in R, G, B) and an emissive map, all repeating
+across their UVs with anisotropic filtering. A material with an FBX transparency
+colour (glass, liquids) is alpha blended and keeps its reflections; a nearly clear
+one (opacity below 0.25, such as glass) also refracts the scene behind it. Meshes made
+only of such materials cast no shadow. Lights and
+cameras in the file are not placed. A node with only a Model is picked and outlined
+by the model's bounds.
+
+**Lighting → Environment (HDR)** names a project-relative equirectangular Radiance
+`.hdr` file for the level, and **Environment Scale** scales the light it gives.
+The editor converts it to a 512² cubemap, drawn as the sky and reflected by every
+PBS material without its own reflection map, and to spherical harmonics for diffuse
+ambient light. OGRE's IBL compute pass prefilters the cubemap's mipmaps for GGX
+roughness. Radiance above 64 (a sun in the image) is clamped; use a directional
+Light component for the sun, which the sky's sun then follows.
+
+**Lighting → Light Probe** captures the level itself into a 64² cubemap at
+**Probe Position** once its textures have streamed in, and uses that capture's
+irradiance (spherical harmonics) as the diffuse ambient light instead of the
+environment's: surfaces then receive one bounce off their surroundings, and walls
+shade what they hide from the sky. Reflections keep the environment map.
+**Recapture Probe** renders it again after the scene changes.
+
+The viewport renders the scene in half float, in two passes: render queues below
+200, then (after copying that image) queue 200 and above, where refractive materials
+sample the first image and its depth. It then exposes the result.
+**Lighting → Filmic Tone Mapping** maps it through the ACES filmic curve instead
+of clamping, **Exposure (EV)** scales it in stops and **Field of View** sets the
+camera's vertical angle; all are saved with the level.
+
+[`samples/bistro`](samples/bistro) reproduces the Amazon Lumberyard Bistro (exterior,
+interior and the wine-glass interior) from NVIDIA ORCA (CC BY 4.0). The asset is downloaded separately; see the
+sample's [README](samples/bistro/README.md).
+
+`ogrethrone --capture <folder> [file] [level]` opens a project and the given
+project-relative level (else its main level), waits for its textures, saves the
+viewport as a PPM image (default `out/capture.ppm`) and exits. OGRE
+assertions are written to standard error instead of a dialog.
 
 ## Physics playground
 

@@ -6,5 +6,7 @@
 *.log
 imgui.ini
 
+samples/bistro/Bistro_v5_2/
+
 CLAUDE.md
 AGENT.md

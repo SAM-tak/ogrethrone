@@ -2,11 +2,14 @@
 
 #include "editor/EditorPlatform.h"
 #include "editor/Expansion.h"
+#include "editor/Environment.h"
+#include "editor/Model.h"
 #include "editor/PrimitiveGeometry.h"
 #include "editor/References.h"
 #include "editor/Project.h"
 #include "script/ScriptRuntime.h"
 #include "runtime/PhysicsWorld.h"
+#include <OgreMaterial.h>
 #include <OgreVector3.h>
 #include <imgui.h>
 #include <filesystem>
@@ -153,6 +156,9 @@ private:
         std::optional<PbsMaterial> surface;
         PrimitiveShape emitterShape;
         Ogre::ParticleSystem2* particles = nullptr;
+        /// The Model component last placed, and what placing it created.
+        std::optional<ModelComponent> model;
+        ModelLibrary::Placed placedModel;
         std::optional<ParticleSystemComponent> particleConfig;
 
     };
@@ -237,6 +243,10 @@ private:
     void syncLighting();
     /// Loads one project texture with a project-qualified cache key; masks share an R8 pool.
     Ogre::TextureGpu* projectTexture(const std::string& path, int kind, bool mask = false);
+    /// Replaces the mipmaps of an environment cubemap with GGX-prefiltered radiance.
+    void prefilter(Ogre::TextureGpu& cubemap);
+    /// Renders the level into a small cubemap at @p at and keeps its irradiance harmonics.
+    void captureProbe(const Vec3& at);
     /// Loads the standard ParticleFX2 resources and any project particle definitions.
     void loadParticleResources(const std::string& script);
     /// Reconciles particle instances after transforms; template/enable changes reset shared pools.
@@ -384,6 +394,8 @@ private:
     Ogre::HlmsPbs& pbs_;
     Ogre::Light* sun_ = nullptr;
     std::unique_ptr<Ogre::AtmosphereNpr> sky_;
+    /// Model files read for Model components, shared between the nodes placing them.
+    std::unique_ptr<ModelLibrary> models_;
     bool skyboxEnabled_ = true;
     Ogre::SceneNode* sunNode_ = nullptr;
     bool shadowsEnabled_ = true;
@@ -395,6 +407,16 @@ private:
     std::optional<bool> clustered_;
     float clusterMin_ = 0, clusterMax_ = 0;
     std::map<std::tuple<std::string,int,bool>,Ogre::TextureGpu*> projectTextures_;
+    /// Environments read, by file; kept until shutdown because materials may refer to them.
+    std::map<std::string,std::optional<Environment>> environments_;
+    /// The level's environment file, and what it was read into (empty when it has none).
+    std::string environmentFile_;
+    const Environment* environment_ = nullptr;
+    /// The viewport's exposure and tone-mapping pass material.
+    Ogre::MaterialPtr tonemap_;
+    /// Where the light probe was last captured, and the irradiance it gave.
+    std::optional<Vec3> probeAt_;
+    std::array<Ogre::Vector3, 9> probeHarmonics_{};
 
     EditorPlatform platform_;
     std::unique_ptr<Ogre::ImguiManager> gui_;

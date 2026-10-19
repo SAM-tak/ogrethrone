@@ -460,6 +460,12 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         char text[256]; fill(text,path); bool edited=ImGui::InputText(label,text,sizeof text); track();
         if(edited) path=text; return edited;
     };
+    component("Model",value.model,&SceneNode::model,&NodeOverride::model,[&](auto& c) {
+        bool edited=texturePath("File",c.path);
+        edited|=ImGui::Checkbox("DirectX normal maps",&c.directXNormals); track();
+        ImGui::TextDisabled("A project-relative FBX file: its meshes and PBS materials.");
+        return edited;
+    });
     component("Particle System",value.particles,&SceneNode::particles,&NodeOverride::particles,[&](auto& c) {
         bool edited=texturePath("Template",c.definition);
         edited|=texturePath("Particle Script",c.script);
@@ -489,6 +495,9 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         if(vector("Direction (local)",direction) && direction.x*direction.x+direction.y*direction.y+direction.z*direction.z>1e-10f) { c.direction=direction; edited=true; }
         if(c.type!=LightType::Directional) {
             edited|=scalar("Radius",c.radius); edited|=scalar("Falloff Threshold",c.threshold,.00001f,.999f);
+        }
+        if(c.type==LightType::Point || c.type==LightType::Spot) {
+            edited|=ImGui::Checkbox("Cast Shadows",&c.castShadows); track();
         }
         if(c.type==LightType::Spot) {
             edited|=scalar("Inner Angle",c.innerAngle,.01f,179);
@@ -548,6 +557,7 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         addPrimitive("Box Primitive",PrimitiveKind::Box); addPrimitive("Sphere Primitive",PrimitiveKind::Sphere);
         addPrimitive("Capsule Primitive",PrimitiveKind::Capsule); addPrimitive("Plane Primitive",PrimitiveKind::Plane);
         if(!own->particles && ImGui::Selectable("Particle System")) checkpoint(),own->particles.emplace();
+        if(!own->model && ImGui::Selectable("Model")) checkpoint(),own->model.emplace();
         if(!own->material && ImGui::Selectable("PBS Material")) checkpoint(),own->material.emplace();
         if(!own->light && ImGui::Selectable("Light")) checkpoint(),own->light.emplace();
         if(!own->boxCollider && ImGui::Selectable("Box Collider")) checkpoint(),own->boxCollider.emplace();

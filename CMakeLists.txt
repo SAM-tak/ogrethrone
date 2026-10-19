@@ -92,8 +92,12 @@ endif()
 if(THRONE_BUILD_GRAPHICS)
     # ImGuizmo is compiled here against the ImGui core that OgreNextImgui builds.
     add_executable(ogrethrone src/editor/main.cpp src/editor/Editor.cpp src/editor/EditorPanels.cpp
-        src/editor/EditorPlatform.cpp src/editor/EditorParticles.cpp src/editor/References.cpp third_party/imguizmo/src/ImGuizmo.cpp
-        src/editor/Editor.h src/editor/EditorPlatform.h src/editor/OgreConversions.h src/editor/References.h)
+        src/editor/EditorPlatform.cpp src/editor/EditorParticles.cpp src/editor/References.cpp src/editor/Model.cpp src/editor/Environment.cpp
+        third_party/imguizmo/src/ImGuizmo.cpp third_party/ufbx/ufbx.c
+        src/editor/Editor.h src/editor/EditorPlatform.h src/editor/OgreConversions.h src/editor/References.h
+        src/editor/Model.h src/editor/Environment.h)
+    # ufbx reads FBX for the Model component; its warnings are its own.
+    set_source_files_properties(third_party/ufbx/ufbx.c PROPERTIES COMPILE_OPTIONS "$<IF:$<BOOL:${MSVC}>,/w,-w>")
     if(WIN32)
         # The application icon and the manifest (visual styles, per-monitor DPI, UTF-8).
         target_sources(ogrethrone PRIVATE media/ogrethrone.rc media/ogrethrone.manifest)
@@ -104,6 +108,7 @@ if(THRONE_BUILD_GRAPHICS)
     target_include_directories(ogrethrone PRIVATE
         third_party/ogre-next/RenderSystems/Vulkan/include
         third_party/ogre-next/Components/Imgui/include
+        third_party/ufbx
         third_party/ogre-next/Components/Hlms/Common/include
         third_party/ogre-next/Components/Hlms/Unlit/include
         third_party/ogre-next/Components/Hlms/Pbs/include

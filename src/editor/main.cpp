@@ -3,19 +3,23 @@
 #include "runtime/PhysicsWorld.h"
 #include "script/ScriptRuntime.h"
 #include <OgreAbiUtils.h>
+#include <OgreAssert.h>
 #include <OgreArchiveManager.h>
 #include <OgreCamera.h>
 #include <Compositor/OgreCompositorManager2.h>
+#include <OgreHlmsCompute.h>
 #include <OgreHlmsManager.h>
 #include <OgreHlmsUnlit.h>
 #include <OgreHlmsPbs.h>
 #include <OgreRoot.h>
 #include <OgreSceneManager.h>
+#include <OgreRenderSystem.h>
 #include <OgreForwardPlusBase.h>
 #include <OgreVulkanPlugin.h>
 #include <OgreParticleFX2Plugin.h>
 #include <OgreWindow.h>
 #include <OgreTextureGpu.h>
+#include <OgreTextureGpuManager.h>
 #include <OgreWindowEventUtilities.h>
 #include <ColibriGui/ColibriManager.h>
 #include <imgui.h>
@@ -75,6 +79,15 @@ int main(int argc, char** argv) {
     navigationSmoke = closeSmoke || (argc > 1 && std::strcmp(argv[1], "--smoke-navigation") == 0);
 #endif
     const bool smoke = showcaseSmoke || physicsSmoke || profilePhysics || navigationSmoke || (argc > 1 && std::strcmp(argv[1], "--smoke") == 0);
+    // --capture <folder> [file] [level]: opens the project (and the project-relative level,
+    // else its main level), saves the settled viewport as PPM and exits.
+    const bool captureRun = argc > 2 && std::strcmp(argv[1], "--capture") == 0;
+    // Unattended captures report OGRE's failed assertions on stderr instead of a dialog.
+    if (captureRun)
+        Ogre::Assert::SetHandler([](const char* condition, const char* message, const char* file, int line) {
+            std::fprintf(stderr, "%s(%d): Assert Failure: %s %s\n", file, line, condition ? condition : "", message ? message : "");
+            return Ogre::Assert::Halt;
+        });
     const auto captures = physicsSmoke ? std::filesystem::absolute(argc > 3 ? argv[3] : "out/physics-captures") : std::filesystem::path{};
     // `ogrethrone <folder>` opens that project; --smoke uses a throwaway one and leaves
     // the user's project list alone; otherwise the launcher is shown.
@@ -88,6 +101,9 @@ int main(int argc, char** argv) {
             std::filesystem::copy(source,project,std::filesystem::copy_options::recursive);
             if (physicsSmoke) std::filesystem::create_directories(captures);
         } else throne::Project::create(project.parent_path(), project.filename().u8string());
+        projectList.clear();
+    } else if (captureRun) {
+        project = std::filesystem::u8path(argv[2]);
         projectList.clear();
     } else if (argc > 1) {
         project = std::filesystem::u8path(argv[1]);
@@ -119,6 +135,7 @@ int main(int argc, char** argv) {
         camera->setNearClipDistance(0.1f);
         registerHlms<Ogre::HlmsUnlit>(root);
         registerHlms<Ogre::HlmsPbs>(root);
+        root.getHlmsManager()->getComputeHlms()->setDebugOutputPath(false, false);
 
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
@@ -134,6 +151,7 @@ int main(int argc, char** argv) {
             if (navigationSmoke) throne::navigationSmoke(editor, *window, *camera);
             if (showcaseSmoke) throne::showcaseSmoke(editor,*window,*scene,*camera,std::filesystem::absolute(argc>3?argv[3]:"out/showcase-captures"));
 #endif
+            if (captureRun && argc > 4 && !editor.openLevel(argv[4])) throw std::runtime_error(std::string("Could not open ") + argv[4]);
             auto previous = std::chrono::steady_clock::now();
             unsigned frames = 0;
             bool running = !navigationSmoke && !showcaseSmoke, stepping = false;
@@ -161,7 +179,7 @@ int main(int argc, char** argv) {
             editor.platform().modalFrame = [&] {
                 if (running && !window->isClosed() && !editor.shouldClose()) step();
             };
-            while (running && !window->isClosed() && !editor.shouldClose() && (!smoke || frames < (profilePhysics ? 2100u : physicsSmoke ? 245u : 3u))) {
+            while (running && !window->isClosed() && !editor.shouldClose() && (!smoke || frames < (profilePhysics ? 2100u : physicsSmoke ? 245u : 3u)) && (!captureRun || frames < 30u)) {
                 Ogre::WindowEventUtilities::messagePump();
                 if (!running || window->isClosed() || editor.shouldClose()) break;
                 if (smoke && frames == 1) ImGui::GetIO().AddKeyEvent(ImGuiKey_F5, true);
@@ -191,6 +209,11 @@ int main(int argc, char** argv) {
                 if(physicsSmoke && frames>=242 && editor.playing()) throw std::runtime_error("Physics smoke Stop failed");
                 if(capture) editor.captureViewport(captures/("frame-"+std::to_string(frames)+".ppm"));
                 if (!profilePhysics) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            if (captureRun) {
+                root.getRenderSystem()->getTextureGpuManager()->waitForStreamingCompletion();
+                for (int i = 0; i < 4; ++i) editor.frame(1.0f / 60);
+                editor.captureViewport(std::filesystem::u8path(argc > 3 ? argv[3] : "out/capture.ppm"));
             }
             if (profilePhysics) {
                 if (!profileSamples) throw std::runtime_error("Physics profile never reached 300 bodies");

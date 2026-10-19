@@ -100,8 +100,26 @@ struct LightComponent {
     float innerAngle = 30, outerAngle = 45;
     float width = 1, height = 1;
     bool enabled = true, twoSided = false, showEmitter = true;
+    /// Whether a point or spot light takes one of the viewport's local shadow maps;
+    /// directional lights always cast shadows.
+    bool castShadows = false;
     /// A project-relative mask texture, used by AreaApprox only.
     std::string mask;
+};
+
+/// A model file (FBX) drawn at the node: its meshes with their own hierarchy and
+/// PBS materials (TDDja/09 8). Lights and cameras in the file are not imported.
+struct ModelComponent {
+    /// Project-relative path of the model file.
+    std::string path;
+    /// Whether the file's normal maps use DirectX's convention (green pointing down).
+    bool directXNormals = true;
+    /// Equality, to tell when the drawn model must be rebuilt.
+    bool operator==(const ModelComponent& other) const {
+        return path == other.path && directXNormals == other.directXNormals;
+    }
+    /// Negation of equality.
+    bool operator!=(const ModelComponent& other) const { return !(*this == other); }
 };
 
 /// An instance of an OGRE ParticleFX2 template attached to this node's transform.
@@ -159,6 +177,7 @@ struct NodeOverride {
     std::optional<PbsMaterial> material;
     std::optional<LightComponent> light;
     std::optional<ParticleSystemComponent> particles;
+    std::optional<ModelComponent> model;
     std::optional<BoxCollider> boxCollider;
     std::optional<SphereCollider> sphereCollider;
     std::optional<CapsuleCollider> capsuleCollider;
@@ -249,6 +268,7 @@ struct SceneNode {
     std::optional<PbsMaterial> material;
     std::optional<LightComponent> light;
     std::optional<ParticleSystemComponent> particles;
+    std::optional<ModelComponent> model;
     std::optional<BoxCollider> boxCollider;
     std::optional<SphereCollider> sphereCollider;
     std::optional<CapsuleCollider> capsuleCollider;
@@ -268,6 +288,7 @@ struct SceneNode {
 /// Copies only overrides of components that the target already owns.
 inline void applyExtraComponents(SceneNode& node, const NodeOverride& layer) {
     if (node.particles && layer.particles) node.particles = layer.particles;
+    if (node.model && layer.model) node.model = layer.model;
     if (node.material && layer.material) node.material = layer.material;
     if (node.light && layer.light) node.light = layer.light;
     if (node.sphere && layer.sphere) node.sphere = layer.sphere;
