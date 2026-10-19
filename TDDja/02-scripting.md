@@ -2,8 +2,8 @@
 
 ## 1. 文書の位置づけ
 
-［補足］オブジェクトのスクリプト（4.2）とホスト API の `throne.Object`（5.2）は、05 で Runner の振る舞いと `throne.SceneNode`・`throne.Runner` に置き換えた。
-`start`・`update` の第 2 引数は `throne.Runner`、制御対象のノードは振る舞いの欄で受け取る。以下の該当箇所は 05 を優先する。
+［補足］オブジェクトのスクリプト（4.2）とホスト API の `throne.Object`（5.2）は、05 で System の振る舞いと `throne.SceneNode`・`throne.System` に置き換えた。
+`start`・`update` の第 2 引数は `throne.System`、制御対象のノードは振る舞いの欄で受け取る。以下の該当箇所は 05 を優先する。
 
 L^ をゲームエンジンのスクリプトとして結線する設計を定める。
 対象は、エディターの Play モードでスクリプトを実行する最初の段階とする。
@@ -56,7 +56,7 @@ Play 中はインスペクターなどからの編集を受け付けない。und
 Play は 2 種類に分ける（Godot と同じ考え方）。
 
 - **ゲームのプレイ**: `main.lh` を実行する。レベルは `main.lh` の指示で再生する。
-- **今開いているレベルのプレイ**: 開いているレベルの Runner と、そのシーンの Runner を実行する。`main.lh` は実行しない。
+- **今開いているレベルのプレイ**: 開いているレベルの System と、そのシーンの System を実行する。`main.lh` は実行しない。
 
 現在の Play ボタンは「今開いているレベルのプレイ」である。ゲームのプレイは近い将来に加える。
 
@@ -73,16 +73,16 @@ await^ throne.playLevel("levels/stage1.level.lton")
 
 ［補足］L^ は、`yield^`・`await^` を最上位に持つスクリプトを yieldable な `p^...` とし、`lhat_run` は何も実行せずにそのコルーチンを返す（lhat `98d6c3e`）。
 `module^` の単位の最上位に `yield^`・`await^` を書くことは検査で誤りになる。
-resume と resume の間に同じ machine で Runner などを走らせるため、コルーチンは `lhat_machine_host_root` に置いて保持する。
+resume と resume の間に同じ machine で System などを走らせるため、コルーチンは `lhat_machine_host_root` に置いて保持する。
 
 ［補足］実装は `PlayScope::Level` と `PlayScope::Game` で両者を分けている。`Game` では最初のフレームで `main.lh` を走らせ、
-コルーチンなら毎フレーム Runner より先に resume する。`await^` の無い `main.lh` は最初のフレームで最後まで走る。
+コルーチンなら毎フレーム System より先に resume する。`await^` の無い `main.lh` は最初のフレームで最後まで走る。
 
 ### 4.1.1. 未決事項
 
 | 番号 | 内容 | 現状 |
 | --- | --- | --- |
-| **［未決］MAIN-01** | `throne.playLevel` の振る舞い（レベルの読み込み・差し替え、その間のスクリプトの検査）、レベルが終わる条件（Runner からの `throne.endLevel()` など）、`main.lh` が終わったときの扱い（ゲーム終了など） | `playLevel` は未実装。既定で生成する `main.lh` はコメントと `import^ throne` だけ |
+| **［未決］MAIN-01** | `throne.playLevel` の振る舞い（レベルの読み込み・差し替え、その間のスクリプトの検査）、レベルが終わる条件（System からの `throne.endLevel()` など）、`main.lh` が終わったときの扱い（ゲーム終了など） | `playLevel` は未実装。既定で生成する `main.lh` はコメントと `import^ throne` だけ |
 
 ### 4.2. オブジェクトのスクリプト
 

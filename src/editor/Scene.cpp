@@ -2,6 +2,7 @@
 #include "editor/PrimitiveGeometry.h"
 #include "core/Ids.h"
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <random>
 #include <set>
@@ -319,6 +320,7 @@ void writeExtraComponents(lton::Writer& out, LhatValue table, const Node& node) 
 
 /// Reads one node table (its `parent` too); an instance's overrides come along.
 SceneNode readNode(const LhatTable& entry) {
+    if (!lhat_is_nil(lton::field(entry,"behaviours")) || !lhat_is_nil(lton::field(entry,"behaviour"))) lton::invalid();
     SceneNode node;
     node.id = nodeId(lton::field(entry, "id"));
     node.name = name(lton::field(entry, "name"));
@@ -327,6 +329,7 @@ SceneNode readNode(const LhatTable& entry) {
     // Components: each optional, each a table of its properties.
     if (const auto components = lton::field(entry, "components"); !lhat_is_nil(components)) {
         const auto& table = lton::table(components);
+        node.behaviour=readBehaviourList(lton::field(table,"behaviour"));
         readExtraComponents(table, node);
         if (const auto value = lton::field(table, "transform"); !lhat_is_nil(value)) {
             const auto& transform = lton::table(value);
@@ -358,13 +361,13 @@ SceneNode readNode(const LhatTable& entry) {
                                         "BoxCollider","SphereCollider","CapsuleCollider","PlaneCollider","RigidBody","PbsMaterial","Light","ParticleSystem"})
                     if(componentName==builtIn) lton::invalid();
                 const auto& item = lton::table(value);
+                if (!lhat_is_nil(lton::field(item,"fields"))) lton::invalid();
                 node.scriptComponents[componentName] = {lton::relativePath(lton::field(item, "script")),
-                                                       readFields(lton::field(item, "fields"))};
+                                                       readFields(lton::field(item, "data"))};
             }
         }
     }
     try { primitiveShape(node); } catch (const std::exception&) { lton::invalid(); }
-    node.behaviours = readBehaviours(lton::field(entry, "behaviours"));
     return node;
 }
 
@@ -393,14 +396,14 @@ LhatValue writeNode(lton::Writer& out, const SceneNode& node) {
         for (const auto& [name, component] : node.scriptComponents) {
             const auto item = out.table();
             out.set(item, "script", out.string(component.script));
-            out.set(item, "fields", writeFields(out, component.fields));
+            out.set(item, "data", writeFields(out, component.data));
             out.set(scripts, name, item);
         }
         out.set(components, "scripts", scripts);
     }
+    if (!node.behaviour.empty()) out.set(components,"behaviour",writeBehaviourList(out,node.behaviour));
     writeExtraComponents(out, components, node);
     out.set(entry, "components", components);
-    if (!node.behaviours.empty()) out.set(entry, "behaviours", writeBehaviours(out, node.behaviours));
     if (!node.prefab.empty()) {
         out.set(entry, "prefab", out.string(node.prefab));
         if (!node.overrides.empty()) out.set(entry, "overrides", writeOverrides(out, node.overrides));
@@ -419,8 +422,8 @@ void readOptional(const LhatTable& table, std::string_view key, std::optional<T>
 }
 
 bool Overrides::empty() const {
-    return nodes.empty() && runners.empty() && added.empty() && removed.empty() && addedRunners.empty() &&
-           removedRunners.empty();
+    return nodes.empty() && systems.empty() && added.empty() && removed.empty() && addedSystems.empty() &&
+           removedSystems.empty();
 }
 
 NodeOverride& Overrides::node(const NodePath& path) {
@@ -430,11 +433,11 @@ NodeOverride& Overrides::node(const NodePath& path) {
     return nodes.back();
 }
 
-FieldOverride& Overrides::fieldsOf(const NodePath& instance, std::uint32_t runner, std::size_t behaviour) {
-    for (auto& entry : runners)
-        if (entry.instance == instance && entry.runner == runner && entry.behaviour == behaviour) return entry;
-    runners.push_back({instance, runner, behaviour, {}});
-    return runners.back();
+FieldOverride& Overrides::fieldsOf(const NodePath& instance, std::uint32_t system, std::size_t behaviour) {
+    for (auto& entry : systems)
+        if (entry.instance == instance && entry.system == system && entry.behaviour == behaviour) return entry;
+    systems.push_back({instance, system, behaviour, {}});
+    return systems.back();
 }
 
 LhatValue writeOverrides(lton::Writer& out, const Overrides& overrides) {
@@ -457,7 +460,7 @@ LhatValue writeOverrides(lton::Writer& out, const Overrides& overrides) {
             out.set(item, "box", box);
         }
         writeExtraComponents(out, item, entry);
-        if (entry.behaviours) out.set(item, "behaviours", writeBehaviours(out, *entry.behaviours));
+        if (entry.behaviour) out.set(item, "behaviour", writeBehaviourList(out, *entry.behaviour));
         if (!entry.scriptFields.empty()) {
             const auto scripts = out.table();
             for (const auto& [name, fields] : entry.scriptFields) out.set(scripts, name, writeFields(out, fields));
@@ -466,16 +469,16 @@ LhatValue writeOverrides(lton::Writer& out, const Overrides& overrides) {
         out.push(nodes, item);
     }
     out.set(root, "nodes", nodes);
-    const auto runners = out.table();
-    for (const auto& entry : overrides.runners) {
+    const auto systems = out.table();
+    for (const auto& entry : overrides.systems) {
         const auto item = out.table();
         if (!entry.instance.empty()) out.set(item, "instance", writePath(out, entry.instance));
-        out.set(item, "runner", lhat_integer(entry.runner));
+        out.set(item, "system", lhat_integer(entry.system));
         out.set(item, "behaviour", lhat_integer(static_cast<LhatInteger>(entry.behaviour)));
-        out.set(item, "fields", writeFields(out, entry.fields));
-        out.push(runners, item);
+        out.set(item, "data", writeFields(out, entry.fields));
+        out.push(systems, item);
     }
-    out.set(root, "runners", runners);
+    out.set(root, "systems", systems);
     if (!overrides.added.empty()) {
         const auto added = out.table();
         for (const auto& entry : overrides.added) {
@@ -491,16 +494,16 @@ LhatValue writeOverrides(lton::Writer& out, const Overrides& overrides) {
         for (const auto& path : overrides.removed) out.push(removed, writePath(out, path));
         out.set(root, "removed", removed);
     }
-    if (!overrides.addedRunners.empty()) out.set(root, "addedRunners", writeRunners(out, overrides.addedRunners));
-    if (!overrides.removedRunners.empty()) {
+    if (!overrides.addedSystems.empty()) out.set(root, "addedSystems", writeSystems(out, overrides.addedSystems));
+    if (!overrides.removedSystems.empty()) {
         const auto removed = out.table();
-        for (const auto& entry : overrides.removedRunners) {
+        for (const auto& entry : overrides.removedSystems) {
             const auto item = out.table();
             if (!entry.instance.empty()) out.set(item, "instance", writePath(out, entry.instance));
-            out.set(item, "runner", lhat_integer(entry.runner));
+            out.set(item, "system", lhat_integer(entry.system));
             out.push(removed, item);
         }
-        out.set(root, "removedRunners", removed);
+        out.set(root, "removedSystems", removed);
     }
     return root;
 }
@@ -514,6 +517,7 @@ Overrides readOverrides(LhatValue value) {
         for (std::size_t i = 0, count = lton::sequence(list); i < count; ++i) {
             const auto& item = lton::table(lton::at(list, i));
             NodeOverride entry;
+            if (!lhat_is_nil(lton::field(item,"behaviours"))) lton::invalid();
             readExtraComponents(item, entry);
             entry.path = readPath(lton::field(item, "path"));
             if (const auto text = lton::field(item, "name"); !lhat_is_nil(text)) entry.name = name(text);
@@ -524,8 +528,8 @@ Overrides readOverrides(LhatValue value) {
             }
             if (const auto box = lton::field(item, "box"); !lhat_is_nil(box))
                 readOptional(lton::table(box), "colour", entry.colour);
-            if (const auto value = lton::field(item, "behaviours"); !lhat_is_nil(value))
-                entry.behaviours = readBehaviours(value);
+            if (const auto value = lton::field(item, "behaviour"); !lhat_is_nil(value))
+                entry.behaviour = readBehaviourList(value);
             if (const auto scripts = lton::field(item, "scripts"); !lhat_is_nil(scripts)) {
                 LhatWalkCursor walk{&lton::table(scripts), 0, 0, LHAT_WALK_PAIR};
                 LhatValue key, fields;
@@ -534,18 +538,18 @@ Overrides readOverrides(LhatValue value) {
             overrides.nodes.push_back(std::move(entry));
         }
     }
-    if (const auto runners = lton::field(root, "runners"); !lhat_is_nil(runners)) {
-        const auto& list = lton::table(runners);
+    if (const auto systems = lton::field(root, "systems"); !lhat_is_nil(systems)) {
+        const auto& list = lton::table(systems);
         for (std::size_t i = 0, count = lton::sequence(list); i < count; ++i) {
             const auto& item = lton::table(lton::at(list, i));
             FieldOverride entry;
             entry.instance = readPath(lton::field(item, "instance"));
-            entry.runner = id(lton::field(item, "runner"));
+            entry.system = id(lton::field(item, "system"));
             const auto behaviour = lton::integer(lton::field(item, "behaviour"));
             if (behaviour < 0) lton::invalid();
             entry.behaviour = static_cast<std::size_t>(behaviour);
-            entry.fields = readFields(lton::field(item, "fields"));
-            overrides.runners.push_back(std::move(entry));
+            entry.fields = readFields(lton::field(item, "data"));
+            overrides.systems.push_back(std::move(entry));
         }
     }
     if (const auto added = lton::field(root, "added"); !lhat_is_nil(added)) {
@@ -565,12 +569,12 @@ Overrides readOverrides(LhatValue value) {
         }
     }
     std::uint32_t unused = 1;
-    overrides.addedRunners = readRunners(lton::field(root, "addedRunners"), unused);
-    if (const auto removed = lton::field(root, "removedRunners"); !lhat_is_nil(removed)) {
+    overrides.addedSystems = readSystems(lton::field(root, "addedSystems"), unused);
+    if (const auto removed = lton::field(root, "removedSystems"); !lhat_is_nil(removed)) {
         const auto& list = lton::table(removed);
         for (std::size_t i = 0, count = lton::sequence(list); i < count; ++i) {
             const auto& item = lton::table(lton::at(list, i));
-            overrides.removedRunners.push_back({readPath(lton::field(item, "instance")), id(lton::field(item, "runner"))});
+            overrides.removedSystems.push_back({readPath(lton::field(item, "instance")), id(lton::field(item, "system"))});
         }
     }
     return overrides;
@@ -582,7 +586,7 @@ NodeId newNodeId() {
     return ids.next();
 }
 
-std::uint32_t newRunnerId() {
+std::uint32_t newSystemId() {
     static std::mt19937 generator(std::random_device{}());
     return std::uniform_int_distribution<std::uint32_t>(0x80000000u, 0xFFFFFFFEu)(generator);
 }
@@ -594,9 +598,9 @@ SceneNode* Prefab::findNode(NodeId id) {
 
 const SceneNode* Prefab::findNode(NodeId id) const { return const_cast<Prefab*>(this)->findNode(id); }
 
-Runner* RunnerSet::findRunner(std::uint32_t id) {
-    const auto it = std::find_if(runners.begin(), runners.end(), [id](const Runner& runner) { return runner.id == id; });
-    return it == runners.end() ? nullptr : &*it;
+System* SystemSet::findSystem(std::uint32_t id) {
+    const auto it = std::find_if(systems.begin(), systems.end(), [id](const System& system) { return system.id == id; });
+    return it == systems.end() ? nullptr : &*it;
 }
 
 SceneNode& Prefab::addNode(const std::string& name, NodeId parent) {
@@ -611,10 +615,10 @@ SceneNode& Prefab::addNode(const std::string& name, NodeId parent) {
     return *findNode(node.id);
 }
 
-Runner& RunnerSet::addRunner(const std::string& name) {
-    if (nextRunnerId == std::numeric_limits<std::uint32_t>::max()) throw std::runtime_error("Runner ID limit reached");
-    runners.push_back({nextRunnerId++, name, {}});
-    return runners.back();
+System& SystemSet::addSystem(const std::string& name) {
+    if (nextSystemId == std::numeric_limits<std::uint32_t>::max()) throw std::runtime_error("System ID limit reached");
+    systems.push_back({nextSystemId++, name, {}});
+    return systems.back();
 }
 
 void Prefab::removeNode(NodeId id) {
@@ -623,9 +627,9 @@ void Prefab::removeNode(NodeId id) {
                 nodes.end());
 }
 
-void RunnerSet::removeRunner(std::uint32_t id) {
-    runners.erase(std::remove_if(runners.begin(), runners.end(), [id](const Runner& runner) { return runner.id == id; }),
-                  runners.end());
+void SystemSet::removeSystem(std::uint32_t id) {
+    systems.erase(std::remove_if(systems.begin(), systems.end(), [id](const System& system) { return system.id == id; }),
+                  systems.end());
 }
 
 bool Prefab::isWithin(NodeId id, NodeId ancestor) const { return within(nodes, id, ancestor); }
@@ -659,14 +663,14 @@ void Prefab::read(const LhatTable& root) {
         if ((node.parent && !seen.count(node.parent)) || !seen.insert(node.id).second) lton::invalid();
         nodes.push_back(std::move(node));
     }
-    runners = readRunners(lton::field(root, "runners"), nextRunnerId);
+    systems = readSystems(lton::field(root, "systems"), nextSystemId);
 }
 
 void Prefab::write(lton::Writer& out, LhatValue root) const {
     const auto list = out.table();
     for (const auto& node : nodes) out.push(list, writeNode(out, node));
     out.set(root, "nodes", list);
-    out.set(root, "runners", writeRunners(out, runners));
+    out.set(root, "systems", writeSystems(out, systems));
 }
 
 Prefab Prefab::load(const std::filesystem::path& path) {
@@ -720,64 +724,91 @@ Scene Scene::example() {
     return scene;
 }
 
-LhatValue writeBehaviours(lton::Writer& out, const std::vector<Behaviour>& behaviours) {
+LhatValue writeBehaviourList(lton::Writer& out, const std::vector<Behaviour>& behaviour) {
     const auto list = out.table();
-    for (const auto& behaviour : behaviours) {
+    for (const auto& behaviour : behaviour) {
         const auto item = out.table();
         out.set(item, "script", out.string(behaviour.script));
-        out.set(item, "runner", out.string(behaviour.runner));
-        if (behaviour.system) out.set(item, "system", lhat_bool(true));
-        if (!behaviour.fields.empty()) out.set(item, "fields", writeFields(out, behaviour.fields));
+        out.set(item,"id",lhat_integer(static_cast<LhatInteger>(behaviour.id)));
+        if(!behaviour.enabled) out.set(item,"enabled",lhat_bool(false));
+        const auto priority=[&](const char* key,const std::optional<double>& value) {
+            if(value) {
+                if(!std::isfinite(*value)) lton::invalid();
+                out.set(item,key,lhat_real(*value));
+            }
+        };
+        priority("priority",behaviour.priority);
+        for(int phase=0;phase<3;++phase)
+            priority((std::string(behaviourMethods[phase])+"Priority").c_str(),behaviour.phasePriorities[phase]);
+        if (behaviour.systemScript) out.set(item, "systemScript", lhat_bool(true));
+        out.set(item, "data", writeFields(out, behaviour.data));
         out.push(list, item);
     }
     return list;
 }
 
-std::vector<Behaviour> readBehaviours(LhatValue value) {
+std::vector<Behaviour> readBehaviourList(LhatValue value) {
     std::vector<Behaviour> result;
     if (lhat_is_nil(value)) return result;
     const auto& list = lton::table(value);
+    std::set<NodeId> identities;
     for (std::size_t i = 0, n = lton::sequence(list); i < n; ++i) {
         const auto& item = lton::table(lton::at(list, i));
         Behaviour behaviour;
+        if (!lhat_is_nil(lton::field(item,"fields"))) lton::invalid();
         behaviour.script = lton::relativePath(lton::field(item, "script"));
-        behaviour.fields = readFields(lton::field(item, "fields"));
-        if (const auto system = lton::field(item, "system"); !lhat_is_nil(system)) {
-            if (!lhat_is_bool(system)) lton::invalid();
-            behaviour.system = lhat_as_bool(system);
+        if(const auto value=lton::field(item,"id");!lhat_is_nil(value)) behaviour.id=nodeId(value);
+        if(!identities.insert(behaviour.id).second) lton::invalid();
+        if(const auto value=lton::field(item,"enabled");!lhat_is_nil(value)) {
+            if(!lhat_is_bool(value)) lton::invalid();
+            behaviour.enabled=lhat_as_bool(value);
         }
-        if (const auto stage = lton::field(item, "runner"); !lhat_is_nil(stage)) behaviour.runner = name(stage);
+        const auto priority=[&](const char* key,std::optional<double>& into) {
+            if(const auto value=lton::field(item,key);!lhat_is_nil(value)) {
+                into=lton::number(value);
+                if(!std::isfinite(*into)) lton::invalid();
+            }
+        };
+        priority("priority",behaviour.priority);
+        for(int phase=0;phase<3;++phase)
+            priority((std::string(behaviourMethods[phase])+"Priority").c_str(),behaviour.phasePriorities[phase]);
+        behaviour.data = readFields(lton::field(item, "data"));
+        if (const auto system = lton::field(item, "systemScript"); !lhat_is_nil(system)) {
+            if (!lhat_is_bool(system)) lton::invalid();
+            behaviour.systemScript = lhat_as_bool(system);
+        }
         result.push_back(std::move(behaviour));
     }
     return result;
 }
 
-LhatValue writeRunners(lton::Writer& out, const std::vector<Runner>& runners) {
+LhatValue writeSystems(lton::Writer& out, const std::vector<System>& systems) {
     const auto list = out.table();
-    for (const auto& runner : runners) {
+    for (const auto& system : systems) {
         const auto entry = out.table();
-        out.set(entry, "id", lhat_integer(runner.id));
-        out.set(entry, "name", out.string(runner.name));
-        out.set(entry, "behaviours", writeBehaviours(out, runner.behaviours));
+        out.set(entry, "id", lhat_integer(system.id));
+        out.set(entry, "name", out.string(system.name));
+        out.set(entry, "behaviour", writeBehaviourList(out, system.behaviour));
         out.push(list, entry);
     }
     return list;
 }
 
-std::vector<Runner> readRunners(LhatValue value, std::uint32_t& nextId) {
-    std::vector<Runner> result;
+std::vector<System> readSystems(LhatValue value, std::uint32_t& nextId) {
+    std::vector<System> result;
     if (lhat_is_nil(value)) return result;
     const auto& list = lton::table(value);
     std::set<std::uint32_t> seen;
     for (std::size_t i = 0, count = lton::sequence(list); i < count; ++i) {
         const auto& entry = lton::table(lton::at(list, i));
-        Runner runner;
-        runner.id = id(lton::field(entry, "id"));
-        if (!seen.insert(runner.id).second) lton::invalid();
-        runner.name = name(lton::field(entry, "name"));
-        runner.behaviours = readBehaviours(lton::field(entry, "behaviours"));
-        nextId = std::max(nextId, runner.id + 1);
-        result.push_back(std::move(runner));
+        System system;
+        if (!lhat_is_nil(lton::field(entry,"behaviours"))) lton::invalid();
+        system.id = id(lton::field(entry, "id"));
+        if (!seen.insert(system.id).second) lton::invalid();
+        system.name = name(lton::field(entry, "name"));
+        system.behaviour = readBehaviourList(lton::field(entry, "behaviour"));
+        nextId = std::max(nextId, system.id + 1);
+        result.push_back(std::move(system));
     }
     return result;
 }

@@ -31,14 +31,14 @@ struct Session {
     std::vector<throne::ExpandedNode>& nodes() { return expanded.instances[0].expansion.nodes; }
 };
 
-/// The example scene placed once, and one level runner using @p script on its first node.
+/// The example scene placed once, and one level system using @p script on its first node.
 Session world(const fs::path& root, const char* script) {
     Session result;
     result.world.scenes["scenes/main.scene.lton"] = throne::Scene::example();
     const auto scene = result.world.level.addScene("scenes/main.scene.lton").id;
-    auto& runner = result.world.level.addRunner("Spinner");
+    auto& system = result.world.level.addSystem("Spinner");
     const auto cube = result.world.scenes["scenes/main.scene.lton"].nodes[0].id;
-    runner.behaviours.push_back({script, {{"target", throne::NodeRef{scene, cube, {}}}}});
+    system.behaviour.push_back({script, {{"target", throne::NodeRef{scene, cube, {}}}}});
     throne::Library library(root);
     result.expanded = throne::expand(result.world, library);
     return result;
@@ -68,10 +68,10 @@ public^let^Behaviour = def^{
         @export degreesPerSecond = 90,
         turns = 0,
     },
-    start = p^self^, runner:throne.Runner {
-        throne.log("start " .. runner.name())
+    start = p^self^, system:throne.System {
+        throne.log("start " .. system.name())
     },
-    update = p^self^, runner:throne.Runner, dt:number^ {
+    update = p^self^, system:throne.System, dt:number^ {
         if^ self^.target != nil^ {
             let^ t = self^.target.transform()
             if^ t != nil^ {
@@ -112,7 +112,7 @@ int main(int argc, char** argv) {
 
     // A field value overrides the default; a field the script lacks is reported and skipped.
     auto played = world(root, "scripts/spin.lh");
-    auto& fields = played.world.level.runners[0].behaviours[0].fields;
+    auto& fields = played.world.level.systems[0].behaviour[0].data;
     fields["degreesPerSecond"] = 45.0;
     fields["missing"] = 1.0;
     std::vector<std::string> logged;
@@ -136,7 +136,7 @@ int main(int argc, char** argv) {
         logged[1] != "start Spinner")
         return fail("Expected a skipped-field warning and one start line");
 
-    // Playing the level alone runs the runners but not main.lh.
+    // Playing the level alone runs the systems but not main.lh.
     auto levelOnly = world(root, "scripts/spin.lh");
     try {
         throne::ScriptRuntime runtime(levelOnly.world, levelOnly.expanded, root, [](const std::string&) {},
@@ -146,7 +146,7 @@ int main(int argc, char** argv) {
         return fail(std::string("Level play failed:\n") + e.what());
     }
     if (levelOnly.nodes()[1].node.transform->position.x != 2 || levelOnly.nodes()[0].node.transform->rotation.y < 89)
-        return fail("Level play ran main.lh or skipped the runners");
+        return fail("Level play ran main.lh or skipped the systems");
 
     // The console runs lines on a session's machine: names stay, an input may span
     // lines, and a refused or failed one is reported without ending the session.
@@ -173,10 +173,10 @@ int main(int argc, char** argv) {
                         after.text);
     }
 
-    // A prefab's runner runs once per instance, each on the node inside its own instance.
+    // A prefab's system runs once per instance, each on the node inside its own instance.
     throne::Prefab spinner;
     const auto wheel = spinner.addNode("Wheel").id;
-    spinner.addRunner("Spin").behaviours.push_back({"scripts/spin.lh", {{"target", throne::NodeRef{0, wheel, {}}}}});
+    spinner.addSystem("Spin").behaviour.push_back({"scripts/spin.lh", {{"target", throne::NodeRef{0, wheel, {}}}}});
     spinner.save(root / "prefabs/spinner.prefab.lton");
     Session prefabs;
     auto& placed = prefabs.world.scenes["scenes/two.scene.lton"];
@@ -191,13 +191,13 @@ int main(int argc, char** argv) {
                                       throne::PlayScope::Level);
         for (int i = 0; i < 10; ++i) runtime.update(0.1f);
     } catch (const throne::ScriptError& e) {
-        return fail(std::string("Prefab runners failed:\n") + e.what());
+        return fail(std::string("Prefab systems failed:\n") + e.what());
     }
     const auto& expansion = prefabs.expanded.instances[0].expansion;
     const auto& wheelA = expansion.nodes[expansion.find({a, wheel})].node;
     const auto& wheelB = expansion.nodes[expansion.find({b, wheel})].node;
     if (std::abs(wheelA.transform->rotation.y - 90) > 0.01f || std::abs(wheelB.transform->rotation.y - 45) > 0.01f)
-        return fail("Prefab runners did not turn their own instance's wheel at their own speed");
+        return fail("Prefab systems did not turn their own instance's wheel at their own speed");
 
     const auto described = throne::ScriptRuntime::fields(root, "scripts/spin.lh");
     if (described.size() != 2 || described[0].name != "degreesPerSecond" ||
@@ -213,13 +213,13 @@ int main(int argc, char** argv) {
         {"import^ throne\nlet^ x = 1\n", "must declare module^"},
         {"module^ test.a\nlet^ x = 1\n", "must publish Behaviour"},
         {"module^ test.b\nimport^ throne\npublic^let^Behaviour = def^{\n"
-         "    update = p^self^, runner:throne.Runner { },\n}\n",
+         "    update = p^self^, system:throne.System { },\n}\n",
          "Behaviour.update must be"},
         {"module^ test.c\nimport^ throne\npublic^let^Behaviour = def^{\n"
-         "    update = p^self^, runner:throne.Runner, dt:number^ { repeat^while^ true^ { } },\n}\n",
+         "    update = p^self^, system:throne.System, dt:number^ { repeat^while^ true^ { } },\n}\n",
          "per-frame budget"},
         {"module^ test.d\nimport^ throne\npublic^let^Behaviour = def^{\n"
-         "    start = p^self^, runner:throne.Runner { panic^ \"stop here\" },\n}\n",
+         "    start = p^self^, system:throne.System { panic^ \"stop here\" },\n}\n",
          "stop here"},
         {"module^ test.e\npublic^let^Behaviour = def^{ oops }\n", "broken.lh"},
     };
@@ -240,7 +240,7 @@ int main(int argc, char** argv) {
         return fail(std::string("Generated main.lh was rejected:\n") + e.what());
     }
 
-    // The bundled sample loads and its scene runner spins the scene's own cube.
+    // Node Behaviour components retain independent script data, including two on one node.
     if (argc > 1) {
         const fs::path sample = argv[1];
         Session basic;
@@ -249,25 +249,37 @@ int main(int argc, char** argv) {
             basic.world.scenes[instance.scene] = throne::Scene::load(sample / instance.scene);
         throne::Library library(sample);
         basic.expanded = throne::expand(basic.world, library);
+        std::unique_ptr<throne::ScriptRuntime> runtime;
         try {
-            throne::ScriptRuntime runtime(basic.world, basic.expanded, sample, [](const std::string&) {},
-                                          throne::PlayScope::Level);
-            runtime.update(0.5f);
+            runtime = std::make_unique<throne::ScriptRuntime>(basic.world, basic.expanded, sample, [](const std::string&) {},
+                                                            throne::PlayScope::Level);
+            runtime->update(0.5f);
         } catch (const throne::ScriptError& e) {
             return fail(std::string("The sample was rejected:\n") + e.what());
         }
-        if (std::fabs(basic.nodes()[0].node.transform->rotation.y - 45.0f) > 0.01f)
-            return fail("The sample's runner did not spin its cube");
+        if (std::fabs(basic.nodes()[0].node.transform->rotation.y - 22.5f) > 0.01f ||
+            std::fabs(basic.nodes()[0].node.transform->rotation.x) > 0.01f ||
+            std::fabs(basic.nodes()[1].node.transform->rotation.y - 22.5f) > 0.01f)
+            return fail("The sample's Behaviour components lost their per-script data or failed to rotate");
         // The rotor post prefab spins its hub at 90 degrees a second, its variant at 360.
         std::vector<float> hubs;
         for (const auto& node : basic.nodes())
             if (node.node.name == "Hub") hubs.push_back(node.node.transform->rotation.y);
         if (hubs.size() != 2 || std::fabs(hubs[0] - 45.0f) > 0.01f || std::fabs(hubs[1] - 180.0f) > 0.01f)
             return fail("The sample's prefab and variant did not spin their hubs at their own speeds");
+        const auto& position = basic.nodes()[0].node.transform->position;
+        if (std::fabs(position.y - 0.5f) > 0.001f) return fail("Pop did not rest at its starting height between hops");
+        runtime->update(1.2f);
+        if (std::fabs(position.y - 1.0f) > 0.001f) return fail("Pop did not reach its configured height");
+        runtime->update(1.5f);
+        if (std::fabs(position.y - 1.0f) > 0.001f) return fail("Pop did not repeat at its configured interval");
+        runtime->update(0.2f);
+        if (std::fabs(position.y - 0.5f) > 0.001f || position.x != 0 || position.z != 0)
+            return fail("Pop failed to return to its starting position");
     }
 
     const auto api = throne::ScriptRuntime::hostApi();
-    for (const char* name : {"\"throne\"", "Vec3", "SceneNode", "Transform", "BoxPrimitive", "Runner", "setPosition", "math"})
+    for (const char* name : {"\"throne\"", "Vec3", "SceneNode", "Transform", "BoxPrimitive", "System", "setPosition", "math"})
         if (api.find(name) == std::string::npos) return fail(std::string("Host API JSON lacks ") + name);
     fs::remove_all(root);
     std::printf("Scripts ran 10 frames; %zu failure cases were reported\n", std::size(failures));

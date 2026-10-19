@@ -1,10 +1,20 @@
 #pragma once
 
 #include <functional>
+#include <array>
 #include <string>
 #include <vector>
 
 namespace throne {
+/// Built-in script phases and the methods selected by their cached queries.
+inline constexpr std::array<const char*,3> behaviourSystems={
+    "UpdateBehaviourSystem","LateUpdateBehaviourSystem","EndOfFrameBehaviourSystem"};
+inline constexpr std::array<const char*,3> behaviourMethods={"update","lateupdate","onendofframe"};
+/// Returns the built-in behaviour phase index, or -1 for another system.
+inline int behaviourPhase(const std::string& name) {
+    for(int i=0;i<3;++i) if(name==behaviourSystems[i]) return i;
+    return -1;
+}
 /// One serial stage, or a group whose first member runs on the calling thread.
 struct ExecutionStage {
     std::string name;

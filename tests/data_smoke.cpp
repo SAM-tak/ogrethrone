@@ -53,16 +53,16 @@ int main() {
             reordered.reparent(parent, 0, grandchildId))
             return fail("Reordering siblings broke the order or accepted a non-sibling");
     }
-    auto& runner = original.addRunner("Spinner");
-    runner.behaviours.push_back({"scripts/spin.lh", {{"target", throne::NodeRef{0, parent, {}}},
+    auto& system = original.addSystem("Spinner");
+    system.behaviour.push_back({"scripts/spin.lh", {{"target", throne::NodeRef{0, parent, {}}},
                                                      {"degreesPerSecond", 45.0},
                                                      {"label", std::string("x")},
                                                      {"enabled", true}}});
     original.save(path);
 
     const auto loaded = throne::Scene::load(path);
-    if (loaded.nodes.size() != 3 || loaded.runners.size() != 1)
-        return fail("Node or runner count changed");
+    if (loaded.nodes.size() != 3 || loaded.systems.size() != 1)
+        return fail("Node or system count changed");
     for (std::size_t i = 0; i < loaded.nodes.size(); ++i) {
         const auto& a = original.nodes[i];
         const auto& b = loaded.nodes[i];
@@ -82,18 +82,18 @@ int main() {
         const auto* read = reread.findNode(empty.id);
         if (!read || read->transform || read->box) return fail("A node without components did not stay without them");
     }
-    if (loaded.runners[0].name != "Spinner" || loaded.runners[0].behaviours.size() != 1 ||
-        loaded.runners[0].behaviours[0].script != "scripts/spin.lh" ||
-        loaded.runners[0].behaviours[0].fields != original.runners[0].behaviours[0].fields)
-        return fail("Runner changed after save/load");
+    if (loaded.systems[0].name != "Spinner" || loaded.systems[0].behaviour.size() != 1 ||
+        loaded.systems[0].behaviour[0].script != "scripts/spin.lh" ||
+        loaded.systems[0].behaviour[0].data != original.systems[0].behaviour[0].data)
+        return fail("System changed after save/load");
     original.removeNode(child);
     if (original.nodes.size() != 1) return fail("Removing a node left its descendants");
 
-    if (!rejects(path, R"(format = "ogrethrone-scene", version = 1, runners = {}, nodes = {
+    if (!rejects(path, R"(format = "ogrethrone-scene", version = 1, systems = {}, nodes = {
             { id = 1, name = "A", parent = 2, position = {0, 0, 0}, rotation = {0, 0, 0}, scale = {1, 1, 1},
               colour = {1, 1, 1} } })"))
         return fail("A node whose parent comes later was accepted");
-    if (!rejects(path, R"(format = "ogrethrone-prefab", version = 1, runners = {}, nodes = {})"))
+    if (!rejects(path, R"(format = "ogrethrone-prefab", version = 1, systems = {}, nodes = {})"))
         return fail("A prefab was accepted as a scene");
     if (!rejects(path, R"(format = "ogrethrone-scene", version = 1, nodes = {}, x = std.io.write("x"))"))
         return fail("A scene that calls a procedure was accepted");
@@ -127,7 +127,7 @@ int main() {
     throne::Prefab crate;
     const auto body = crate.addNode("Body").id;
     const auto lid = crate.addNode("Lid", body).id;
-    crate.addRunner("Spinner").behaviours.push_back({"scripts/spin.lh", {{"target", throne::NodeRef{0, lid, {}}}}});
+    crate.addSystem("Spinner").behaviour.push_back({"scripts/spin.lh", {{"target", throne::NodeRef{0, lid, {}}}}});
     crate.save(directory / "prefabs/crate.prefab.lton");
     throne::Prefab stack;
     const auto stackRoot = stack.addNode("Stack").id;
@@ -158,10 +158,10 @@ int main() {
     if (expanded.nodes[lidAt].node.box->colour[0] != 1 || expanded.nodes[lidAt].node.transform->position.y != 5 ||
         expanded.nodes[expanded.nodes[lidAt].parent].path != throne::NodePath{pile, bottom})
         return fail("Inner and outer overrides were not both applied to the nested lid");
-    if (expanded.runners.size() != 2 || expanded.runners[0].instance != throne::NodePath{pile, bottom} ||
-        std::get<double>(expanded.runners[0].runner.behaviours[0].fields.at("degreesPerSecond")) != 10 ||
-        expanded.runners[1].runner.behaviours[0].fields.count("degreesPerSecond"))
-        return fail("Prefab runners were not copied per instance with their field overrides");
+    if (expanded.systems.size() != 2 || expanded.systems[0].instance != throne::NodePath{pile, bottom} ||
+        std::get<double>(expanded.systems[0].system.behaviour[0].data.at("degreesPerSecond")) != 10 ||
+        expanded.systems[1].system.behaviour[0].data.count("degreesPerSecond"))
+        return fail("Prefab systems were not copied per instance with their field overrides");
 
     // Moving a subtree into a prefab of its own (as prefab creation does) keeps
     // the overrides that pointed into it working, without rewriting them.
@@ -233,16 +233,16 @@ int main() {
         alone.nodes[0].node.name != "Body" || alone.find({body, lid}) != 1 || alone.nodes[1].node.name != "Green Lid")
         return fail("A variant did not expand to its base with its overrides");
 
-    // An instance can remove the runners it brings and add its own.
-    const auto extra = throne::newRunnerId();
-    yard.nodes[0].overrides.addedRunners.push_back({extra, "Extra", {{"scripts/spin.lh", {}}}});
-    yard.nodes[0].overrides.removedRunners.push_back({{}, 1});
+    // An instance can remove the systems it brings and add its own.
+    const auto extra = throne::newSystemId();
+    yard.nodes[0].overrides.addedSystems.push_back({extra, "Extra", {{"scripts/spin.lh", {}}}});
+    yard.nodes[0].overrides.removedSystems.push_back({{}, 1});
     yard.save(directory / "scenes/yard.scene.lton");
     const auto rerun = throne::expand(throne::Scene::load(directory / "scenes/yard.scene.lton"), library);
-    if (rerun.runners.size() != 1 || rerun.runners[0].runner.id != extra || !rerun.runners[0].added ||
-        rerun.runners[0].instance != throne::NodePath{yard.nodes[0].id} ||
-        rerun.removedRunners.at({{yard.nodes[0].id}, 1}) != "Spinner" || extra < 0x80000000u)
-        return fail("An instance did not remove and add runners");
+    if (rerun.systems.size() != 1 || rerun.systems[0].system.id != extra || !rerun.systems[0].added ||
+        rerun.systems[0].instance != throne::NodePath{yard.nodes[0].id} ||
+        rerun.removedSystems.at({{yard.nodes[0].id}, 1}) != "Spinner" || extra < 0x80000000u)
+        return fail("An instance did not remove and add systems");
 
     throne::Prefab loop, twoRoots, rootInstance;
     const auto loopRoot = loop.addNode("Root").id;

@@ -58,7 +58,7 @@ void Level::save(const std::filesystem::path& path) const {
         out.push(list, item);
     }
     out.set(root, "scenes", list);
-    out.set(root, "runners", writeRunners(out, runners));
+    out.set(root, "systems", writeSystems(out, systems));
     validateStages(stages);
     const auto schedule = out.table();
     for (const auto& stage : stages) {
@@ -138,7 +138,7 @@ Level Level::load(const std::filesystem::path& path) {
             if (!(component >= 0.001f)) lton::invalid();
         result.nextSceneId = std::max(result.nextSceneId, result.scenes.back().id + 1);
     }
-    result.runners = readRunners(lton::field(document.root(), "runners"), result.nextRunnerId);
+    result.systems = readSystems(lton::field(document.root(), "systems"), result.nextSystemId);
     if (const auto schedule = lton::field(document.root(), "stages"); !lhat_is_nil(schedule)) {
         result.stages.clear();
         const auto& list = lton::table(schedule);

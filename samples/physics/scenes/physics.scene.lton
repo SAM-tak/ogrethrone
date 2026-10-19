@@ -1,6 +1,6 @@
 format = "ogrethrone-scene",
 version = 2,
-runners = {},
+systems = {},
 nodes = {
     {
         id = 200000000000000001, name = "Ground", parent = 0,
@@ -49,7 +49,8 @@ nodes = {
         id = 200000000000000006, name = "Box Spawn Point", parent = 0,
         components = {
             transform = {position = {-2, 8, 0}, rotation = {0, 0, 0}, scale = {1, 1, 1}},
+            behaviour = {{script = "scripts/spawn-boxes.lh", data = {interval = 0.1}}},
         },
-        behaviours = {{script = "scripts/spawn-boxes.lh", runner = "Update", fields = {interval = 0.1}}},
+
     },
 },

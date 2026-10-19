@@ -4,15 +4,24 @@ nodes = {
         components = {
             box = {colour = {0.32, 0.62, 0.82}},
             transform = {position = {0.0, 0.5, 0.0}, rotation = {0.0, 0.0, 0.0}, scale = {1.0, 1.0, 1.0}},
+            behaviour = {
+                {
+                    script = "scripts/spin.lh",
+                    data = { degreesPerSecond = 45 }
+                },
+                {
+                    script = "scripts/pop.lh",
+                    data = { interval = 1.5, height = 0.5, duration = 0.4 }
+                }
+            },
         },
         id = 105248190270967808,
-        behaviours = {{script = "scripts/spin.lh", runner = "Update"}},
         name = "SpinningCube",
         parent = 0,
     },
     {
         components = {
-            scripts = {Spin = {script = "scripts/spin-component.lh", fields = {degreesPerSecond = 45}}},
+            behaviour = {{script = "scripts/spin.lh", data = {degreesPerSecond = 45}}},
             box = {colour = {0.86, 0.53, 0.25}},
             transform = {position = {2.0, 0.75, -1.0}, rotation = {0.0, 0.0, 0.0}, scale = {1.0, 1.5, 1.0}},
         },
@@ -33,7 +42,7 @@ nodes = {
                     path = {105248190270967813},
                 },
             },
-            runners = {},
+            systems = {},
         },
         parent = 0,
         prefab = "prefabs/rotor-post.prefab.lton",
@@ -48,5 +57,5 @@ nodes = {
         prefab = "prefabs/fast-rotor-post.prefab.lton",
     },
 },
-runners = {},
+systems = {},
 version = 2,

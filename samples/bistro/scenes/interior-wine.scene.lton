@@ -16,4 +16,4 @@ nodes = {
     {id = 13, name = "Lantern 2", parent = 0, components = {transform = {position = {15.5, 4.198, -1.384}, rotation = {0, 0, 0}, scale = {1, 1, 1}}, light = {type = "Point", direction = {0, -1, 0}, colour = {1, 0.93, 0.82}, power = 2.51327, radius = 5, threshold = 0.01}}},
     {id = 14, name = "Lantern 3", parent = 0, components = {transform = {position = {13.15, 4.198, -2.679}, rotation = {0, 0, 0}, scale = {1, 1, 1}}, light = {type = "Point", direction = {0, -1, 0}, colour = {1, 0.93, 0.82}, power = 2.51327, radius = 5, threshold = 0.01}}},
     {id = 15, name = "Lantern 4", parent = 0, components = {transform = {position = {10.8, 4.198, -3.973}, rotation = {0, 0, 0}, scale = {1, 1, 1}}, light = {type = "Point", direction = {0, -1, 0}, colour = {1, 0.93, 0.82}, power = 2.51327, radius = 5, threshold = 0.01}}}},
-runners = {},
+systems = {},

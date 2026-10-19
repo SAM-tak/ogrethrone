@@ -45,7 +45,7 @@ void Expander::add(const Overrides& overrides, const NodePath& prefix) {
         }
         out.nodes[place(entry.node, join(prefix, {entry.node.id}), parent)].added = true;
     }
-    for (const auto& runner : overrides.addedRunners) out.runners.push_back({prefix, runner, true});
+    for (const auto& system : overrides.addedSystems) out.systems.push_back({prefix, system, true});
 }
 
 std::size_t Expander::place(const SceneNode& node, const NodePath& path, std::size_t parent) {
@@ -107,7 +107,7 @@ std::size_t Expander::prefab(const std::string& file, const SceneNode* placed, c
     for (const auto& node : content->nodes)
         if (node.id != root.id) index[node.id] = place(node, join(prefix, {node.id}), index.at(node.parent));
     stack.pop_back();
-    for (const auto& runner : content->runners) out.runners.push_back({prefix, runner});
+    for (const auto& system : content->systems) out.systems.push_back({prefix, system});
     return at;
 }
 
@@ -126,10 +126,10 @@ void apply(Expansion& out, const NodePath& prefix, const Overrides& overrides, s
         auto& node = out.nodes[at].node;
         applyExtraComponents(node, entry);
         if (entry.name) node.name = *entry.name;
-        if (entry.behaviours) node.behaviours = *entry.behaviours;
+        if (entry.behaviour) node.behaviour = *entry.behaviour;
         for (const auto& [name, fields] : entry.scriptFields)
             if (const auto component = node.scriptComponents.find(name); component != node.scriptComponents.end())
-                for (const auto& [field, value] : fields) component->second.fields[field] = value;
+                for (const auto& [field, value] : fields) component->second.data[field] = value;
         if (auto& transform = node.transform) {
             if (entry.position) transform->position = *entry.position;
             if (entry.rotation) transform->rotation = *entry.rotation;
@@ -137,7 +137,7 @@ void apply(Expansion& out, const NodePath& prefix, const Overrides& overrides, s
         }
         if (node.box && entry.colour) node.box->colour = *entry.colour;
     }
-    for (const auto& entry : overrides.removedRunners) {
+    for (const auto& entry : overrides.removedSystems) {
         const auto where = join(prefix, entry.instance);
         auto instance = where;
         if (!instance.empty()) {
@@ -145,17 +145,17 @@ void apply(Expansion& out, const NodePath& prefix, const Overrides& overrides, s
             if (at == Expansion::npos) continue;
             instance = out.nodes[at].path;
         }
-        auto& runners = out.runners;
-        for (auto it = runners.begin(); it != runners.end();) {
-            if (it->instance != instance || it->runner.id != entry.runner) {
+        auto& systems = out.systems;
+        for (auto it = systems.begin(); it != systems.end();) {
+            if (it->instance != instance || it->system.id != entry.system) {
                 ++it;
                 continue;
             }
-            out.removedRunners[{where, entry.runner}] = it->runner.name;
-            it = runners.erase(it);
+            out.removedSystems[{where, entry.system}] = it->system.name;
+            it = systems.erase(it);
         }
     }
-    for (const auto& entry : overrides.runners) {
+    for (const auto& entry : overrides.systems) {
         // The instance is found like a node, so it may have moved deeper since.
         auto instance = join(prefix, entry.instance);
         if (!instance.empty()) {
@@ -163,10 +163,10 @@ void apply(Expansion& out, const NodePath& prefix, const Overrides& overrides, s
             if (at == Expansion::npos) continue;
             instance = out.nodes[at].path;
         }
-        for (auto& expanded : out.runners) {
-            if (expanded.instance != instance || expanded.runner.id != entry.runner) continue;
-            if (entry.behaviour >= expanded.runner.behaviours.size()) continue;
-            for (const auto& [name, value] : entry.fields) expanded.runner.behaviours[entry.behaviour].fields[name] = value;
+        for (auto& expanded : out.systems) {
+            if (expanded.instance != instance || expanded.system.id != entry.system) continue;
+            if (entry.behaviour >= expanded.system.behaviour.size()) continue;
+            for (const auto& [name, value] : entry.fields) expanded.system.behaviour[entry.behaviour].data[name] = value;
         }
     }
 }
@@ -239,22 +239,22 @@ Expansion expand(const Prefab& content, Library& library, const std::string& sel
         std::map<NodeId, std::size_t> index;
         for (const auto& node : content.nodes)
             index[node.id] = expander.place(node, {node.id}, node.parent ? index.at(node.parent) : Expansion::npos);
-        for (const auto& runner : content.runners) out.runners.push_back({{}, runner});
+        for (const auto& system : content.systems) out.systems.push_back({{}, system});
     }
     std::set<std::size_t> gone;
     for (const auto& entry : expander.pending) apply(out, entry.prefix, entry.overrides, gone);
     if (gone.empty()) return out;
-    // Removed nodes go with everything below them, and the runners of instances among them.
+    // Removed nodes go with everything below them, and the systems of instances among them.
     std::vector<std::size_t> kept(out.nodes.size(), Expansion::npos);
     std::size_t count = 0;
     for (std::size_t i = 0; i < out.nodes.size(); ++i) {
         const auto parent = out.nodes[i].parent;
         if (!gone.count(i) && (parent == Expansion::npos || kept[parent] != Expansion::npos)) kept[i] = count++;
     }
-    std::vector<ExpandedRunner> runners;
-    for (auto& runner : out.runners) {
-        const auto at = runner.instance.empty() ? Expansion::npos : out.find(runner.instance);
-        if (runner.instance.empty() || (at != Expansion::npos && kept[at] != Expansion::npos)) runners.push_back(std::move(runner));
+    std::vector<ExpandedSystem> systems;
+    for (auto& system : out.systems) {
+        const auto at = system.instance.empty() ? Expansion::npos : out.find(system.instance);
+        if (system.instance.empty() || (at != Expansion::npos && kept[at] != Expansion::npos)) systems.push_back(std::move(system));
     }
     std::vector<ExpandedNode> nodes;
     for (std::size_t i = 0; i < out.nodes.size(); ++i) {
@@ -264,7 +264,7 @@ Expansion expand(const Prefab& content, Library& library, const std::string& sel
         nodes.push_back(std::move(node));
     }
     out.nodes = std::move(nodes);
-    out.runners = std::move(runners);
+    out.systems = std::move(systems);
     return out;
 }
 

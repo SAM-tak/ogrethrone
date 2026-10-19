@@ -6,6 +6,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <thread>
+#include <limits>
 
 namespace {
 /// Fails with a useful diagnostic even in Release builds.
@@ -45,8 +46,8 @@ public^let^ Component = def^{ self^{ speed = 3, ticks = 0 } }
 import^ throne
 let^ spin = require^ "component.lh"
 public^let^ System = def^{
-    update = p^self^, runner:throne.Runner, dt:number^ {
-        throne.log("system " .. runner.name())
+    update = p^self^, system:throne.System, dt:number^ {
+        throne.log("system " .. system.name())
         for^ _^, node in^ throne.query("Transform", "Spin") {
             let^ c = node.component("Spin")
             if^ c fits^ spin.Component {
@@ -61,12 +62,12 @@ public^let^ System = def^{
         throne::World world;
         auto& scene = world.scenes["scene.lton"];
         const auto parent = scene.addNode("Parent").id;
-        scene.addNode("Child", parent).behaviours.push_back({"node.lh", {{"speed", 20.0}}});
-        scene.nodes[0].behaviours.push_back({"node.lh", {}});
+        scene.addNode("Child", parent).behaviour.push_back({"node.lh", {{"speed", 20.0}}});
+        scene.nodes[0].behaviour.push_back({"node.lh", {}});
         scene.nodes[0].scriptComponents["Spin"] = {"component.lh", {{"speed", 30.0}}};
         world.level.addScene("scene.lton");
         world.level.addScene("scene.lton");
-        world.level.addRunner("Update").behaviours.push_back({"system.lh", {}, "Update", true});
+        world.level.addSystem("Update").behaviour.push_back({"system.lh", {}, true});
         world.level.stages.insert(world.level.stages.begin() + 3, {"Late", {}});
         scene.save(root / "scene.lton");
         world.level.save(root / "level.lton");
@@ -86,7 +87,7 @@ public^let^ System = def^{
                 "System failed to query typed Component");
         require(std::fabs(expanded.instances[1].expansion.nodes[1].node.transform->position.x - 10) < .01f,
                 "Node behaviour did not receive its own node");
-        const auto move = runtime.evaluate("import^ throne\nlet^ n = throne.find(\"Parent\")\nlet^ r = throne.runner(\"Late\")\nif^ n != nil^ and^ r != nil^ { n.setBehaviourRunner(0, r) }");
+        const auto move = runtime.evaluate("import^ throne\nlet^ n = throne.find(\"Parent\")\nlet^ r = throne.system(\"Late\")\nif^ n != nil^ and^ r != nil^ { n.setBehaviourPriority(0, 2) }");
         require(move.text.empty(), move.text.c_str());
         log.clear();
         runtime.update(.5f);
@@ -108,21 +109,22 @@ public^let^ Behaviour = def^{ self^{ @export other = 3 } }
                 "Inspector confused different exports of the same module");
 
         throne::Prefab prefab;
-        prefab.addNode("Root").behaviours.push_back({"node.lh", {{"speed", 1.0}}});
+        prefab.addNode("Root").behaviour.push_back({"node.lh", {{"speed", 1.0}}});
         prefab.nodes[0].scriptComponents["Spin"] = {"component.lh", {{"speed", 1.0}}};
         library.put("prefab.lton", prefab);
         throne::Scene instances;
         auto& placed = instances.addNode("Instance");
         placed.prefab = "prefab.lton";
-        placed.overrides.node({}).behaviours = std::vector<throne::Behaviour>{{"node.lh", {{"speed", 9.0}}, "Late"}};
+        placed.overrides.node({}).behaviour = std::vector<throne::Behaviour>{{"node.lh", {{"speed", 9.0}}}}
+        ; placed.overrides.node({}).behaviour->front().priority=3.0;
         placed.overrides.node({}).scriptFields["Spin"]["speed"] = 8.0;
         instances.save(root / "instances.lton");
         auto resolved = throne::expand(throne::Scene::load(root / "instances.lton"), library);
-        require(std::get<double>(resolved.nodes[0].node.scriptComponents.at("Spin").fields.at("speed")) == 8.0, "Prefab Component field override lost");
-        require(resolved.nodes[0].node.behaviours[0].runner == "Late", "Prefab Behaviour override lost");
-        placed.overrides.node({}).behaviours = std::vector<throne::Behaviour>{};
+        require(std::get<double>(resolved.nodes[0].node.scriptComponents.at("Spin").data.at("speed")) == 8.0, "Prefab Component field override lost");
+        require(resolved.nodes[0].node.behaviour[0].priority == 3.0, "Prefab Behaviour override lost");
+        placed.overrides.node({}).behaviour = std::vector<throne::Behaviour>{};
         resolved = throne::expand(instances, library);
-        require(resolved.nodes[0].node.behaviours.empty(), "Prefab Behaviour removal failed");
+        require(resolved.nodes[0].node.behaviour.empty(), "Prefab Behaviour removal failed");
 
         const auto mainThread = std::this_thread::get_id();
         for (const bool serial : {false, true}) {
@@ -141,7 +143,7 @@ public^let^ Behaviour = def^{ self^{ @export other = 3 } }
             std::vector<int> drawn;
             for (int frame = 0; frame < 3; ++frame)
                 throne::runStages(throne::defaultStages(), serial, [&](const std::string& stage) {
-                    if (stage == "Update") node += 10;
+                    if (stage == "UpdateBehaviourSystem") node += 10;
                     if (stage == "SyncRender") input = node, next = node;
                     if (stage == "OGRE") drawn.push_back(render);
                     if (stage == "Box3D") result = input + 1;
@@ -166,15 +168,15 @@ public^let^ Behaviour = def^{ self^{ @export other = 3 } }
         } catch (const std::runtime_error&) { rendererFailed = true; }
         require(rendererFailed && joined == (std::thread::hardware_concurrency() < 3 ? 0 : 2),
                 "A failed renderer left simulation work running");
-        // Unknown stages and host-only groups must refuse node attachments before Play.
+        // Non-finite ordering values must be refused before sorting any query.
         auto rejectedWorld = world;
-        rejectedWorld.scenes["scene.lton"].nodes[0].behaviours[0].runner = "Box3D";
+        rejectedWorld.scenes["scene.lton"].nodes[0].behaviour[0].priority = std::numeric_limits<double>::infinity();
         auto rejectedExpansion = throne::expand(rejectedWorld, library);
         bool refused = false;
         try {
             throne::ScriptRuntime bad(rejectedWorld, rejectedExpansion, root, [](const std::string&) {}, throne::PlayScope::Level);
-        } catch (const throne::ScriptError& e) { refused = std::string(e.what()).find("Runner Box3D") != std::string::npos; }
-        require(refused, "Node Behaviour accepted a parallel System as its Runner");
+        } catch (const throne::ScriptError& e) { refused = std::string(e.what()).find("Priority must be finite") != std::string::npos; }
+        require(refused, "Node Behaviour accepted a non-finite priority");
         // Parent-first storage is not necessarily depth-first storage.
         throne::Scene hierarchy;
         const auto a = hierarchy.addNode("A").id;
@@ -185,9 +187,9 @@ public^let^ Behaviour = def^{ self^{ @export other = 3 } }
         const auto ordered = throne::expand(hierarchy, library).hierarchy();
         require(ordered == std::vector<std::size_t>{0, 2, 1}, "Hierarchy execution followed flat storage order");
         // Node references may explicitly store no node.
-        hierarchy.nodes[0].behaviours = {{"node.lh", {{"target", throne::NodeRef{}}}}};
+        hierarchy.nodes[0].behaviour = {{"node.lh", {{"target", throne::NodeRef{}}}}};
         hierarchy.save(root / "nil-reference.lton");
-        require(std::get<throne::NodeRef>(throne::Scene::load(root / "nil-reference.lton").nodes[0].behaviours[0].fields["target"]).node == 0,
+        require(std::get<throne::NodeRef>(throne::Scene::load(root / "nil-reference.lton").nodes[0].behaviour[0].data["target"]).node == 0,
                 "An empty node reference failed to round-trip");
         auto invalid = throne::defaultStages();
         invalid.erase(invalid.begin());
@@ -195,7 +197,7 @@ public^let^ Behaviour = def^{ self^{ @export other = 3 } }
         try { throne::validateStages(invalid); } catch (const std::exception&) { rejected = true; }
         require(rejected, "Missing engine stage accepted");
         fs::remove_all(root);
-        std::puts("Node behaviours, stages, script Components and Systems passed");
+        std::puts("Node behaviour, stages, script Components and Systems passed");
     } catch (const std::exception& e) {
         std::fprintf(stderr, "%s\n", e.what());
         return 1;

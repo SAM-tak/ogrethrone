@@ -48,11 +48,11 @@ struct ExpandedNode {
     bool added = false;
 };
 
-/// One runner of an expanded hierarchy, with field overrides applied.
-struct ExpandedRunner {
-    /// The prefab instance node it came from; empty for the content's own runner.
+/// One system of an expanded hierarchy, with field overrides applied.
+struct ExpandedSystem {
+    /// The prefab instance node it came from; empty for the content's own system.
     NodePath instance;
-    Runner runner;
+    System system;
     /// Whether an instance's overrides added it.
     bool added = false;
 };
@@ -62,15 +62,15 @@ struct Expansion {
     static constexpr std::size_t npos = static_cast<std::size_t>(-1);
     /// Parents before children, siblings in order.
     std::vector<ExpandedNode> nodes;
-    std::vector<ExpandedRunner> runners;
+    std::vector<ExpandedSystem> systems;
     /// Instances that could not be expanded (missing prefab, cycle); the rest is still expanded.
     std::vector<std::string> errors;
     /// Names of the nodes overrides removed, by the instance's path followed by the
     /// override's; they and all below them are not in `nodes`.
     std::map<NodePath, std::string> removed;
-    /// Names of the runners overrides removed, by the instance's path followed by
-    /// the override's instance path, and the runner's ID.
-    std::map<std::pair<NodePath, std::uint32_t>, std::string> removedRunners;
+    /// Names of the systems overrides removed, by the instance's path followed by
+    /// the override's instance path, and the system's ID.
+    std::map<std::pair<NodePath, std::uint32_t>, std::string> removedSystems;
 
     /// Index of the node at @p path (see NodePath), or npos. Each ID is looked for
     /// below the node found for the one before it; the first match in order wins.

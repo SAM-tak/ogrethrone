@@ -78,7 +78,7 @@ preview, Play/Pause/Stop and transparency comparison in **Particles**. A Particl
 System component stores its template and optional script file. See the sample's
 [README](samples/showcase/README.md) for controls and source attribution.
 
-The editor's dockable panels are Scene, Runners, Inspector, Viewport, Browser and Console
+The editor's dockable panels are Scene, Systems, Inspector, Viewport, Browser and Console
 (the layout is kept in `editor.ini` beside the project list). The data is split
 in three kinds of file, all LTON (L^ Table Object Notation, read by L^ as
 effect-free data):
@@ -92,15 +92,16 @@ effect-free data):
   them, or drop one on the top or bottom edge of another to place it before or
   after it; sibling order is kept. A scene is a prefab (`*.prefab.lton`) extended with scene-wide data.
 - A **prefab** (`*.prefab.lton`) is a reusable node hierarchy with a single root
-  and its own runners. A node of a scene or prefab can be an *instance* of a
+  and its own systems. A node of a scene or prefab can be an *instance* of a
   prefab: it becomes the prefab's root, giving it a name and transform, and
-  stores only its overrides of the prefab's properties and runner field values.
+  stores only its overrides of the prefab's properties and system field values.
   Prefabs nest; a prefab that contains itself is reported. A **variant** is a
   prefab file with no nodes, only a `base` prefab and overrides of it.
-- A **runner** runs behaviours. It is not part of the scene hierarchy and has no
-  transform; it reaches nodes only through its behaviours' fields. Scenes and
-  levels can both hold runners.
-- A **level** (`*.level.lton`) holds scene instances and its own runners. The
+- A **Behaviour component** holds object-oriented script instances, each with its
+  own data and methods. **BehaviourSystems** query and call their phase methods.
+  Custom systems can also query components or use node references; scenes and
+  levels can both hold them. Systems have no transform or scene-hierarchy entry.
+- A **level** (`*.level.lton`) holds scene instances and its own systems. The
   same scene can be placed more than once; each instance has its own transform,
   under which all of the scene's nodes lie. A level holds no nodes, no prefab
   instances and no overrides of its own: editing a scene's content at the Level
@@ -112,21 +113,21 @@ down: at the Level step the Scene panel lists the scene instances; selecting one
 and double-clicking one (or a file in the Browser's Scenes tab) edits that
 scene, and double-clicking an instance node (or a file in the Prefabs tab) edits
 that prefab. The breadcrumb over the viewport returns to an outer step. Nodes and
-runners that come from an instance are drawn in blue; editing them writes an
+systems that come from an instance are drawn in blue; editing them writes an
 override, shown in orange with a Revert button. With a node inside an instance
 selected, Add Node and Add Instance add
 the new node as an override of that instance, also shown in orange; Delete on a
 node inside an instance records its removal, which the instance's Inspector
-lists with a Restore button. Runners work the same way: + Runner with an
-instance's runner or a node inside it selected adds one to that instance, and
-Delete on an instance's runner records its removal. Inside a scene or prefab, Add
+lists with a Restore button. Systems work the same way: + System with an
+instance's system or a node inside it selected adds one to that instance, and
+Delete on an instance's system records its removal. Inside a scene or prefab, Add
 Instance places the prefab named next to it, creating one with a root node when
 the file does not exist yet; double-click the new instance node to fill the prefab.
-A node's Inspector lists the runner fields that refer to it (Referenced by);
-clicking one selects that runner.
+A node's Inspector lists the system fields that refer to it (Referenced by);
+clicking one selects that system.
 Apply in the Inspector writes all of an instance's overrides into its prefab.
 Unpack in the Inspector replaces an instance with plain nodes holding what it
-shows, nested instances included, and copies its runners into the file.
+shows, nested instances included, and copies its systems into the file.
 Dragging a node onto the Browser's Prefabs tab saves it as
 `prefabs/<name>.prefab.lton` and leaves an instance in its place; dragging an
 instance makes a variant of its prefab. Dropping a node on an existing prefab
@@ -146,8 +147,8 @@ the wheel dollies outside fly mode, left-click selects a node
 and `F` frames it. The selected node shows an ImGuizmo gizmo: W, E and R (or the
 viewport toolbar) switch between move, rotate and scale, and Local switches between
 the node's own axes and the world's; one drag is one undo step. Ctrl+Z/Ctrl+Y undo/redo, Ctrl+D duplicates a node (with copies of
-the runners that refer to it, referring to the copy), Delete
-removes the selected node or runner, Ctrl+S saves the level and its scenes and
+the systems that refer to it, referring to the copy), Delete
+removes the selected node or system, Ctrl+S saves the level and its scenes and
 Ctrl+O opens a level. New and Open are undoable; closing the window or the project with
 unsaved changes asks to save or discard them (on Windows this also covers the
 window's close button). Colibri widgets are not wired yet.
@@ -253,7 +254,7 @@ globally or modifying the bundled ICU sources.
 ## Scripting
 
 Scripts are written in L^ and run only in the editor's Play mode (F5 or the Play
-menu item). Play runs the open level: its runners and its scenes' runners, but not
+menu item). Play runs the open level: its systems and its scenes' systems, but not
 `main.lh`. Playing the whole game from `main.lh` will be a separate command. Play runs on a copy of the level and its scenes; Stop discards it, so
 script changes never reach the edited data. Editing is disabled while playing.
 Each Play checks and compiles every script anew, so edited scripts take effect
@@ -272,8 +273,10 @@ at its top level makes it a coroutine that the whole-game Play will resume once
 per frame until it ends. Level playback from it (`throne.playLevel`) is still
 being designed (TDDja/02 4.1).
 
-Nodes hold any number of Behaviour attachments, each naming its script, execution
-stage (default `Update`) and exported field values. Each attachment gets a fresh
+The Behaviour component at `components.behaviour` holds a list of script references
+and per-instance `data`, with optional enabled and priority overrides. Each script
+instance owns both its data and methods; even repeated attachments of the same
+script have independent state. Each attachment gets a fresh
 instance for each scene/prefab instance. A script publishes `Behaviour = def^{ ... }`:
 
 ```lhat
@@ -290,24 +293,66 @@ public^let^ Behaviour = def^{
 }
 ```
 
-`start(node)` and `update(node, dt)` are optional. `start` runs once, immediately
-before the attachment's first update in its chosen stage. Direct runner attachments
-remain available for orchestration; their callbacks receive `throne.Runner` instead.
-Within a stage, direct attachments run first (scene runners, then level runners),
-followed by node attachments in scene-instance order and depth-first hierarchy order.
+The scene representation is:
+
+```lton
+components = {
+    behaviour = {
+        { script = "scripts/spin.lh", data = { degreesPerSecond = 45 } },
+        { script = "scripts/pop.lh", data = { interval = 1.5, height = 0.5, duration = 0.4 } },
+    },
+},
+```
+
+The Inspector edits exported members in `data`; the runtime writes them into the
+same instance that owns the callbacks. Prefab overrides replace the list under
+`overrides.nodes[].behaviour`; an empty list removes the component's attachments.
+
+`start(node)`, `update(node, dt)`, `lateupdate(node, dt)` and
+`onendofframe(node, dt)` are optional. The three BehaviourSystems query enabled
+attachments implementing their corresponding method; an instance shares its state
+across all phases. `start` runs once before the first callback (start-only
+attachments start in Update). Direct system attachments remain available for
+orchestration; their callbacks receive `throne.System` instead.
+
+Order is ascending finite real priority, with scene-instance, depth-first hierarchy
+and attachment order breaking ties. A script declares defaults in `self^{ priority
+= 0, updatePriority = ..., lateupdatePriority = ..., onendofframePriority = ... }`.
+Each attachment can override the common priority or individual phases. Precedence
+is attachment phase, attachment common, script phase, script common, then zero.
+The Inspector edits these overrides; Systems shows the resolved execution order.
+Queries are cached; adding/removing attachments or changing enabled/priority takes
+effect at the next frame boundary. Sorting is done when configuration changes.
+
+Callbacks accept ordinary functions and procedures. Their result is ignored unless
+it is a coroutine, in which case the system drives it immediately and retains its
+suspended invocation. `yield^ nil^` waits for the next visit of the originating
+system; `yield^ target` waits for a serial `throne.System`. A later phase can resume
+in the same frame; the current or an earlier phase resumes next frame. Each method
+is independent and never overlaps itself. Disabling freezes pending invocations;
+removing an attachment or stopping Play disposes them, running `finally^`.
+
+```lhat
+update = p^self^, node:throne.SceneNode, dt:number^ {
+    let^ end = throne.system("EndOfFrameBehaviourSystem")
+    if^ end != nil^ { yield^ end }
+    // Continue after render/physics synchronization.
+},
+```
 
 The Inspector edits exported number, bool, string and node-reference fields. Other
 Behaviour fields remain private. Reset removes an override; missing or mistyped
 fields are ignored with a warning. Prefab instances can replace their Behaviour list,
 including editing fields, adding attachments, and removing them.
 
-The level owns the execution schedule. The Runners panel shows engine stages and
+The level owns the execution schedule. The Systems panel shows engine stages and
 user stages together, expands their attachments in execution order, adds user stages,
 and moves them between the fixed engine stages. The default schedule is:
 
 ```text
-FetchInput -> ApplyPhysics -> Update -> SyncRender
-           -> [OGRE / Box3D / Animator] -> SyncSimulation
+FetchInput -> ApplyPhysics -> UpdateBehaviourSystem -> LateUpdateBehaviourSystem
+           -> SyncRender -> [OGRE / Box3D / Animator] -> SyncSimulation
+           -> EndOfFrameBehaviourSystem
 ```
 
 OGRE stays on the main thread; the engine group joins before the next stage. Serial
@@ -318,16 +363,17 @@ poses are applied at the next ApplyPhysics stage; physics motion appears two fra
 later. Animator currently has no animation components to process.
 
 A script-defined component publishes `Component = def^{ self^{ ... } }`. Attach it
-under `components.scripts`, keyed by its query name, with `script` and `fields`.
+under `components.scripts`, keyed by its query name, with `script` and `data`.
 It is constructed separately for every node. All supported data fields are editable
 without `@export`. Instances can override existing component fields.
 
-A direct runner attachment with `system = true^` publishes `System` instead of
-`Behaviour`. Its optional callbacks receive the runner. It can iterate
-`throne.query("Transform", "Spin")`, which returns nodes having every named component.
-`node.component("Spin")` returns that script component as `any^`; narrow it with
-`fits^` and the required script's `Component` type. See
-[`spin-system.lh`](samples/basic/scripts/spin-system.lh) for a complete example.
+A direct system attachment with `systemScript = true^` publishes `System` instead of
+`Behaviour`. Its optional callbacks receive the system. It can iterate
+`throne.query("Transform", "Health")`, which returns nodes having every named
+component. `node.component("Health")` returns that script component as `any^`;
+narrow it with `fits^` and the required script's `Component` type. This data-only
+Component API is optional; ordinary node behaviours keep their data and methods
+together in the Behaviour component.
 
 The `throne` module provides:
 
@@ -350,10 +396,16 @@ The `throne` module provides:
   about X, then Y, then Z, and scale is kept at 0.001 or more.
 - `throne.BoxPrimitive`: `colour()` and `setColour(v)`, kept in [0, 1].
 - A component handle whose node or component is gone panics.
-- `throne.Runner`: `name()`; passed to direct runner attachments and Systems.
-- `throne.runner(name)`: a user stage handle, or nil. A node's
-  `setBehaviourRunner(index, runner)` moves its zero-based attachment from the next
-  frame without repeating `start`. Engine stages and parallel members are refused.
+- `throne.System`: `name()`; passed to direct system attachments and Systems.
+- `throne.system(name)`: a serial script system handle, or nil. Native engine
+  barriers and parallel members cannot be coroutine wait targets.
+- `throne.currentSystem()`: the current callback/resume context, or nil outside
+  system execution.
+- `node.setBehaviourPriority(index, numberOrNil)` and
+  `setBehaviourPhasePriority(index, system, numberOrNil)`: change common/phase
+  overrides. Nil restores inheritance; indexes are zero-based.
+- `node.setBehaviourEnabled(index, enabled)`, `addBehaviour(script)` (returns its
+  index), and `removeBehaviour(index)`: change the next frame's Behaviour registry.
 - `throne.query(names...)`: a snapshot list in scene-instance/hierarchy order;
   no names matches all nodes, an unknown name matches none. Built-in names are
   `Transform` and `BoxPrimitive`; custom names come from `components.scripts`.
@@ -386,9 +438,12 @@ without opening a window:
 The file defaults to `lhat-host.json` in the working directory.
 
 In [`samples/basic`](samples/basic), [`spin.lh`](samples/basic/scripts/spin.lh)
-is attached directly to SpinningCube and the rotor prefab's Hub. The fast variant
-replaces its Hub attachment with a 360-degree-per-second version. Cube 2 demonstrates
-a script-defined Spin component processed by the level's Update System.
+is attached to SpinningCube, Cube 2 and the rotor prefab's Hub. SpinningCube also
+has [`pop.lh`](samples/basic/scripts/pop.lh), hopping upward every 1.5 seconds
+while continuing to spin. The hop lasts 0.4 seconds and reaches 0.5 units above
+its starting position; `interval`, `duration` and `height` are editable in the Inspector.
+The fast variant replaces its Hub attachment with a 360-degree-per-second version.
+All use BehaviourSystems; no separate Spin Component or Spin System is needed.
 The design is recorded in [TDDja/07-component.md](TDDja/07-component.md).
 
 ## Default rendering

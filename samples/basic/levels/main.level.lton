@@ -1,14 +1,14 @@
 format = "ogrethrone-level",
-runners = {
-    {id = 1, name = "Update", behaviours = {{script = "scripts/spin-system.lh", system = true^}}},
-},
+systems = {},
 stages = {
     {name = "FetchInput"},
     {name = "ApplyPhysics"},
-    {name = "Update"},
+    {name = "UpdateBehaviourSystem"},
+    {name = "LateUpdateBehaviourSystem"},
     {name = "SyncRender"},
     {name = "Parallel", parallel = {"OGRE", "Box3D", "Animator"}},
     {name = "SyncSimulation"},
+    {name = "EndOfFrameBehaviourSystem"},
 },
 serialExecution = false^,
 scenes = {

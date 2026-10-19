@@ -54,8 +54,8 @@ struct DragNode {
 
 /// Dear ImGui level editor and project launcher drawn over the OGRE window.
 ///
-/// The editor works on a World: the level's runners plus the scenes it loads.
-/// Panels: Scene (node hierarchies), Runners, Inspector, Viewport and Browser.
+/// The editor works on a World: the level's systems plus the scenes it loads.
+/// Panels: Scene (node hierarchies), Systems, Inspector, Viewport and Browser.
 ///
 /// Without an open project the window shows the launcher (TDDja/03 4). With one,
 /// the level is rendered into an offscreen texture shown in the viewport panel;
@@ -182,15 +182,15 @@ private:
         /// The scene or prefab file; empty for the level.
         std::string path;
     };
-    /// What the inspector shows: a node of view_, a runner, or a scene instance of the level.
+    /// What the inspector shows: a node of view_, a system, or a scene instance of the level.
     struct Selection {
-        enum class Kind { None, Node, Runner, Scene } kind = Kind::None;
-        /// Index into view_.instances; -1 for a runner of the level itself.
+        enum class Kind { None, Node, System, Scene } kind = Kind::None;
+        /// Index into view_.instances; -1 for a system of the level itself.
         int instance = -1;
-        /// The node's path; for a runner, the prefab instance it came from.
+        /// The node's path; for a system, the prefab instance it came from.
         NodePath path;
-        /// The runner's ID.
-        std::uint32_t runner = 0;
+        /// The system's ID.
+        std::uint32_t system = 0;
     };
     /// Where an edit of one node is written: the node itself (it belongs to the
     /// file being edited), or a property override of the instance that contains it.
@@ -201,18 +201,19 @@ private:
         /// When @p node was added by an instance, the overrides holding it.
         Overrides* addedTo = nullptr;
     };
-    /// Where an edit of one runner is written: the runner itself, or field overrides.
-    struct RunnerTarget {
-        Runner* runner = nullptr;
+    /// Where an edit of one system is written: the system itself, or field overrides.
+    struct SystemTarget {
+        System* system = nullptr;
         Overrides* overrides = nullptr;
         NodePath instance;
-        /// When @p runner was added by an instance, the overrides holding it.
+        /// When @p system was added by an instance, the overrides holding it.
         Overrides* addedTo = nullptr;
     };
     /// A script's editable fields, refreshed when the file changes.
     struct CachedFields {
         std::filesystem::file_time_type stamp;
         std::vector<FieldInfo> fields;
+        BehaviourInfo behaviour;
         std::string error;
         bool loaded = false;
     };
@@ -231,12 +232,12 @@ private:
     NodeTarget targetOf(int instance, const NodePath& path);
     /// targetOf() without looking into the nodes instances added.
     NodeTarget fileTarget(int instance, const NodePath& path);
-    /// Where an edit of the selected runner goes.
-    RunnerTarget runnerTarget();
+    /// Where an edit of the selected system goes.
+    SystemTarget systemTarget();
     /// The selected node of view_, or nullptr.
     const ExpandedNode* selectedNode();
-    /// The selected runner of view_ (or of the level), or nullptr.
-    const Runner* selectedRunner();
+    /// The selected system of view_ (or of the level), or nullptr.
+    const System* selectedSystem();
     /// The selected scene instance of the level, or nullptr.
     SceneInstance* selectedScene();
     /// Writes @p value into the selected node through targetOf(); @p changed says which properties.
@@ -278,8 +279,8 @@ private:
     /// Adds an instance of the prefab at newPrefabPath_ to the edited scene or prefab,
     /// creating an empty prefab when the file is absent.
     void addInstance();
-    /// Adds a runner to the level (at the Level step) or to the edited scene or prefab.
-    void addRunner();
+    /// Adds a system to the level (at the Level step) or to the edited scene or prefab.
+    void addSystem();
     /// Adds an instance of the scene at newScenePath_ to the level, creating the file when absent.
     void addScene();
     /// Removes scene instance @p id from the level.
@@ -306,7 +307,7 @@ private:
     /// and clears them.
     void applyOverrides(int instance, NodeId id);
     /// Replaces instance node @p id of the file view instance @p instance shows with plain nodes holding what
-    /// it shows, nested instances included, and copies its runners into the file
+    /// it shows, nested instances included, and copies its systems into the file
     /// (TDDja/06 7). Nodes keep their IDs unless the file already uses one;
     /// references in the file and the level to a node given a new ID are rewritten.
     void unpack(int instance, NodeId id);
@@ -314,7 +315,7 @@ private:
     void replaceDialog();
     /// Copies the selected node (without children) beside itself and selects the copy.
     void duplicate();
-    /// Deletes the selected node (with its children) or runner, when the edited file owns it.
+    /// Deletes the selected node (with its children) or system, when the edited file owns it.
     void erase();
     /// Returns the fields of @p script, reading it again when the file has changed.
     const CachedFields& fieldsOf(const std::string& script, const std::string& symbol);
@@ -362,19 +363,19 @@ private:
     void scenePanel();
     /// Draws the children of node @p parent (an index, or npos) of view instance @p instance.
     void nodeTree(std::size_t instance, std::size_t parent);
-    /// Draws the Runners panel: the level's runners and the runners of view_.
-    void runnersPanel();
-    /// Draws the property panel for the selected node or runner.
+    /// Draws the Systems panel: the level's systems and the systems of view_.
+    void systemsPanel();
+    /// Draws the property panel for the selected node or system.
     void inspector();
     /// Draws the selected node's properties, marking and reverting overridden ones.
     void nodeInspector(const ExpandedNode& node);
     /// Draws a scene instance's scene and transform.
     void sceneInspector(SceneInstance& instance);
-    /// Lists the nodes and runners @p overrides removes, named from @p expansion
+    /// Lists the nodes and systems @p overrides removes, named from @p expansion
     /// where the overrides' instance is at @p prefix, each with a Restore button.
     void removedList(Overrides& overrides, const Expansion& expansion, const NodePath& prefix);
-    /// Draws the selected runner's behaviours and their fields.
-    void runnerInspector(const Runner& runner);
+    /// Draws the selected system's behaviour and their fields.
+    void systemInspector(const System& system);
     /// Draws the rendered scene and handles camera and picking input.
     void viewport();
     /// Draws the Browser panel: the project's levels, scenes and prefabs.
@@ -489,7 +490,7 @@ private:
     /// Completed render snapshot from the preceding frame.
     std::optional<LevelExpansion> renderSnapshot_;
     std::unique_ptr<PhysicsWorld> physics_;
-    /// Which runner fields refer to each node of view_; rebuilt with it.
+    /// Which system fields refer to each node of view_; rebuilt with it.
     References references_;
     /// view_'s node structure (instance, path, parent) when the render objects were built.
     std::vector<std::tuple<std::size_t, NodePath, std::size_t>> viewShape_;
@@ -510,7 +511,7 @@ private:
     std::map<std::string, CachedFields> fieldCache_;
     /// Drag-and-drop payload naming a node of the edited file by its ID.
     static constexpr const char* nodePayload = "THRONE_NODE";
-    /// Text colours of nodes and runners that come from instances, of variants,
+    /// Text colours of nodes and systems that come from instances, of variants,
     /// and of overridden properties.
     static inline const ImVec4 instanceColour{0.55f, 0.75f, 1.0f, 1.0f}, variantColour{0.8f, 0.65f, 1.0f, 1.0f},
                                overriddenColour{1.0f, 0.75f, 0.3f, 1.0f};

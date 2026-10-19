@@ -7,8 +7,10 @@
 
 namespace throne {
 std::vector<ExecutionStage> defaultStages() {
-    return {{"FetchInput", {}}, {"ApplyPhysics", {}}, {"Update", {}}, {"SyncRender", {}},
-            {"Parallel", {"OGRE", "Box3D", "Animator"}}, {"SyncSimulation", {}}};
+    return {{"FetchInput", {}}, {"ApplyPhysics", {}}, {behaviourSystems[0], {}},
+            {behaviourSystems[1], {}}, {"SyncRender", {}},
+            {"Parallel", {"OGRE", "Box3D", "Animator"}}, {"SyncSimulation", {}},
+            {behaviourSystems[2], {}}};
 }
 
 void validateStages(const std::vector<ExecutionStage>& stages) {
@@ -19,7 +21,7 @@ void validateStages(const std::vector<ExecutionStage>& stages) {
     for (const auto& stage : stages) {
         if (stage.name.empty() || stage.name.size() > 255 || stage.name.find('\0') != std::string::npos || !names.insert(stage.name).second)
             throw std::runtime_error("Execution stage names must be nonempty and unique");
-        if (stage.name == "FetchInput" || stage.name == "ApplyPhysics" || stage.name == "SyncRender" ||
+        if (behaviourPhase(stage.name)>=0 || stage.name == "FetchInput" || stage.name == "ApplyPhysics" || stage.name == "SyncRender" ||
             stage.name == "Parallel" || stage.name == "SyncSimulation") engine.push_back(stage.name);
         if (stage.name == "Parallel") {
             if (stage.parallel != std::vector<std::string>{"OGRE", "Box3D", "Animator"})
@@ -28,8 +30,9 @@ void validateStages(const std::vector<ExecutionStage>& stages) {
         for (const auto& name : stage.parallel)
             if (!names.insert(name).second) throw std::runtime_error("Duplicate parallel member");
     }
-    if (engine != std::vector<std::string>{"FetchInput", "ApplyPhysics", "SyncRender", "Parallel", "SyncSimulation"})
-        throw std::runtime_error("Engine execution stages cannot be removed or reordered");
+    if (engine != std::vector<std::string>{"FetchInput", "ApplyPhysics", behaviourSystems[0], behaviourSystems[1],
+                                         "SyncRender", "Parallel", "SyncSimulation", behaviourSystems[2]})
+        throw std::runtime_error("Engine and BehaviourSystem stages cannot be removed or reordered");
 }
 
 void runStages(const std::vector<ExecutionStage>& stages, bool serial,

@@ -43,6 +43,8 @@ void navigationSmoke(Editor& editor, Ogre::Window& nativeWindow, Ogre::Camera& c
         wheel = 0;
     };
     for (int i = 0; i < 3; ++i) frame();
+    const auto* systems=ImGui::FindWindowByName("Systems");
+    require(systems && systems->Active && systems->ContentSize.y>0,"Systems panel was not rendered");
     // Read the rendered background, rather than merely checking the sky's enabled flag.
     const auto skyCapture = std::filesystem::temp_directory_path() / "ogrethrone-navigation-sky.ppm";
     const auto captureSky = [&] {

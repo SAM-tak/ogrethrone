@@ -20,9 +20,10 @@ nodes = {
     {
         components = {
             transform = {position = {0.0, 2.1, 0.0}, rotation = {0.0, 0.0, 0.0}, scale = {1.0, 1.0, 1.0}},
+            behaviour = {{script = "scripts/spin.lh"}},
         },
         id = 105248190270967814,
-        behaviours = {{script = "scripts/spin.lh", runner = "Update"}},
+
         name = "Hub",
         parent = 105248190270967812,
     },
@@ -36,5 +37,5 @@ nodes = {
         parent = 105248190270967814,
     },
 },
-runners = {},
+systems = {},
 version = 3,

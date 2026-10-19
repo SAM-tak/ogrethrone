@@ -1,0 +1,34 @@
+# A short upward hop, repeated at a fixed interval alongside other Behaviours.
+module^ samples.pop
+import^ throne
+import^ std.math
+
+public^let^ Behaviour = def^{
+    self^{
+        @export interval = 1.5,
+        @export height = 0.5,
+        @export duration = 0.4,
+        elapsed = 0,
+        originY = 0,
+    },
+    start = p^self^, node:throne.SceneNode {
+        let^ t = node.transform()
+        if^ t != nil^ { self^.originY := t.position().y }
+    },
+    update = p^self^, node:throne.SceneNode, dt:number^ {
+        let^ interval = std.math.max(0.001, self^.interval)
+        let^ duration = std.math.max(0.001, std.math.min(self^.duration, interval))
+        self^.elapsed := std.math.fmod(self^.elapsed + dt, interval)
+        var^ offset = 0
+        if^ self^.elapsed < duration {
+            let^ phase = self^.elapsed / duration
+            offset := std.math.max(0, self^.height) * 4 * phase * (1 - phase)
+        }
+        let^ t = node.transform()
+        if^ t != nil^ {
+            var^ position = t.position()
+            position.y := self^.originY + offset
+            t.setPosition(position)
+        }
+    },
+}

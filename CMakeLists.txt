@@ -83,9 +83,12 @@ if(BUILD_TESTING)
 endif()
 
 add_executable(throne_ecs_smoke tests/ecs_smoke.cpp)
+add_executable(throne_behaviour_system_smoke tests/behaviour_system_smoke.cpp)
+target_link_libraries(throne_behaviour_system_smoke PRIVATE throne_script)
 target_link_libraries(throne_ecs_smoke PRIVATE throne_script)
 if(BUILD_TESTING)
     add_test(NAME ecs_smoke COMMAND throne_ecs_smoke)
+    add_test(NAME behaviour_system_smoke COMMAND throne_behaviour_system_smoke)
     set_tests_properties(ecs_smoke PROPERTIES TIMEOUT 30)
 endif()
 

@@ -1,9 +1,10 @@
-// The Scene, Runners and Inspector panels and the drill-down breadcrumb of the Editor
+// The Scene, Systems and Inspector panels and the drill-down breadcrumb of the Editor
 // (TDDja/05 6, 06 6).
 #include "editor/Editor.h"
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <optional>
 #include <string_view>
@@ -237,15 +238,15 @@ void Editor::nodeTree(std::size_t instance, std::size_t parent) {
     }
 }
 
-void Editor::runnersPanel() {
-    if (ImGui::Begin("Runners")) {
+void Editor::systemsPanel() {
+    if (ImGui::Begin("Systems")) {
         ImGui::BeginDisabled(runtime_ != nullptr);
         auto& level = doc_.world.level;
         bool serial = level.serialExecution;
         if (ImGui::Checkbox("Run engine group serially", &serial)) checkpoint(), level.serialExecution = serial;
-        static char newStage[256] = "LateUpdate";
-        ImGui::InputText("Stage name", newStage, sizeof newStage);
-        if (ImGui::Button("Add Stage") && newStage[0]) {
+        static char newStage[256] = "CustomSystem";
+        ImGui::InputText("System name", newStage, sizeof newStage);
+        if (ImGui::Button("Add System Stage") && newStage[0]) {
             const auto stages = ScriptRuntime::schedule(doc_.world, view_);
             if (std::none_of(stages.begin(), stages.end(), [&](const ExecutionStage& stage) { return stage.name == newStage || std::find(stage.parallel.begin(), stage.parallel.end(), newStage) != stage.parallel.end(); })) {
                 checkpoint();
@@ -255,7 +256,8 @@ void Editor::runnersPanel() {
                 level.stages.insert(at, {newStage, {}});
             }
         }
-        if (ImGui::Button("+ Runner Behaviour")) addRunner();
+        if (ImGui::Button("+ Script System")) addSystem();
+        ImGui::EndDisabled();
         const auto stages = ScriptRuntime::schedule(doc_.world, view_);
         // Display names can repeat; keep row identity tied to the full instance path.
         const auto rowId = [](const char* kind, int instance, const NodePath& path, std::uint64_t item) {
@@ -263,21 +265,22 @@ void Editor::runnersPanel() {
             for (const auto step : path) id += "/" + std::to_string(step);
             return id + "/" + std::to_string(item);
         };
-        const auto direct = [&](const Runner& runner, int instance, const NodePath& path) {
-            ImGui::PushID(rowId("runner", instance, path, runner.id).c_str());
-            const auto label = runner.name + " [Runner]###runner";
-            if (ImGui::Selectable(label.c_str())) selected_ = {Selection::Kind::Runner, instance, path, runner.id};
-            for (const auto& behaviour : runner.behaviours)
-                ImGui::BulletText("%s [%s]", behaviour.script.c_str(), behaviour.system ? "System" : "Behaviour");
+        const auto direct = [&](const System& system, int instance, const NodePath& path) {
+            ImGui::PushID(rowId("system", instance, path, system.id).c_str());
+            const auto label = system.name + "###system";
+            if (ImGui::Selectable(label.c_str())) selected_ = {Selection::Kind::System, instance, path, system.id};
+            for (const auto& behaviour : system.behaviour)
+                ImGui::BulletText("%s%s", behaviour.script.c_str(), behaviour.systemScript ? "" : " [Behaviour]");
             ImGui::PopID();
         };
         for (const auto& stage : stages) {
-            const bool engine = !stage.parallel.empty() || stage.name == "FetchInput" || stage.name == "ApplyPhysics" ||
+            const int phase=behaviourPhase(stage.name);
+            const bool engine = phase>=0 || !stage.parallel.empty() || stage.name == "FetchInput" || stage.name == "ApplyPhysics" ||
                 stage.name == "SyncRender" || stage.name == "SyncSimulation";
-            const auto label = stage.name + (engine ? " [System]" : " [Runner]");
             ImGui::PushID(stage.name.c_str());
-            const bool open = ImGui::TreeNodeEx(label.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
+            const bool open = ImGui::TreeNodeEx(stage.name.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
             if (!engine) {
+                ImGui::BeginDisabled(runtime_ != nullptr);
                 const auto index = static_cast<std::size_t>(&stage - stages.data());
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Up") && index > 1) {
@@ -291,12 +294,10 @@ void Editor::runnersPanel() {
                     level.stages = stages;
                     std::swap(level.stages[index], level.stages[index + 1]);
                 }
-                bool used = stage.name == "Update";
-                for (const auto& runner : level.runners) used |= runner.name == stage.name;
+                bool used = false;
+                for (const auto& system : level.systems) used |= system.name == stage.name;
                 for (const auto& instance : view_.instances) {
-                    for (const auto& runner : instance.expansion.runners) used |= runner.runner.name == stage.name;
-                    for (const auto& node : instance.expansion.nodes)
-                        for (const auto& behaviour : node.node.behaviours) used |= behaviour.runner == stage.name;
+                    for (const auto& system : instance.expansion.systems) used |= system.system.name == stage.name;
                 }
                 ImGui::SameLine();
                 ImGui::BeginDisabled(used);
@@ -306,43 +307,58 @@ void Editor::runnersPanel() {
                     level.stages.erase(level.stages.begin() + static_cast<std::ptrdiff_t>(index));
                 }
                 ImGui::EndDisabled();
+                ImGui::EndDisabled();
             }
             if (open) {
-                for (const auto& member : stage.parallel) ImGui::BulletText("%s [System]", member.c_str());
-                // Direct attachments precede node attachments, just as at runtime.
+                for (const auto& member : stage.parallel) ImGui::BulletText("%s", member.c_str());
+                // Script Systems own their stage; BehaviourSystems query node attachments below.
                 for (std::size_t i = 0; i < view_.instances.size(); ++i)
-                    for (const auto& runner : view_.instances[i].expansion.runners)
-                        if (runner.runner.name == stage.name) direct(runner.runner, static_cast<int>(i), runner.instance);
-                for (const auto& runner : level.runners)
-                    if (runner.name == stage.name) direct(runner, -1, {});
-                for (std::size_t i = 0; i < view_.instances.size(); ++i)
-                    for (const auto n : view_.instances[i].expansion.hierarchy()) {
-                        const auto& node = view_.instances[i].expansion.nodes[n];
-                        for (std::size_t k = 0; k < node.node.behaviours.size(); ++k) {
-                            const auto& behaviour = node.node.behaviours[k];
-                            if (behaviour.runner != stage.name) continue;
-                            ImGui::PushID(rowId("node", static_cast<int>(i), node.path, k).c_str());
-                            const auto text = instanceLabel(i) + " / " + node.node.name + " / " + behaviour.script + "###attachment";
-                            if (ImGui::Selectable(text.c_str()))
-                                selected_ = {Selection::Kind::Node, static_cast<int>(i), node.path};
-                            ImGui::PopID();
+                    for (const auto& system : view_.instances[i].expansion.systems)
+                        if (system.system.name == stage.name) direct(system.system, static_cast<int>(i), system.instance);
+                for (const auto& system : level.systems)
+                    if (system.name == stage.name) direct(system, -1, {});
+                if(phase>=0) ImGui::TextDisabled("Query: enabled Behaviour.%s | order_by: effective priority",behaviourMethods[phase]);
+                std::vector<BehaviourMatch> matches;
+                if(runtime_) matches=runtime_->behaviourMatches(stage.name);
+                else if(phase>=0) {
+                    for(std::size_t i=0;i<view_.instances.size();++i)
+                        for(const auto n:view_.instances[i].expansion.hierarchy()) {
+                            const auto& behaviour=view_.instances[i].expansion.nodes[n].node.behaviour;
+                            for(std::size_t k=0;k<behaviour.size();++k) {
+                                const auto& b=behaviour[k];
+                                if(!b.enabled) continue;
+                                const auto& cached=fieldsOf(b.script,"Behaviour");
+                                const bool startOnly=cached.behaviour.start &&
+                                    std::none_of(cached.behaviour.methods.begin(),cached.behaviour.methods.end(),[](bool present) { return present; });
+                                if(!cached.error.empty() || (!cached.behaviour.methods[phase] && !(phase==0 && startOnly))) continue;
+                                matches.push_back({static_cast<int>(i),n,k,effectivePriority(b,cached.behaviour.defaults,phase),b.script,false});
+                            }
                         }
-                    }
+                    std::stable_sort(matches.begin(),matches.end(),[](const auto& a,const auto& b) { return a.priority<b.priority; });
+                }
+                for(const auto& match:matches) {
+                    const auto& node=view_.instances[match.scene].expansion.nodes[match.node];
+                    ImGui::PushID(rowId("node",match.scene,node.path,match.attachment).c_str());
+                    const auto text=instanceLabel(match.scene)+" / "+node.node.name+" / "+match.script+
+                        (match.waiting?" [resume]":"")+"###attachment";
+                    ImGui::Text("%.9g",match.priority); ImGui::SameLine();
+                    if(ImGui::Selectable(text.c_str())) selected_={Selection::Kind::Node,match.scene,node.path};
+                    ImGui::PopID();
+                }
                 ImGui::TreePop();
             }
             ImGui::PopID();
         }
-        const auto invalid = [&](const Runner& runner) {
+        const auto invalid = [&](const System& system) {
             return std::none_of(stages.begin(), stages.end(), [&](const ExecutionStage& stage) {
-                return stage.name == runner.name;
+                return stage.name == system.name;
             });
         };
         for (std::size_t i = 0; i < view_.instances.size(); ++i)
-            for (const auto& runner : view_.instances[i].expansion.runners)
-                if (invalid(runner.runner)) direct(runner.runner, static_cast<int>(i), runner.instance);
-        for (const auto& runner : level.runners)
-            if (invalid(runner)) direct(runner, -1, {});
-        ImGui::EndDisabled();
+            for (const auto& system : view_.instances[i].expansion.systems)
+                if (invalid(system.system)) direct(system.system, static_cast<int>(i), system.instance);
+        for (const auto& system : level.systems)
+            if (invalid(system)) direct(system, -1, {});
     }
     ImGui::End();
 }
@@ -351,7 +367,7 @@ void Editor::inspector() {
     if (ImGui::Begin("Inspector")) {
         ImGui::BeginDisabled(runtime_ != nullptr);
         if (const auto* node = selectedNode()) nodeInspector(*node);
-        else if (const auto* runner = selectedRunner()) runnerInspector(*runner);
+        else if (const auto* system = selectedSystem()) systemInspector(*system);
         else if (auto* placed = selectedScene()) sceneInspector(*placed);
         else ImGui::TextDisabled("Nothing selected");
         ImGui::EndDisabled();
@@ -588,27 +604,42 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         ImGui::EndCombo();
     }
 
-    const auto editAttachment = [&](Behaviour& behaviour, bool hasRunner) {
+    const auto editAttachment = [&](Behaviour& behaviour, bool hasSystem) {
         bool changed = false;
             char buffer[512];
             fill(buffer, behaviour.script);
-            ImGui::BeginDisabled(!hasRunner && !own);
+            ImGui::BeginDisabled(!hasSystem && !own);
             changed |= ImGui::InputText("Script", buffer, sizeof buffer);
             ImGui::EndDisabled();
             behaviour.script = buffer;
             track();
-            if (hasRunner) {
-            fill(buffer, behaviour.runner);
-            changed |= ImGui::InputText("Runner", buffer, sizeof buffer);
-            behaviour.runner = buffer;
-            track();
+            const auto& cached = fieldsOf(behaviour.script, hasSystem ? "Behaviour" : "Component");
+            if (hasSystem) {
+                changed|=ImGui::Checkbox("Enabled",&behaviour.enabled); track();
+                const auto priority=[&](const char* label,std::optional<double>& value,double inherited) {
+                    ImGui::PushID(label);
+                    bool overridden=value.has_value();
+                    if(ImGui::Checkbox("Override",&overridden)) { value=overridden?std::optional<double>(inherited):std::nullopt; changed=true; }
+                    track(); ImGui::SameLine();
+                    if(value) {
+                        double number=*value;
+                        if(ImGui::InputDouble(label,&number) && std::isfinite(number)) { value=number; changed=true; }
+                        track();
+                    } else ImGui::TextDisabled("%s: %.9g (inherited)",label,inherited);
+                    ImGui::PopID();
+                };
+                priority("Priority",behaviour.priority,cached.behaviour.defaults.priority);
+                for(int phase=0;phase<3;++phase) {
+                    auto inherited=behaviour; inherited.phasePriorities[phase].reset();
+                    priority((std::string(behaviourMethods[phase])+" priority").c_str(),behaviour.phasePriorities[phase],
+                             effectivePriority(inherited,cached.behaviour.defaults,phase));
+                }
             }
-            const auto& cached = fieldsOf(behaviour.script, hasRunner ? "Behaviour" : "Component");
             if (!cached.error.empty()) ImGui::TextWrapped("%s", cached.error.c_str());
             for (const auto& info : cached.fields) {
                 ImGui::PushID(info.name.c_str());
-                auto found = behaviour.fields.find(info.name);
-                FieldValue field = found != behaviour.fields.end() && found->second.index() == info.defaultValue.index()
+                auto found = behaviour.data.find(info.name);
+                FieldValue field = found != behaviour.data.end() && found->second.index() == info.defaultValue.index()
                     ? found->second : info.defaultValue;
                 bool edited = false;
                 if (info.kind == FieldKind::Number) {
@@ -648,12 +679,12 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
                     ImGui::EndCombo();
                 }
                 track();
-                if (edited) behaviour.fields[info.name] = field, changed = true;
-                if (found != behaviour.fields.end()) {
+                if (edited) behaviour.data[info.name] = field, changed = true;
+                if (found != behaviour.data.end()) {
                     ImGui::SameLine();
                     if (ImGui::SmallButton("Reset")) {
                         checkpoint();
-                        behaviour.fields.erase(info.name);
+                        behaviour.data.erase(info.name);
                         changed = true;
                     }
                 }
@@ -668,7 +699,7 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
             auto component = stored;
             if (editAttachment(component, false)) {
                 if (own) own->scriptComponents[name] = std::move(component);
-                else if (target.overrides) target.overrides->node(target.relative).scriptFields[name] = component.fields;
+                else if (target.overrides) target.overrides->node(target.relative).scriptFields[name] = component.data;
             }
         }
         if (!keep && own) checkpoint(), own->scriptComponents.erase(name);
@@ -679,7 +710,7 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         ImGui::PopID();
     }
     if (own) {
-        static char componentName[256] = "Spin", componentScript[512] = "scripts/spin-component.lh";
+        static char componentName[256] = "Health", componentScript[512] = "scripts/health.lh";
         ImGui::InputText("Component name", componentName, sizeof componentName);
         ImGui::InputText("Component script", componentScript, sizeof componentScript);
         if (ImGui::Button("Add Script Component") && componentName[0] && componentScript[0] &&
@@ -691,7 +722,8 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
     }
 
     // Work on a copy so edits never invalidate the expansion being displayed.
-    auto attachments = value.behaviours;
+    ImGui::SeparatorText("Behaviour Component");
+    auto attachments = value.behaviour;
     bool attachmentsChanged = false;
     for (std::size_t k = 0; k < attachments.size(); ++k) {
         auto& behaviour = attachments[k];
@@ -714,15 +746,15 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         attachmentsChanged = true;
     }
     if (attachmentsChanged) {
-        if (own) own->behaviours = std::move(attachments);
-        else if (target.overrides) target.overrides->node(target.relative).behaviours = std::move(attachments);
+        if (own) own->behaviour = std::move(attachments);
+        else if (target.overrides) target.overrides->node(target.relative).behaviour = std::move(attachments);
     }
-    if (layer && layer->behaviours && ImGui::Button("Revert Behaviours")) {
+    if (layer && layer->behaviour && ImGui::Button("Revert Behaviour Component")) {
         checkpoint();
-        layer->behaviours.reset();
+        layer->behaviour.reset();
     }
 
-    // The runner fields that refer to this node; clicking one selects its runner.
+    // The system fields that refer to this node; clicking one selects its system.
     const auto& nodes = view_.instances[selected_.instance].expansion.nodes;
     if (const auto found = references_.find({static_cast<std::size_t>(selected_.instance), &expanded - nodes.data()});
         found != references_.end()) {
@@ -732,8 +764,8 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
             const auto referrer = found->second[i];
             ImGui::PushID(static_cast<int>(i));
             if (ImGui::Selectable(referrer.label.c_str()))
-                selected_ = {referrer.runner ? Selection::Kind::Runner : Selection::Kind::Node,
-                             referrer.instance, referrer.from, referrer.runner};
+                selected_ = {referrer.system ? Selection::Kind::System : Selection::Kind::Node,
+                             referrer.instance, referrer.from, referrer.system};
             ImGui::PopID();
         }
     }
@@ -797,83 +829,83 @@ void Editor::removedList(Overrides& overrides, const Expansion& expansion, const
         if (ImGui::SmallButton("Restore")) restored = i;
         ImGui::PopID();
     }
-    std::optional<std::size_t> restoredRunner;
-    for (std::size_t i = 0; i < overrides.removedRunners.size(); ++i) {
-        const auto& entry = overrides.removedRunners[i];
+    std::optional<std::size_t> restoredSystem;
+    for (std::size_t i = 0; i < overrides.removedSystems.size(); ++i) {
+        const auto& entry = overrides.removedSystems[i];
         auto where = prefix;
         where.insert(where.end(), entry.instance.begin(), entry.instance.end());
-        const auto name = expansion.removedRunners.find({where, entry.runner});
+        const auto name = expansion.removedSystems.find({where, entry.system});
         ImGui::PushID(static_cast<int>(overrides.removed.size() + i));
-        ImGui::TextColored(overriddenColour, "Removed runner %s",
-                           name != expansion.removedRunners.end() ? name->second.c_str() : "(gone)");
+        ImGui::TextColored(overriddenColour, "Removed system %s",
+                           name != expansion.removedSystems.end() ? name->second.c_str() : "(gone)");
         ImGui::SameLine();
-        if (ImGui::SmallButton("Restore")) restoredRunner = i;
+        if (ImGui::SmallButton("Restore")) restoredSystem = i;
         ImGui::PopID();
     }
-    if (!restored && !restoredRunner) return;
+    if (!restored && !restoredSystem) return;
     checkpoint();
     if (restored) overrides.removed.erase(overrides.removed.begin() + static_cast<std::ptrdiff_t>(*restored));
-    if (restoredRunner)
-        overrides.removedRunners.erase(overrides.removedRunners.begin() + static_cast<std::ptrdiff_t>(*restoredRunner));
+    if (restoredSystem)
+        overrides.removedSystems.erase(overrides.removedSystems.begin() + static_cast<std::ptrdiff_t>(*restoredSystem));
 }
 
-void Editor::runnerInspector(const Runner& shown) {
+void Editor::systemInspector(const System& shown) {
     const auto track = [this] {
         if (ImGui::IsItemActivated()) editStart_ = doc_;
         if (ImGui::IsItemDeactivatedAfterEdit()) commit(std::move(editStart_));
     };
-    auto target = runnerTarget();
+    auto target = systemTarget();
     ImGui::TextDisabled(target.addedTo  ? "Added by an instance: kept in its overrides"
-                        : target.runner ? "Runner"
-                                        : "Runner of an instance: field edits are overrides");
+                        : target.system ? "System"
+                                        : "System of an instance: field edits are overrides");
     char text[256];
-    if (target.runner) {
-        fill(text, target.runner->name);
-        if (ImGui::InputText("Name", text, sizeof text) && text[0]) target.runner->name = text;
+    if (target.system) {
+        fill(text, target.system->name);
+        if (ImGui::InputText("Name", text, sizeof text) && text[0]) target.system->name = text;
         track();
     } else {
         ImGui::Text("%s", shown.name.c_str());
     }
-    // The layer field values are written to: the runner itself, or this instance's overrides.
+    // The layer field values are written to: the system itself, or this instance's overrides.
     const auto layer = [&](std::size_t k) -> std::map<std::string, FieldValue>* {
-        if (target.runner) return &target.runner->behaviours[k].fields;
-        if (target.overrides) return &target.overrides->fieldsOf(target.instance, selected_.runner, k).fields;
+        if (target.system) return &target.system->behaviour[k].data;
+        if (target.overrides) return &target.overrides->fieldsOf(target.instance, selected_.system, k).fields;
         return nullptr;
     };
     const auto overridden = [&](std::size_t k, const std::string& name) {
-        if (target.runner) return target.runner->behaviours[k].fields.count(name) > 0;
+        if (target.system) return target.system->behaviour[k].data.count(name) > 0;
         if (!target.overrides) return false;
-        for (const auto& entry : target.overrides->runners)
-            if (entry.instance == target.instance && entry.runner == selected_.runner && entry.behaviour == k)
+        for (const auto& entry : target.overrides->systems)
+            if (entry.instance == target.instance && entry.system == selected_.system && entry.behaviour == k)
                 return entry.fields.count(name) > 0;
         return false;
     };
 
     std::optional<std::size_t> remove;
-    for (std::size_t k = 0; k < shown.behaviours.size(); ++k) {
-        const auto& behaviour = shown.behaviours[k];
+    for (std::size_t k = 0; k < shown.behaviour.size(); ++k) {
+        const auto& behaviour = shown.behaviour[k];
         ImGui::PushID(static_cast<int>(k));
         const auto title = (behaviour.script.empty() ? std::string("(no script)") : behaviour.script) + "###behaviour";
         if (ImGui::CollapsingHeader(title.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
-            if (target.runner) {
+            if (target.system) {
                 fill(text, behaviour.script);
                 if (ImGui::InputTextWithHint("Script", "scripts/....lh", text, sizeof text))
-                    target.runner->behaviours[k].script = text;
+                    target.system->behaviour[k].script = text;
                 track();
-                ImGui::Checkbox("Script publishes System", &target.runner->behaviours[k].system);
+                ImGui::Checkbox("Script publishes System", &target.system->behaviour[k].systemScript);
                 track();
             }
-            const auto& cached = fieldsOf(behaviour.script, behaviour.system ? "System" : "Behaviour");
+            const auto& cached = fieldsOf(behaviour.script, behaviour.systemScript ? "System" : "Behaviour");
             if (!cached.error.empty()) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "%s", cached.error.c_str());
             for (const auto& info : cached.fields) {
                 ImGui::PushID(info.name.c_str());
-                const auto found = behaviour.fields.find(info.name);
+                const auto found = behaviour.data.find(info.name);
                 // A stored value of the wrong type (the script changed) shows the default.
-                const FieldValue value = found != behaviour.fields.end() && found->second.index() == info.defaultValue.index()
+                const FieldValue value = found != behaviour.data.end() && found->second.index() == info.defaultValue.index()
                                              ? found->second
                                              : info.defaultValue;
                 const bool marked = overridden(k, info.name);
-                if (marked && !target.runner) ImGui::PushStyleColor(ImGuiCol_Text, overriddenColour);
+                if (marked && !target.system) ImGui::PushStyleColor(ImGuiCol_Text, overriddenColour);
                 switch (info.kind) {
                 case FieldKind::Number: {
                     auto number = static_cast<float>(std::get<double>(value));
@@ -897,8 +929,8 @@ void Editor::runnerInspector(const Runner& shown) {
                     track();
                     break;
                 case FieldKind::SceneNode: {
-                    // A reference without a scene is relative to where the runner is; one
-                    // with a scene instance ID (level runners) starts at that scene.
+                    // A reference without a scene is relative to where the system is; one
+                    // with a scene instance ID (level systems) starts at that scene.
                     const NodeRef ref = std::get<NodeRef>(value);
                     int refInstance = selected_.instance;
                     NodePath refPath = selected_.instance >= 0 ? selected_.path : NodePath{};
@@ -920,7 +952,7 @@ void Editor::runnerInspector(const Runner& shown) {
                             checkpoint();
                             if (auto* fields = layer(k)) (*fields)[info.name] = NodeRef{};
                         }
-                        // A level runner may pick any node; any other runner, nodes of its own instance.
+                        // A level system may pick any node; any other system, nodes of its own instance.
                         const auto& prefix = selected_.instance >= 0 ? selected_.path : NodePath{};
                         for (std::size_t i = 0; i < view_.instances.size(); ++i) {
                             if (selected_.instance >= 0 && static_cast<int>(i) != selected_.instance) continue;
@@ -948,32 +980,32 @@ void Editor::runnerInspector(const Runner& shown) {
                     break;
                 }
                 }
-                if (marked && !target.runner) ImGui::PopStyleColor();
+                if (marked && !target.system) ImGui::PopStyleColor();
                 if (marked) {
                     ImGui::SameLine();
-                    if (ImGui::SmallButton(target.runner ? "Reset" : "Revert")) {
+                    if (ImGui::SmallButton(target.system ? "Reset" : "Revert")) {
                         checkpoint();
                         if (auto* fields = layer(k)) fields->erase(info.name);
                     }
                 }
                 ImGui::PopID();
             }
-            if (target.runner && ImGui::Button("Remove Behaviour")) remove = k;
+            if (target.system && ImGui::Button("Remove Behaviour")) remove = k;
         }
         ImGui::PopID();
     }
-    if (!target.runner) return;
+    if (!target.system) return;
     if (remove) {
         checkpoint();
-        target.runner->behaviours.erase(target.runner->behaviours.begin() + static_cast<std::ptrdiff_t>(*remove));
+        target.system->behaviour.erase(target.system->behaviour.begin() + static_cast<std::ptrdiff_t>(*remove));
     }
     ImGui::Separator();
     if (ImGui::Button("Add Behaviour")) {
         checkpoint();
-        target.runner->behaviours.push_back({});
+        target.system->behaviour.push_back({});
     }
     ImGui::SameLine();
-    if (ImGui::Button("Delete Runner")) erase();
+    if (ImGui::Button("Delete System")) erase();
 }
 
 const Editor::CachedFields& Editor::fieldsOf(const std::string& script, const std::string& symbol) {
@@ -990,7 +1022,10 @@ const Editor::CachedFields& Editor::fieldsOf(const std::string& script, const st
     entry.loaded = true;
     entry.stamp = stamp;
     try {
-        entry.fields = ScriptRuntime::fields(project_->root, script, symbol);
+        if(symbol=="Behaviour") {
+            entry.behaviour=ScriptRuntime::inspectBehaviour(project_->root,script);
+            entry.fields=entry.behaviour.fields;
+        } else entry.fields = ScriptRuntime::fields(project_->root, script, symbol);
         entry.error.clear();
     } catch (const std::exception& failure) {
         entry.fields.clear();

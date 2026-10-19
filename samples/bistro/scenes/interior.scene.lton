@@ -16,4 +16,4 @@ nodes = {
     {id = 13, name = "Ceiling Lamp 2", parent = 0, components = {transform = {position = {7.989, 3.074, 1.015}, rotation = {0, 0, 0}, scale = {1, 1, 1}}, light = {type = "Point", direction = {0, -1, 0}, colour = {1, 0.93, 0.82}, power = 9.42478, radius = 12, threshold = 0.01, castShadows = true^}}},
     {id = 14, name = "Ceiling Lamp 3", parent = 0, components = {transform = {position = {4.263, 3.095, -4.92}, rotation = {0, 0, 0}, scale = {1, 1, 1}}, light = {type = "Point", direction = {0, -1, 0}, colour = {1, 0.93, 0.82}, power = 9.42478, radius = 12, threshold = 0.01, castShadows = true^}}},
     {id = 15, name = "Ceiling Lamp 4", parent = 0, components = {transform = {position = {6.107, 2.939, -8.468}, rotation = {0, 0, 0}, scale = {1, 1, 1}}, light = {type = "Point", direction = {0, -1, 0}, colour = {1, 0.93, 0.82}, power = 9.42478, radius = 12, threshold = 0.01, castShadows = true^}}}},
-runners = {},
+systems = {},

@@ -281,13 +281,13 @@ std::string formatTime(std::int64_t seconds) {
 }
 
 /// Fills the window below the menu bar with a dock space. When there is no saved
-/// layout that knows the current panels, it docks Scene above Runners on the left,
+/// layout that knows the current panels, it docks Scene above Systems on the left,
 /// Inspector on the right, Browser and Console below and Viewport in the middle.
 void dockSpace() {
     const auto* viewport = ImGui::GetMainViewport();
     const ImGuiID id = ImGui::DockSpaceOverViewport(0, viewport);
     if (const auto* node = ImGui::DockBuilderGetNode(id);
-        node && node->IsSplitNode() && ImGui::FindWindowSettingsByID(ImHashStr("Runners"))) {
+        node && node->IsSplitNode() && ImGui::FindWindowSettingsByID(ImHashStr("Systems"))) {
         // Console came later: in a layout saved before it, it joins Browser's tabs.
         if (!ImGui::FindWindowSettingsByID(ImHashStr("Console")))
             if (const auto* browser = ImGui::FindWindowSettingsByID(ImHashStr("Browser")); browser && browser->DockId)
@@ -301,10 +301,10 @@ void dockSpace() {
     const ImGuiID left = ImGui::DockBuilderSplitNode(centre, ImGuiDir_Left, 0.18f, nullptr, &centre);
     const ImGuiID right = ImGui::DockBuilderSplitNode(centre, ImGuiDir_Right, 0.26f, nullptr, &centre);
     const ImGuiID bottom = ImGui::DockBuilderSplitNode(centre, ImGuiDir_Down, 0.27f, nullptr, &centre);
-    ImGuiID runners = 0;
-    const ImGuiID scene = ImGui::DockBuilderSplitNode(left, ImGuiDir_Up, 0.55f, nullptr, &runners);
+    ImGuiID systems = 0;
+    const ImGuiID scene = ImGui::DockBuilderSplitNode(left, ImGuiDir_Up, 0.55f, nullptr, &systems);
     ImGui::DockBuilderDockWindow("Scene", scene);
-    ImGui::DockBuilderDockWindow("Runners", runners);
+    ImGui::DockBuilderDockWindow("Systems", systems);
     ImGui::DockBuilderDockWindow("Inspector", right);
     ImGui::DockBuilderDockWindow("Browser", bottom);
     ImGui::DockBuilderDockWindow("Console", bottom);
@@ -746,7 +746,7 @@ bool Editor::frame(float deltaSeconds, const std::function<void()>& input) {
     menu();
     dockSpace();
     scenePanel();
-    runnersPanel();
+    systemsPanel();
     inspector();
     viewport();
     browser();
@@ -967,31 +967,31 @@ Editor::NodeTarget Editor::targetOf(int instance, const NodePath& path) {
     return target;
 }
 
-Editor::RunnerTarget Editor::runnerTarget() {
-    RunnerTarget target;
-    if (selected_.kind != Selection::Kind::Runner) return target;
+Editor::SystemTarget Editor::systemTarget() {
+    SystemTarget target;
+    if (selected_.kind != Selection::Kind::System) return target;
     auto* file = fileOf(selected_.instance);
     if (selected_.instance < 0) {
-        target.runner = doc_.world.level.findRunner(selected_.runner);
+        target.system = doc_.world.level.findSystem(selected_.system);
     } else if (!file) {
         return target;
     } else if (file->variant()) {
         target.overrides = &file->overrides;
         target.instance = selected_.path;
     } else if (selected_.path.empty()) {
-        target.runner = file->findRunner(selected_.runner);
+        target.system = file->findSystem(selected_.system);
     } else if (auto* own = file->findNode(selected_.path[0])) {
         target.overrides = &own->overrides;
         target.instance.assign(selected_.path.begin() + 1, selected_.path.end());
     }
-    // A runner an instance added is edited in place, inside that instance's overrides
-    // (or those of a node it added, for that node's runners).
+    // A system an instance added is edited in place, inside that instance's overrides
+    // (or those of a node it added, for that node's systems).
     while (target.overrides) {
         if (target.instance.empty()) {
-            auto& added = target.overrides->addedRunners;
-            const auto it = std::find_if(added.begin(), added.end(), [&](const Runner& each) { return each.id == selected_.runner; });
+            auto& added = target.overrides->addedSystems;
+            const auto it = std::find_if(added.begin(), added.end(), [&](const System& each) { return each.id == selected_.system; });
             if (it != added.end()) {
-                target.runner = &*it;
+                target.system = &*it;
                 target.addedTo = target.overrides;
                 target.overrides = nullptr;
             }
@@ -1023,12 +1023,12 @@ SceneInstance* Editor::selectedScene() {
     return doc_.world.level.findScene(view_.instances[selected_.instance].id);
 }
 
-const Runner* Editor::selectedRunner() {
-    if (selected_.kind != Selection::Kind::Runner) return nullptr;
-    if (selected_.instance < 0) return doc_.world.level.findRunner(selected_.runner);
+const System* Editor::selectedSystem() {
+    if (selected_.kind != Selection::Kind::System) return nullptr;
+    if (selected_.instance < 0) return doc_.world.level.findSystem(selected_.system);
     if (selected_.instance >= static_cast<int>(view_.instances.size())) return nullptr;
-    for (const auto& expanded : view_.instances[selected_.instance].expansion.runners)
-        if (expanded.instance == selected_.path && expanded.runner.id == selected_.runner) return &expanded.runner;
+    for (const auto& expanded : view_.instances[selected_.instance].expansion.systems)
+        if (expanded.instance == selected_.path && expanded.system.id == selected_.system) return &expanded.system;
     return nullptr;
 }
 
@@ -1679,7 +1679,7 @@ void assign(NodeOverride& into, const NodeOverride& from) {
     if (from.rotation) into.rotation = from.rotation;
     if (from.scale) into.scale = from.scale;
     if (from.colour) into.colour = from.colour;
-    if (from.behaviours) into.behaviours = from.behaviours;
+    if (from.behaviour) into.behaviour = from.behaviour;
     for (const auto& [name, fields] : from.scriptFields)
         for (const auto& [field, value] : fields) into.scriptFields[name][field] = value;
 }
@@ -1688,10 +1688,10 @@ void assign(NodeOverride& into, const NodeOverride& from) {
 void assign(SceneNode& into, const NodeOverride& from) {
     applyExtraComponents(into, from);
     if (from.name) into.name = *from.name;
-    if (from.behaviours) into.behaviours = *from.behaviours;
+    if (from.behaviour) into.behaviour = *from.behaviour;
     for (const auto& [name, fields] : from.scriptFields)
         if (const auto component = into.scriptComponents.find(name); component != into.scriptComponents.end())
-            for (const auto& [field, value] : fields) component->second.fields[field] = value;
+            for (const auto& [field, value] : fields) component->second.data[field] = value;
     if (auto& transform = into.transform) {
         if (from.position) transform->position = *from.position;
         if (from.rotation) transform->rotation = *from.rotation;
@@ -1703,12 +1703,12 @@ void assign(SceneNode& into, const NodeOverride& from) {
 /// Adds @p from on top of the overrides @p into already has.
 void merge(Overrides& into, const Overrides& from) {
     for (const auto& entry : from.nodes) assign(into.node(entry.path), entry);
-    for (const auto& entry : from.runners)
-        for (const auto& [name, value] : entry.fields) into.fieldsOf(entry.instance, entry.runner, entry.behaviour).fields[name] = value;
+    for (const auto& entry : from.systems)
+        for (const auto& [name, value] : entry.fields) into.fieldsOf(entry.instance, entry.system, entry.behaviour).fields[name] = value;
     into.added.insert(into.added.end(), from.added.begin(), from.added.end());
     into.removed.insert(into.removed.end(), from.removed.begin(), from.removed.end());
-    into.addedRunners.insert(into.addedRunners.end(), from.addedRunners.begin(), from.addedRunners.end());
-    into.removedRunners.insert(into.removedRunners.end(), from.removedRunners.begin(), from.removedRunners.end());
+    into.addedSystems.insert(into.addedSystems.end(), from.addedSystems.begin(), from.addedSystems.end());
+    into.removedSystems.insert(into.removedSystems.end(), from.removedSystems.begin(), from.removedSystems.end());
 }
 }
 
@@ -1752,18 +1752,18 @@ void Editor::applyOverrides(int instance, NodeId id) {
             entry.node.parent = entry.parent.empty() ? prefab.nodes.front().id : entry.parent[0];
             if (prefab.findNode(entry.node.parent)) prefab.nodes.push_back(std::move(entry.node));
         }
-        // Added runners join the prefab's; removed ones leave it, or the instance they come from.
-        for (const auto& runner : node->overrides.addedRunners) {
-            auto& made = prefab.addRunner(runner.name);
+        // Added systems join the prefab's; removed ones leave it, or the instance they come from.
+        for (const auto& system : node->overrides.addedSystems) {
+            auto& made = prefab.addSystem(system.name);
             const auto madeId = made.id;
-            made = runner;
+            made = system;
             made.id = madeId;
         }
-        for (const auto& entry : node->overrides.removedRunners) {
+        for (const auto& entry : node->overrides.removedSystems) {
             if (entry.instance.empty()) {
-                prefab.removeRunner(entry.runner);
+                prefab.removeSystem(entry.system);
             } else if (auto* target = prefab.findNode(entry.instance[0])) {
-                target->overrides.removedRunners.push_back({NodePath(entry.instance.begin() + 1, entry.instance.end()), entry.runner});
+                target->overrides.removedSystems.push_back({NodePath(entry.instance.begin() + 1, entry.instance.end()), entry.system});
             }
         }
         // Removed nodes leave the prefab, or join the removals of its instance they lie in.
@@ -1774,14 +1774,14 @@ void Editor::applyOverrides(int instance, NodeId id) {
                 target->overrides.removed.emplace_back(path.begin() + 1, path.end());
             }
         }
-        for (const auto& entry : node->overrides.runners) {
+        for (const auto& entry : node->overrides.systems) {
             if (entry.instance.empty()) {
-                if (auto* runner = prefab.findRunner(entry.runner); runner && entry.behaviour < runner->behaviours.size())
-                    for (const auto& [name, value] : entry.fields) runner->behaviours[entry.behaviour].fields[name] = value;
+                if (auto* system = prefab.findSystem(entry.system); system && entry.behaviour < system->behaviour.size())
+                    for (const auto& [name, value] : entry.fields) system->behaviour[entry.behaviour].data[name] = value;
             } else if (auto* target = prefab.findNode(entry.instance[0])) {
                 const NodePath rest(entry.instance.begin() + 1, entry.instance.end());
                 for (const auto& [name, value] : entry.fields)
-                    target->overrides.fieldsOf(rest, entry.runner, entry.behaviour).fields[name] = value;
+                    target->overrides.fieldsOf(rest, entry.system, entry.behaviour).fields[name] = value;
             }
         }
     }
@@ -1850,33 +1850,33 @@ void Editor::unpack(int instance, NodeId id) {
     for (std::size_t k = 0; k < inside.size(); ++k) {
         auto base = expansion.nodes[inside[k]].path;
         if (!base.empty() && !expansion.nodes[inside[k]].root) base.pop_back();
-        for (auto& attachment : plain[k].behaviours) refs(attachment.fields, 0, base);
-        for (auto& [name, component] : plain[k].scriptComponents) refs(component.fields, 0, base);
+        for (auto& attachment : plain[k].behaviour) refs(attachment.data, 0, base);
+        for (auto& [name, component] : plain[k].scriptComponents) refs(component.data, 0, base);
     }
     for (auto& each : edited->nodes) {
-        for (auto& attachment : each.behaviours) refs(attachment.fields, 0, {});
-        for (auto& [name, component] : each.scriptComponents) refs(component.fields, 0, {});
+        for (auto& attachment : each.behaviour) refs(attachment.data, 0, {});
+        for (auto& [name, component] : each.scriptComponents) refs(component.data, 0, {});
     }
-    // The instance's runners become the file's, by the instance they came from and their ID.
-    std::map<std::pair<std::size_t, std::uint32_t>, std::uint32_t> runnerIds;
-    for (const auto& expanded : expansion.runners) {
+    // The instance's systems become the file's, by the instance they came from and their ID.
+    std::map<std::pair<std::size_t, std::uint32_t>, std::uint32_t> systemIds;
+    for (const auto& expanded : expansion.systems) {
         const auto from = expansion.find(expanded.instance);
         if (expanded.instance.empty() || !ids.count(from)) continue;
-        auto& made = edited->addRunner(expanded.runner.name);
+        auto& made = edited->addSystem(expanded.system.name);
         const auto madeId = made.id;
-        made = expanded.runner;
+        made = expanded.system;
         made.id = madeId;
-        for (auto& behaviour : made.behaviours) refs(behaviour.fields, 0, expanded.instance);
-        runnerIds[{from, expanded.runner.id}] = madeId;
+        for (auto& behaviour : made.behaviour) refs(behaviour.data, 0, expanded.instance);
+        systemIds[{from, expanded.system.id}] = madeId;
     }
-    for (auto& runner : edited->runners)
-        for (auto& behaviour : runner.behaviours) refs(behaviour.fields, 0, {});
-    // Level runners refer to nodes of the level's instances of this scene.
+    for (auto& system : edited->systems)
+        for (auto& behaviour : system.behaviour) refs(behaviour.data, 0, {});
+    // Level systems refer to nodes of the level's instances of this scene.
     for (const auto& placed : doc_.world.level.scenes) {
         const auto scene = doc_.world.scenes.find(placed.scene);
         if (scene == doc_.world.scenes.end() || &scene->second != edited) continue;
-        for (auto& runner : doc_.world.level.runners)
-            for (auto& behaviour : runner.behaviours) refs(behaviour.fields, placed.id, {});
+        for (auto& system : doc_.world.level.systems)
+            for (auto& behaviour : system.behaviour) refs(behaviour.data, placed.id, {});
     }
     // The unpacked nodes take the instance node's place among its siblings.
     const auto at = std::find_if(edited->nodes.begin(), edited->nodes.end(), [id](const SceneNode& each) { return each.id == id; });
@@ -1906,13 +1906,13 @@ void Editor::replaceDialog() {
     ImGui::EndPopup();
 }
 
-void Editor::addRunner() {
-    // Into an instance (the selected runner's, or the one holding the selected
-    // node), the runner is kept in that instance's overrides.
+void Editor::addSystem() {
+    // Into an instance (the selected system's, or the one holding the selected
+    // node), the system is kept in that instance's overrides.
     Overrides* into = nullptr;
     NodePath prefix;
-    if (selected_.kind == Selection::Kind::Runner && selected_.instance >= 0) {
-        const auto target = runnerTarget();
+    if (selected_.kind == Selection::Kind::System && selected_.instance >= 0) {
+        const auto target = systemTarget();
         if (target.addedTo) {
             into = target.addedTo;
             prefix = selected_.path;
@@ -1937,9 +1937,9 @@ void Editor::addRunner() {
     }
     if (into) {
         auto before = doc_;
-        Runner runner{newRunnerId(), "Runner", {}};
-        into->addedRunners.push_back(runner);
-        selected_ = {Selection::Kind::Runner, std::max(selected_.instance, 0), prefix, runner.id};
+        System system{newSystemId(), "System", {}};
+        into->addedSystems.push_back(system);
+        selected_ = {Selection::Kind::System, std::max(selected_.instance, 0), prefix, system.id};
         commit(std::move(before));
         return;
     }
@@ -1947,10 +1947,10 @@ void Editor::addRunner() {
         auto before = doc_;
         // At the level, to the scene of the selection when it lies in one; else to the level.
         auto* file = selected_.kind != Selection::Kind::None ? fileOf(selected_.instance) : content();
-        auto& owner = file ? static_cast<RunnerSet&>(*file) : doc_.world.level;
-        auto& added = owner.addRunner("Runner");
-        added.name = "Runner " + std::to_string(added.id);
-        selected_ = {Selection::Kind::Runner, file ? std::max(selected_.instance, 0) : -1, {}, added.id};
+        auto& owner = file ? static_cast<SystemSet&>(*file) : doc_.world.level;
+        auto& added = owner.addSystem("System");
+        added.name = "System " + std::to_string(added.id);
+        selected_ = {Selection::Kind::System, file ? std::max(selected_.instance, 0) : -1, {}, added.id};
         commit(std::move(before));
     } catch (const std::exception& error) {
         log(error.what());
@@ -1995,36 +1995,36 @@ void Editor::duplicate() {
         if (copy.transform) copy.transform->position.x += 1;
         added = std::move(copy);
         const auto remap = [&](Behaviour& attachment) {
-            for (auto& [name, value] : attachment.fields)
+            for (auto& [name, value] : attachment.data)
                 if (auto* ref = std::get_if<NodeRef>(&value); ref && !ref->scene && ref->node == original)
                     ref->node = added.id;
         };
-        for (auto& attachment : added.behaviours) remap(attachment);
+        for (auto& attachment : added.behaviour) remap(attachment);
         for (auto& [name, component] : added.scriptComponents) remap(component);
-        // Runners that refer to the node come along, referring to the copy instead
+        // Systems that refer to the node come along, referring to the copy instead
         // (the file's own, and at the level the level's naming this scene instance).
-        const auto copyRunners = [&](RunnerSet& owner, std::uint32_t scene) {
-            for (std::size_t i = 0, count = owner.runners.size(); i < count; ++i) {
-                auto runner = owner.runners[i];
+        const auto copySystems = [&](SystemSet& owner, std::uint32_t scene) {
+            for (std::size_t i = 0, count = owner.systems.size(); i < count; ++i) {
+                auto system = owner.systems[i];
                 bool refers = false;
-                for (auto& behaviour : runner.behaviours)
-                    for (auto& [name, value] : behaviour.fields)
+                for (auto& behaviour : system.behaviour)
+                    for (auto& [name, value] : behaviour.data)
                         if (auto* ref = std::get_if<NodeRef>(&value); ref && ref->scene == scene && ref->node == original) {
                             ref->node = added.id;
                             refers = true;
                         }
                 if (!refers) continue;
-                auto& made = owner.addRunner(runner.name);
-                runner.id = made.id;
-                if (runner.name.size() <= 250) runner.name += " Copy";
-                made = std::move(runner);
+                auto& made = owner.addSystem(system.name);
+                system.id = made.id;
+                if (system.name.size() <= 250) system.name += " Copy";
+                made = std::move(system);
             }
         };
         const auto copied = added.id;
-        copyRunners(*file, 0);
+        copySystems(*file, 0);
         if (!content())
             if (const auto* placed = doc_.world.level.findScene(view_.instances[selected_.instance].id))
-                copyRunners(doc_.world.level, placed->id);
+                copySystems(doc_.world.level, placed->id);
         selected_.path = {copied};
         commit(std::move(before));
     } catch (const std::exception& error) {
@@ -2076,24 +2076,24 @@ void Editor::erase() {
         }
         checkpoint();
         fileOf(selected_.instance)->removeNode(selected_.path[0]);
-    } else if (selected_.kind == Selection::Kind::Runner) {
+    } else if (selected_.kind == Selection::Kind::System) {
         // One an instance added leaves its overrides; one it brought is removed by them.
-        const auto target = runnerTarget();
-        if (!target.runner || target.addedTo) {
+        const auto target = systemTarget();
+        if (!target.system || target.addedTo) {
             if (!target.addedTo && !target.overrides) return;
             checkpoint();
             if (target.addedTo) {
-                auto& added = target.addedTo->addedRunners;
-                added.erase(std::remove_if(added.begin(), added.end(), [&](const Runner& each) { return each.id == selected_.runner; }),
+                auto& added = target.addedTo->addedSystems;
+                added.erase(std::remove_if(added.begin(), added.end(), [&](const System& each) { return each.id == selected_.system; }),
                             added.end());
             } else {
-                target.overrides->removedRunners.push_back({target.instance, selected_.runner});
+                target.overrides->removedSystems.push_back({target.instance, selected_.system});
             }
             selected_ = {};
             return;
         }
         checkpoint();
-        (selected_.instance < 0 ? static_cast<RunnerSet&>(doc_.world.level) : *fileOf(selected_.instance)).removeRunner(selected_.runner);
+        (selected_.instance < 0 ? static_cast<SystemSet&>(doc_.world.level) : *fileOf(selected_.instance)).removeSystem(selected_.system);
     } else {
         return;
     }
@@ -2213,10 +2213,10 @@ void Editor::menu() {
             if (ImGui::MenuItem("Plane")) addNode(PrimitiveKind::Plane);
             ImGui::EndMenu();
         }
-        if (ImGui::MenuItem("Add Runner")) addRunner();
+        if (ImGui::MenuItem("Add System")) addSystem();
         if (ImGui::MenuItem("Duplicate Node", "Ctrl+D", false, targetOf(selected_.instance, selected_.path).node))
             duplicate();
-        if (ImGui::MenuItem("Delete", "Del", false, selectedNode() || selectedRunner())) erase();
+        if (ImGui::MenuItem("Delete", "Del", false, selectedNode() || selectedSystem())) erase();
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("View")) {

@@ -26,16 +26,33 @@ struct FieldInfo {
     FieldValue defaultValue;
 };
 
+/// Method-query capabilities and priority defaults read from a fresh script instance.
+struct BehaviourInfo {
+    std::array<bool,3> methods{};
+    bool start = false;
+    BehaviourDefaults defaults;
+    std::vector<FieldInfo> fields;
+};
+
+/// One ordered result of a BehaviourSystem query, including coroutine resumptions.
+struct BehaviourMatch {
+    int scene;
+    std::size_t node, attachment;
+    double priority;
+    std::string script;
+    bool waiting = false;
+};
+
 /// What a Play session runs.
 enum class PlayScope {
-    /// The open level: its runners and its scenes' runners, without main.lh.
+    /// The open level: its systems and its scenes' systems, without main.lh.
     Level,
     /// The whole game: main.lh as well. main.lh is a script; with await^ at its top
-    /// level it is a coroutine, resumed once per frame before the runners.
+    /// level it is a coroutine, resumed once per frame before the systems.
     Game,
 };
 
-/// Runs a world's L^ node Behaviours, direct runner attachments and Systems.
+/// Runs a world's L^ node Behaviours, direct system attachments and Systems.
 /// Each Play checks and compiles its scripts, then constructs isolated Behaviour
 /// and Component instances for every expanded scene/prefab instance. All VM calls
 /// stay on the calling thread; native engine callbacks may run in the parallel group.
@@ -44,13 +61,13 @@ public:
     /// Receives text the scripts pass to throne.log, and warnings about field values.
     using Log = std::function<void(const std::string&)>;
 
-    /// @param world The level (for its own runners); must outlive the runtime.
+    /// @param world The level (for its own systems); must outlive the runtime.
     /// @param expanded The world's scene instances, expanded; the scripts read and
     ///        modify these nodes, never the world itself, so re-expanding the world
     ///        undoes a session. Must outlive the runtime; spawned nodes are appended, never removed.
     /// @param root Project directory that script paths are relative to.
     /// @param log Destination of throne.log and of field warnings.
-    /// @param scope Whether main.lh runs as well as the runners.
+    /// @param scope Whether main.lh runs as well as the systems.
     /// @throws ScriptError when any script is missing, rejected or breaks the contract.
     ScriptRuntime(const World& world, LevelExpansion& expanded, const std::filesystem::path& root, Log log,
                   PlayScope scope);
@@ -59,14 +76,14 @@ public:
     ScriptRuntime(const ScriptRuntime&) = delete;
     ScriptRuntime& operator=(const ScriptRuntime&) = delete;
 
-    /// Runs main.lh (Game scope) and the level schedule. Within a user stage,
-    /// direct attachments precede node attachments in scene-instance/hierarchy order.
-    /// A start runs once, before its attachment's first update in its selected stage.
+    /// Runs main.lh (Game scope) and the level schedule. BehaviourSystems query
+    /// enabled methods in effective-priority order, with hierarchy/attachment ties.
+    /// Each method owns its suspended invocation independently; start runs once.
     /// @throws ScriptError on a run-time failure or a frame over budget.
     void update(float deltaSeconds);
     /// Runs engine callbacks at the same barriers as script stages; OGRE stays on this thread.
     void update(float deltaSeconds, const std::function<void(const std::string&)>& engine);
-    /// Effective level schedule, including direct runners declared in scenes or prefabs.
+    /// Effective level schedule, including direct systems declared in scenes or prefabs.
     static std::vector<ExecutionStage> schedule(const World& world, const LevelExpansion& expanded);
     /// True once main.lh has run to its end (Game scope only).
     bool finished() const;
@@ -94,6 +111,12 @@ public:
     /// @throws ScriptError when the script is missing, rejected or publishes no Behaviour.
     static std::vector<FieldInfo> fields(const std::filesystem::path& root, const std::string& script,
                                          std::string symbol = {});
+    /// Reflects node callbacks and ordering defaults without starting a Play session.
+    static BehaviourInfo inspectBehaviour(const std::filesystem::path& root,const std::string& script);
+    /// Returns the cached execution order used by the named BehaviourSystem.
+    std::vector<BehaviourMatch> behaviourMatches(const std::string& system) const;
+    /// Marks externally edited expanded attachments dirty; script attachment APIs do this automatically.
+    void refreshBehaviours();
 
     /// Session state shared with the host functions; opaque outside ScriptRuntime.cpp.
     struct State;

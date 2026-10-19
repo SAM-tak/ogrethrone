@@ -26,7 +26,7 @@ int main(int argc,char** argv) {
                     require(n.material && n.sphere && !n.material->reflectionMap.empty(),"Palette lost PBS/reflection data");
                     require(n.material->roughness>=.02f && n.material->roughness<=1,"Palette roughness invalid");
                 }
-                animated+=!n.behaviours.empty(); systems+=bool(n.particles);
+                animated+=!n.behaviour.empty(); systems+=bool(n.particles);
                 if(n.light) {
                     point+=n.light->type==throne::LightType::Point;
                     spot+=n.light->type==throne::LightType::Spot;

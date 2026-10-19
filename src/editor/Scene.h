@@ -2,6 +2,7 @@
 
 #include "core/Math.h"
 #include "editor/Lton.h"
+#include "runtime/FramePipeline.h"
 #include <array>
 #include <cstdint>
 #include <filesystem>
@@ -16,6 +17,8 @@ namespace throne {
 /// from different files do not meet (TDDja/06 3). 0 means no node; files may
 /// hold any positive ID.
 using NodeId = std::uint64_t;
+/// Generates an identity for a node or script attachment.
+NodeId newNodeId();
 
 /// Node IDs from a scene or prefab's own node down through prefab instances,
 /// outermost first (TDDja/06 3). Each ID is looked for anywhere below the node
@@ -41,26 +44,43 @@ struct NodeRef {
 /// A value written for one behaviour field, overriding the script's default.
 using FieldValue = std::variant<double, bool, std::string, NodeRef>;
 
-/// One script attachment and its saved field values; also used for custom Component data.
+/// One object-oriented script attachment: a script reference and its instance data.
+/// Also used to store script-defined Component data.
 struct Behaviour {
     /// Project-relative path of a module^ publishing `Behaviour = def^{ ... }`.
     std::string script;
-    /// Field name to value; fields not listed keep the script's default.
-    std::map<std::string, FieldValue> fields;
-    /// Execution stage for a node attachment.
-    std::string runner = "Update";
-    /// Runner attachments may publish System instead of Behaviour.
-    bool system = false;
+    /// Saved instance data; omitted fields retain the script's defaults.
+    std::map<std::string, FieldValue> data;
+    /// System attachments may publish System instead of Behaviour.
+    bool systemScript = false;
+    /// Attachment identity, retained across field changes and prefab overrides.
+    NodeId id = newNodeId();
+    bool enabled = true;
+    /// Instance overrides; missing values inherit the script's defaults.
+    std::optional<double> priority;
+    std::array<std::optional<double>,3> phasePriorities;
 };
 
+/// Script defaults for ordering the same instance in different execution contexts.
+struct BehaviourDefaults {
+    double priority = 0;
+    std::array<std::optional<double>,3> phasePriorities;
+};
+/// Resolves instance/phase overrides before script/phase defaults.
+inline double effectivePriority(const Behaviour& b,const BehaviourDefaults& defaults,int phase) {
+    if(b.phasePriorities[phase]) return *b.phasePriorities[phase];
+    if(b.priority) return *b.priority;
+    return defaults.phasePriorities[phase].value_or(defaults.priority);
+}
+
 /// Direct Behaviour/System attachments grouped into the named execution stage (TDDja/07).
-/// A runner has no transform; it reaches scene nodes only through field values.
-struct Runner {
-    /// Unique nonzero ID within the file that holds the runner.
+/// A system has no transform; it reaches scene nodes only through field values.
+struct System {
+    /// Unique nonzero ID within the file that holds the system.
     std::uint32_t id = 0;
     /// Display name; 1 to 255 bytes.
     std::string name;
-    std::vector<Behaviour> behaviours;
+    std::vector<Behaviour> behaviour;
 };
 
 /// A sphere drawn around the node's origin.
@@ -210,49 +230,49 @@ struct NodeOverride {
     std::optional<RigidBody> rigidBody;
 
     /// Replacement attachment list, including field edits, additions and removals.
-    std::optional<std::vector<Behaviour>> behaviours;
+    std::optional<std::vector<Behaviour>> behaviour;
     /// Field overrides for existing script components; never adds or removes a component.
     std::map<std::string, std::map<std::string, FieldValue>> scriptFields;
 };
 
-/// Field values an instance gives one behaviour of a runner in its prefab.
+/// Field values an instance gives one behaviour of a system in its prefab.
 struct FieldOverride {
-    /// The prefab instance the runner comes from, relative to the instance; empty for
+    /// The prefab instance the system comes from, relative to the instance; empty for
     /// the instance's own prefab.
     NodePath instance;
-    std::uint32_t runner = 0;
+    std::uint32_t system = 0;
     std::size_t behaviour = 0;
     std::map<std::string, FieldValue> fields;
 };
 
 struct AddedNode;
 
-/// A runner an instance's overrides remove: its ID in the instance it comes from.
-struct RemovedRunner {
+/// A system an instance's overrides remove: its ID in the instance it comes from.
+struct RemovedSystem {
     /// That instance, relative to the overriding one; empty for the instance itself.
     NodePath instance;
-    std::uint32_t runner = 0;
+    std::uint32_t system = 0;
 };
 
 /// What one instance changes in what it instantiates (TDDja/06 4).
 struct Overrides {
     std::vector<NodeOverride> nodes;
-    std::vector<FieldOverride> runners;
+    std::vector<FieldOverride> systems;
     /// Nodes the instance adds, parents before children.
     std::vector<AddedNode> added;
     /// Nodes the instance removes, each with all below it; relative to the
     /// instance and never empty (the instance node itself stays).
     std::vector<NodePath> removed;
-    /// Runners the instance adds, with IDs from newRunnerId().
-    std::vector<Runner> addedRunners;
-    std::vector<RemovedRunner> removedRunners;
+    /// Systems the instance adds, with IDs from newSystemId().
+    std::vector<System> addedSystems;
+    std::vector<RemovedSystem> removedSystems;
 
     /// Whether nothing is overridden.
     bool empty() const;
     /// Returns the override for @p path, adding an empty one when there is none.
     NodeOverride& node(const NodePath& path);
     /// Returns the field override for that behaviour, adding an empty one when there is none.
-    FieldOverride& fieldsOf(const NodePath& instance, std::uint32_t runner, std::size_t behaviour);
+    FieldOverride& fieldsOf(const NodePath& instance, std::uint32_t system, std::size_t behaviour);
 };
 
 /// The Transform component (TDDja/07 3): placement relative to the nearest ancestor
@@ -300,8 +320,8 @@ struct SceneNode {
     std::optional<PlaneCollider> planeCollider;
     std::optional<RigidBody> rigidBody;
 
-    /// Scripts attached to this node, in attachment order.
-    std::vector<Behaviour> behaviours;
+    /// The Behaviour component: independent script/data instances, in attachment order.
+    std::vector<Behaviour> behaviour;
     /// Script-defined component types, keyed by their query name. Each attachment publishes Component.
     std::map<std::string, Behaviour> scriptComponents;
     /// Project-relative path of the prefab this node instantiates; empty for a plain node.
@@ -335,23 +355,23 @@ struct AddedNode {
     SceneNode node;
 };
 
-/// The runners of one file (a prefab, scene or level), in run order.
-struct RunnerSet {
-    std::vector<Runner> runners;
-    std::uint32_t nextRunnerId = 1;
+/// The systems of one file (a prefab, scene or level), in run order.
+struct SystemSet {
+    std::vector<System> systems;
+    std::uint32_t nextSystemId = 1;
 
-    /// Returns the runner with @p id, or nullptr.
-    Runner* findRunner(std::uint32_t id);
-    /// Appends a runner without behaviours and returns it.
-    Runner& addRunner(const std::string& name);
-    /// Removes the runner.
-    void removeRunner(std::uint32_t id);
+    /// Returns the system with @p id, or nullptr.
+    System* findSystem(std::uint32_t id);
+    /// Appends a system without behaviour and returns it.
+    System& addSystem(const std::string& name);
+    /// Removes the system.
+    void removeSystem(std::uint32_t id);
 };
 
-/// Nodes and runners: what prefabs and scenes share (TDDja/05 2, 3). A prefab
+/// Nodes and systems: what prefabs and scenes share (TDDja/05 2, 3). A prefab
 /// file has exactly one root node, or is a variant (TDDja/06 3.2): no nodes, only
 /// a base prefab and overrides of it.
-struct Prefab : RunnerSet {
+struct Prefab : SystemSet {
     /// Nodes with every parent before its children; siblings keep this order.
     std::vector<SceneNode> nodes;
     /// For a variant, the project-relative path of the prefab it is based on.
@@ -404,19 +424,19 @@ struct Scene : Prefab {
 
 /// Returns a new NodeId: a Snowflake ID (core/Ids.h) counted from 2026-01-01 UTC. Not thread safe.
 NodeId newNodeId();
-/// Returns a random runner ID from 0x80000000 up, for runners an instance adds:
-/// a file numbers its own runners from 1, so the two do not meet.
-std::uint32_t newRunnerId();
+/// Returns a random system ID from 0x80000000 up, for systems an instance adds:
+/// a file numbers its own systems from 1, so the two do not meet.
+std::uint32_t newSystemId();
 /// Writes @p overrides as an LTON table; shared by prefab instances and scene instances.
 LhatValue writeOverrides(lton::Writer& out, const Overrides& overrides);
 /// Reads what writeOverrides wrote (nil^ reads as no overrides). @throws lton::Invalid on malformed data.
 Overrides readOverrides(LhatValue value);
-/// Writes node or runner attachments, including their execution stage.
-LhatValue writeBehaviours(lton::Writer& out, const std::vector<Behaviour>& behaviours);
+/// Writes node or system attachments, including their execution stage.
+LhatValue writeBehaviourList(lton::Writer& out, const std::vector<Behaviour>& behaviour);
 /// Reads attachments; nil means an empty list.
-std::vector<Behaviour> readBehaviours(LhatValue value);
-/// Writes @p runners as an LTON sequence; shared by prefabs, scenes and levels.
-LhatValue writeRunners(lton::Writer& out, const std::vector<Runner>& runners);
-/// Reads what writeRunners wrote. @throws lton::Invalid on malformed data.
-std::vector<Runner> readRunners(LhatValue value, std::uint32_t& nextId);
+std::vector<Behaviour> readBehaviourList(LhatValue value);
+/// Writes @p systems as an LTON sequence; shared by prefabs, scenes and levels.
+LhatValue writeSystems(lton::Writer& out, const std::vector<System>& systems);
+/// Reads what writeSystems wrote. @throws lton::Invalid on malformed data.
+std::vector<System> readSystems(LhatValue value, std::uint32_t& nextId);
 }

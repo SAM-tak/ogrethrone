@@ -1,3 +1,0 @@
-# A script-defined data component, instanced separately for every node.
-module^ samples.spinComponent
-public^let^ Component = def^{ self^{ degreesPerSecond = 45 } }

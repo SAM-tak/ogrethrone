@@ -65,9 +65,9 @@ struct RenderingSettings {
 };
 
 /// The game-side data of one level (TDDja/04, 05, 06): the scene instances it
-/// starts with and the runners that belong to the level itself. A level holds
+/// starts with and the systems that belong to the level itself. A level holds
 /// no scene nodes of its own. Independent of OGRE and the simulation world.
-struct Level : RunnerSet {
+struct Level : SystemSet {
     RenderingSettings rendering;
     /// Scene instances loaded when the level starts, in order.
     std::vector<SceneInstance> scenes;
