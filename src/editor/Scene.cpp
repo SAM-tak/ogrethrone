@@ -170,6 +170,7 @@ void readExtraComponents(const LhatTable& table, Node& node) {
         }
         colour(t,c);
         c.power=scalar(t,"power",c.power);
+        c.temperature=scalar(t,"temperature",c.temperature,0,40000);
         c.radius=scalar(t,"radius",c.radius,0.001f);
         c.threshold=scalar(t,"threshold",c.threshold,0.00001f,0.999f);
         c.innerAngle=scalar(t,"innerAngle",c.innerAngle,0.01f,179);
@@ -257,7 +258,7 @@ void writeExtraComponents(lton::Writer& out, LhatValue table, const Node& node) 
         const char* types[]={"Directional","Point","Spot","AreaApprox","AreaLtc"};
         out.set(t,"type",out.string(types[static_cast<int>(c.type)])); colour(t,c);
         out.set(t,"direction",out.vector(c.direction.data()));
-        for(const auto& entry:{std::pair{"power",c.power},std::pair{"radius",c.radius},std::pair{"threshold",c.threshold},
+        for(const auto& entry:{std::pair{"power",c.power},std::pair{"temperature",c.temperature},std::pair{"radius",c.radius},std::pair{"threshold",c.threshold},
             std::pair{"innerAngle",c.innerAngle},std::pair{"outerAngle",c.outerAngle},std::pair{"width",c.width},std::pair{"height",c.height}})
             out.set(t,entry.first,lhat_real(entry.second));
         out.set(t,"enabled",lhat_bool(c.enabled)); out.set(t,"twoSided",lhat_bool(c.twoSided));

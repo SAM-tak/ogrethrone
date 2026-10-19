@@ -13,6 +13,7 @@
 #include <OgreTextureGpu.h>
 #include <OgreAtmosphereNpr.h>
 #include <OgreMaterialManager.h>
+#include <OgreBitwise.h>
 #include <OgreDepthBuffer.h>
 #include <OgreTextureBox.h>
 #include <OgreMaterial.h>
@@ -122,6 +123,21 @@ void createShadowNode(Ogre::Root& root) {
     Ogre::ShadowNodeHelper::createShadowNodeWithSettings(root.getCompositorManager2(),
         root.getRenderSystem()->getCapabilities(),"ThroneEditor/SunShadows",maps,false,
         1024,0.7f,1.0f,0.125f,0.2f,2);
+}
+
+/// The colour of a black body at @p kelvin, scaled so 6500 K is white (Tanner Helland's
+/// fit of the CIE data). Zero, used for no temperature, answers white.
+Vec3 blackBody(float kelvin) {
+    if(kelvin<=0) return {1,1,1};
+    const auto rgb=[](double k) {
+        const double t=std::clamp(k,1000.0,40000.0)/100;
+        const double r=t<=66 ? 255 : 329.698727446*std::pow(t-60,-0.1332047592);
+        const double g=t<=66 ? 99.4708025861*std::log(t)-161.1195681661 : 288.1221695283*std::pow(t-60,-0.0755148492);
+        const double b=t>=66 ? 255 : t<=19 ? 0 : 138.5177312231*std::log(t-10)-305.0447927307;
+        return Vec3{float(std::clamp(r,0.0,255.0)),float(std::clamp(g,0.0,255.0)),float(std::clamp(b,0.0,255.0))};
+    };
+    const auto colour=rgb(kelvin), white=rgb(6500);
+    return {colour.x/white.x,colour.y/white.y,colour.z/white.z};
 }
 
 /// Creates an opaque dielectric material. Plane backfaces are lit consistently too.
@@ -340,10 +356,15 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
         resources.addResourceLocation(common + folder, "FileSystem", skyGroup);
     resources.addResourceLocation(THRONE_MEDIA_DIR "/postprocess", "FileSystem", skyGroup);
     // The compute job that prefilters environment cubemaps for rough reflections.
-    for (const auto* folder : {"/Compute/Algorithms/IBL", "/Compute/Tools/Any", "/Hlms/Common/Any", "/Hlms/Common/GLSL"})
+    // ...and the compute jobs and workspaces that bake global illumination.
+    for (const auto* folder : {"/Compute/Algorithms/IBL", "/Compute/Algorithms/IrradianceFields", "/Compute/Tools/Any",
+                               "/Hlms/Common/Any", "/Hlms/Common/GLSL"})
         resources.addResourceLocation(THRONE_OGRE_MEDIA_DIR + Ogre::String(folder), "FileSystem", skyGroup);
-    root.getHlmsManager()->loadMaterials("IBL.material.json", skyGroup, nullptr, "");
-    for (const auto* script : {"Quad.program", "Atmosphere.material", "Sky.material", "DPSM.material", "Tonemap.material"}) {
+    resources.addResourceLocation(THRONE_MEDIA_DIR "/gi", "FileSystem", skyGroup);
+    for (const auto* jobs : {"IBL.material.json", "IrradianceField.material.json"})
+        root.getHlmsManager()->loadMaterials(jobs, skyGroup, nullptr, "");
+    for (const auto* script : {"Quad.program", "Atmosphere.material", "Sky.material", "DPSM.material", "Copyback.material",
+                               "PccDepthCompressor.material", "Tonemap.material", "IrradianceField.compositor", "ThroneGi.compositor"}) {
         auto stream = resources.openResource(script, skyGroup);
         Ogre::MaterialManager::getSingleton().parseScript(stream, skyGroup);
     }
@@ -359,6 +380,7 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
     sky_->setPreset(preset);
     sky_->setSky(&scene_, true);
     models_ = std::make_unique<ModelLibrary>(root, scene, pbs_, [this](const std::string& line) { log(line); });
+    gi_ = std::make_unique<GlobalIllumination>(root, scene, pbs_, [this](const std::string& line) { log(line); });
     createShadowNode(root);
     tonemap_ = Ogre::MaterialManager::getSingleton().getByName("Throne/Tonemap", skyGroup);
     {
@@ -398,26 +420,6 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
         quad->addQuadTextureSource(0, "Hdr");
         quad->setAllLoadActions(Ogre::LoadAction::DontCare);
         compositor->addWorkspaceDefinition(viewportWorkspaceName)->connectExternal(0, node->getName(), 0);
-    }
-    {
-        // Renders the level into the six faces of a light-probe cubemap: the scene before
-        // refractive glass (which needs the viewport's refraction pass), then the sky.
-        auto* node = compositor->addNodeDefinition("ThroneEditor/ProbeNode");
-        node->addTextureSourceName("Cube", 0, Ogre::TextureDefinitionBase::TEXTURE_INPUT);
-        node->setNumTargetPass(6);
-        for (Ogre::uint8 face = 0; face < 6; ++face) {
-            auto* target = node->addTargetPass("Cube", face);
-            for (int part = 0; part < 2; ++part) {
-                auto* pass = static_cast<Ogre::CompositorPassSceneDef*>(target->addPass(Ogre::PASS_SCENE));
-                pass->mShadowNode = "ThroneEditor/SunShadows";
-                pass->mShadowNodeRecalculation = part ? Ogre::SHADOW_NODE_REUSE : Ogre::SHADOW_NODE_RECALCULATE;
-                pass->mCameraCubemapReorient = true;
-                pass->setAllLoadActions(part ? Ogre::LoadAction::Load : Ogre::LoadAction::Clear);
-                pass->setAllClearColours(Ogre::ColourValue::Black);
-                if (part) pass->mFirstRQ = 201; else pass->mLastRQ = 199;
-            }
-        }
-        compositor->addWorkspaceDefinition("ThroneEditor/Probe")->connectExternal(0, node->getName(), 0);
     }
     {
         // Integrates a radiance cubemap's GGX lobes into the mipmaps of a second cubemap.
@@ -692,6 +694,8 @@ Editor::~Editor() {
     if (io.IniFilename) ImGui::SaveIniSettingsToDisk(io.IniFilename);
     io.IniFilename = nullptr;
     destroyWorkspaces();
+    // Baked probes use workspaces and compute jobs from the resource group destroyed below.
+    gi_.reset();
     // The cubemap sky's material belongs to the resource group destroyed below.
     scene_.setSky(false, Ogre::SceneManager::SkyCubemap, nullptr);
     tonemap_.reset();
@@ -1121,72 +1125,63 @@ void Editor::prefilter(Ogre::TextureGpu& cubemap) {
     textures->destroyTexture(target);
 }
 
-void Editor::captureProbe(const Vec3& at) {
-    auto* textures=root_.getRenderSystem()->getTextureGpuManager();
-    auto* cube=textures->createTexture("ThroneEditor/Probe",Ogre::GpuPageOutStrategy::Discard,
-        Ogre::TextureFlags::RenderToTexture,Ogre::TextureTypes::TypeCube);
-    cube->setResolution(64,64);
-    cube->setPixelFormat(Ogre::PFG_RGBA16_FLOAT);
-    cube->scheduleTransitionTo(Ogre::GpuResidency::Resident);
-    auto* camera=scene_.createCamera("ThroneEditor/ProbeCamera");
-    camera->setFOVy(Ogre::Degree(90));
-    camera->setAspectRatio(1);
-    camera->setNearClipDistance(.05f);
-    camera->setPosition(toOgre(at));
-    auto* compositor=root_.getCompositorManager2();
-    auto* workspace=compositor->addWorkspace(&scene_,cube,camera,"ThroneEditor/Probe",false);
-    // Nodes moved this frame are drawn from their updated transforms.
-    scene_.updateSceneGraph();
-    workspace->_update();
-    compositor->removeWorkspace(workspace);
-    Ogre::Image2 image;
-    image.convertFromTexture(cube,0,0);
-    probeHarmonics_=irradianceHarmonics(image);
-    scene_.destroyCamera(camera);
-    textures->destroyTexture(cube);
-    probeAt_=at;
+Ogre::TextureGpu* Editor::environmentReflection() const {
+    return environment_ && !gi_->active() ? environment_->cubemap : nullptr;
+}
+
+std::filesystem::path Editor::giFolder() const {
+    // levels/exterior.level.lton keeps its bake in levels/exterior.gi.
+    const auto level=project_ ? project_->resolve(levelPath_) : std::filesystem::path(levelPath_);
+    auto name=level.filename().u8string();
+    return level.parent_path()/std::filesystem::u8path(name.substr(0,name.find('.'))+".gi");
 }
 
 void Editor::syncLighting() {
     const auto& r=doc_.world.level.rendering;
     if(!clustered_ || *clustered_!=r.clustered || clusterMin_!=r.minDistance || clusterMax_!=r.maxDistance) {
-        if(r.clustered) scene_.setForwardClustered(true,16,8,24,96,0,0,r.minDistance,r.maxDistance);
+        if(r.clustered) scene_.setForwardClustered(true,16,8,24,96,0,16,r.minDistance,r.maxDistance);
         else scene_.setForward3D(true,4,4,5,96,r.minDistance,r.maxDistance);
         clustered_=r.clustered; clusterMin_=r.minDistance; clusterMax_=r.maxDistance;
     }
     scene_.getForwardPlus()->setDebugMode(r.debugClusters);
     sun_->setVisible(r.defaultSun);
-    const auto environmentFile=r.environment.empty() || !project_ ? std::string{} : project_->resolve(r.environment).generic_u8string();
+    // An environment is read once per file and scale; the scale multiplies its radiance.
+    const auto environmentFile=r.environment.empty() || !project_ ? std::string{}
+        : project_->resolve(r.environment).generic_u8string()+"#"+std::to_string(r.environmentScale);
     if(environmentFile!=environmentFile_) {
         environmentFile_=environmentFile;
         auto [it,added]=environments_.try_emplace(environmentFile);
         if(added && !environmentFile.empty()) try {
             const auto start=std::chrono::steady_clock::now();
-            it->second=loadEnvironment(*root_.getRenderSystem()->getTextureGpuManager(),std::filesystem::u8path(environmentFile),
-                "ThroneEnvironment/"+environmentFile);
+            it->second=loadEnvironment(*root_.getRenderSystem()->getTextureGpuManager(),project_->resolve(r.environment),
+                "ThroneEnvironment/"+environmentFile,r.environmentScale);
             prefilter(*it->second->cubemap);
             log("Environment "+r.environment+" read in "+std::to_string(std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count())+" s");
         } catch(const std::exception& error) { log("Environment not loaded: "+std::string(error.what())); }
         environment_=it->second ? &*it->second : nullptr;
-        models_->setReflection(environment_ ? environment_->cubemap : nullptr);
         setSkyboxEnabled(skyboxEnabled_);
     }
     camera_.setFOVy(Ogre::Degree(r.fieldOfView));
     auto params=tonemap_->getTechnique(0)->getPass(0)->getFragmentProgramParameters();
     params->setNamedConstant("exposure",std::exp2(r.exposure));
     params->setNamedConstant("filmic",r.toneMapping?1.0f:0.0f);
-    if(!r.lightProbe) probeAt_.reset();
-    pbs_.setAmbientLightMode(environment_ || probeAt_ ? Ogre::HlmsPbs::AmbientSh : Ogre::HlmsPbs::AmbientAutoNormal);
-    if(probeAt_) scene_.setSphericalHarmonics(probeHarmonics_.data());
-    else if(environment_) {
-        // Spherical harmonics give the diffuse light, scaled like the reflections.
-        auto harmonics=environment_->harmonics;
-        for(auto& h:harmonics) h*=r.environmentScale;
-        scene_.setSphericalHarmonics(harmonics.data());
+    if(gi_->active() && gi_->settings()!=r.gi) gi_->clear();
+    // Baked reflection probes (which saw the sky) take over from the environment map; a
+    // material's own reflection map would otherwise be treated as one more probe.
+    if(auto* reflection=environmentReflection(); reflection!=modelReflection_) {
+        models_->setReflection(reflection);
+        modelReflection_=reflection;
     }
+    // Baked probes hold the sky and the scene's own bounce, so they replace the ambient light.
+    pbs_.setAmbientLightMode(gi_->active() ? Ogre::HlmsPbs::AmbientNone
+        : environment_ ? Ogre::HlmsPbs::AmbientSh : Ogre::HlmsPbs::AmbientAutoNormal);
+    // Spherical harmonics give the environment's diffuse light.
+    if(environment_) scene_.setSphericalHarmonics(const_cast<Ogre::Vector3*>(environment_->harmonics.data()));
     scene_.setAmbientLight(Ogre::ColourValue(r.ambientUpper.x,r.ambientUpper.y,r.ambientUpper.z),
         Ogre::ColourValue(r.ambientLower.x,r.ambientLower.y,r.ambientLower.z),toOgre(r.ambientDirection).normalisedCopy(),
-        environment_ ? r.environmentScale : 1.0f);
+        1.0f,
+        // The irradiance field gives diffuse light; reflection probes only reflect.
+        gi_->active() ? 0u : Ogre::SceneManager::EnvFeatures_DiffuseGiFromReflectionProbe);
     // Reserve enough Forward slots for every authored rectangular light, including hidden ones.
     unsigned approx=0,ltc=0;
     for(const auto& instance:view_.instances) for(const auto& n:instance.expansion.nodes) if(n.node.light) {
@@ -1200,6 +1195,21 @@ void Editor::syncLighting() {
 }
 
 void Editor::syncTransforms(const LevelExpansion* snapshot) {
+    // A requested bake sees the level placed in earlier frames once its textures have streamed
+    // in; it runs before lighting so this frame's materials already switch to its probes. An
+    // earlier bake is dropped first, so the first pass sees only the environment's light; each
+    // later pass, one frame on, is lit by the one before and adds a bounce.
+    if(bakePasses_ && bakeFromScratch_ && gi_->active()) gi_->clear();
+    else if(bakePasses_ && root_.getRenderSystem()->getTextureGpuManager()->isDoneStreaming()) {
+        bakeFromScratch_=false;
+        const auto start=std::chrono::steady_clock::now();
+        gi_->bake(doc_.world.level.rendering.gi,camera_);
+        log("Global illumination pass baked in "+std::to_string(std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count())+" s");
+        if(--bakePasses_==0) {
+            gi_->save(giFolder());
+            log("Global illumination saved into "+giFolder().u8string());
+        }
+    }
     syncLighting();
     const auto& shown = snapshot ? *snapshot : view_;
     // Stop or scene replacement may remove runtime nodes; discard their render resources.
@@ -1277,7 +1287,7 @@ void Editor::syncTransforms(const LevelExpansion* snapshot) {
         texture(Ogre::PBSM_ROUGHNESS,surface.roughnessMap,previous.roughnessMap,Ogre::CommonTextureTypes::Monochrome);
         texture(Ogre::PBSM_SPECULAR,surface.specularMap,previous.specularMap,Ogre::CommonTextureTypes::Diffuse);
         // Without a reflection map of its own, a surface reflects the level's environment.
-        auto* reflection=surface.reflectionMap.empty() ? (environment_ ? environment_->cubemap : nullptr)
+        auto* reflection=surface.reflectionMap.empty() ? environmentReflection()
             : projectTexture(surface.reflectionMap,Ogre::CommonTextureTypes::EnvMap);
         if(render.material->getTexture(Ogre::PBSM_REFLECTION)!=reflection) render.material->setTexture(Ogre::PBSM_REFLECTION,reflection);
         render.surface=surface;
@@ -1296,8 +1306,9 @@ void Editor::syncTransforms(const LevelExpansion* snapshot) {
             const Ogre::Light::LightTypes types[]={Ogre::Light::LT_DIRECTIONAL,Ogre::Light::LT_POINT,Ogre::Light::LT_SPOTLIGHT,Ogre::Light::LT_AREA_APPROX,Ogre::Light::LT_AREA_LTC};
             light->setType(types[static_cast<int>(c.type)]);
             light->setVisible(c.enabled); light->setPowerScale(c.power);
-            light->setDiffuseColour(c.colour[0],c.colour[1],c.colour[2]);
-            light->setSpecularColour(c.colour[0],c.colour[1],c.colour[2]);
+            const auto tint=blackBody(c.temperature);
+            light->setDiffuseColour(c.colour[0]*tint.x,c.colour[1]*tint.y,c.colour[2]*tint.z);
+            light->setSpecularColour(c.colour[0]*tint.x,c.colour[1]*tint.y,c.colour[2]*tint.z);
             // Light::setDirection rotates its parent; reset the dedicated child to avoid roll drift.
             render.lightNode->setOrientation(Ogre::Quaternion::IDENTITY);
             light->setDirection(toOgre(c.direction).normalisedCopy());
@@ -1335,10 +1346,6 @@ void Editor::syncTransforms(const LevelExpansion* snapshot) {
             outlined = &render;
     }
     if(hasParticles || particleSystemCount_) syncParticles(shown);
-    // The probe sees the placed level once its textures have streamed in.
-    const auto& r=doc_.world.level.rendering;
-    if(r.lightProbe && probeAt_!=std::optional<Vec3>(r.probePosition) && root_.getRenderSystem()->getTextureGpuManager()->isDoneStreaming())
-        captureProbe(r.probePosition);
     // The sky's sun follows the default sun, or else the first directional Light component.
     Ogre::Light* skySun=sun_->getVisible()?sun_:nullptr;
     for(const auto& render:renderObjects_)
@@ -2043,6 +2050,7 @@ bool Editor::open() {
         focusSelection();
         const auto& r=doc_.world.level.rendering;
         setSkyboxEnabled(r.sky);
+        if(r.gi.enabled) gi_->load(giFolder(),r.gi); else gi_->clear();
         showGrid_=r.grid;
         if(r.openingCamera) { selected_={}; target_=toOgre(r.target); yaw_=r.yaw; pitch_=r.pitch; distance_=r.distance; updateCamera(); }
         log(std::string("Opened ") + levelPath_);
@@ -2159,11 +2167,28 @@ void Editor::menu() {
         if(ImGui::InputText("Environment (HDR)",environment,sizeof environment,ImGuiInputTextFlags_EnterReturnsTrue)) { checkpoint(); r.environment=environment; }
         float scale=r.environmentScale;
         if(ImGui::DragFloat("Environment Scale",&scale,.01f,0,100)) { checkpoint(); r.environmentScale=scale; }
-        bool probe=r.lightProbe;
-        if(ImGui::MenuItem("Light Probe",nullptr,&probe)) { checkpoint(); r.lightProbe=probe; }
-        auto at=r.probePosition;
-        if(ImGui::DragFloat3("Probe Position",at.data(),.05f)) { checkpoint(); r.probePosition=at; }
-        if(ImGui::MenuItem("Recapture Probe",nullptr,false,r.lightProbe)) probeAt_.reset();
+        ImGui::Separator();
+        auto gi=r.gi;
+        bool giEdited=ImGui::MenuItem("Global Illumination",nullptr,&gi.enabled);
+        giEdited|=ImGui::DragFloat3("GI Lower",gi.lower.data(),.1f);
+        giEdited|=ImGui::DragFloat3("GI Upper",gi.upper.data(),.1f);
+        int reflections[3]={int(gi.reflectionProbes[0]),int(gi.reflectionProbes[1]),int(gi.reflectionProbes[2])};
+        if(ImGui::DragInt3("Reflection Probes",reflections,.05f,1,16)) {
+            for(int i=0;i<3;++i) gi.reflectionProbes[i]=unsigned(std::clamp(reflections[i],1,16));
+            giEdited=true;
+        }
+        int field[3]={int(gi.fieldProbes[0]),int(gi.fieldProbes[1]),int(gi.fieldProbes[2])};
+        if(ImGui::DragInt3("Irradiance Probes",field,.05f,1,64)) {
+            // The irradiance field needs powers of two.
+            for(int i=0;i<3;++i) gi.fieldProbes[i]=Ogre::Bitwise::firstPO2From(Ogre::uint32(std::clamp(field[i],1,64)));
+            giEdited=true;
+        }
+        for(int i=0;i<3;++i) if(gi.upper.data()[i]<=gi.lower.data()[i]) gi.upper.data()[i]=gi.lower.data()[i]+.1f;
+        if(giEdited && gi!=r.gi) { checkpoint(); r.gi=gi; }
+        int bounces=int(gi.bounces);
+        if(ImGui::SliderInt("Bounces",&bounces,1,8) && unsigned(bounces)!=r.gi.bounces) { checkpoint(); r.gi.bounces=unsigned(bounces); }
+        if(ImGui::MenuItem("Bake Global Illumination",nullptr,false,r.gi.enabled)) requestGlobalIlluminationBake();
+        ImGui::TextDisabled(gi_->active() ? "Using the bake in %s" : "No bake in use (%s)",giFolder().filename().u8string().c_str());
         bool filmic=r.toneMapping;
         if(ImGui::MenuItem("Filmic Tone Mapping",nullptr,&filmic)) { checkpoint(); r.toneMapping=filmic; }
         float exposure=r.exposure;

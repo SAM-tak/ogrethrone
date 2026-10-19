@@ -3,6 +3,7 @@
 #include "editor/EditorPlatform.h"
 #include "editor/Expansion.h"
 #include "editor/Environment.h"
+#include "editor/GlobalIllumination.h"
 #include "editor/Model.h"
 #include "editor/PrimitiveGeometry.h"
 #include "editor/References.h"
@@ -93,6 +94,13 @@ public:
     void setShadowsEnabled(bool enabled);
     /// Shows or hides the procedural sky without modifying scene lights or physics.
     void setSkyboxEnabled(bool enabled);
+    /// Bakes the level's global illumination into its project folder once textures have streamed in.
+    void requestGlobalIlluminationBake() {
+        bakePasses_ = doc_.world.level.rendering.gi.bounces;
+        bakeFromScratch_ = true;
+    }
+    /// Whether a requested bake is still running.
+    bool bakingGlobalIllumination() const { return bakePasses_ != 0; }
     /// Downloads the rendered viewport to a portable RGB image for visual smoke checks.
     void captureViewport(const std::filesystem::path& path);
     /// Opens a project-relative level; returns false if loading fails or Play is active.
@@ -245,8 +253,11 @@ private:
     Ogre::TextureGpu* projectTexture(const std::string& path, int kind, bool mask = false);
     /// Replaces the mipmaps of an environment cubemap with GGX-prefiltered radiance.
     void prefilter(Ogre::TextureGpu& cubemap);
-    /// Renders the level into a small cubemap at @p at and keeps its irradiance harmonics.
-    void captureProbe(const Vec3& at);
+    /// The cubemap surfaces without their own reflection map reflect: the environment's,
+    /// unless baked reflection probes are in use.
+    Ogre::TextureGpu* environmentReflection() const;
+    /// The project folder holding the open level's baked global illumination.
+    std::filesystem::path giFolder() const;
     /// Loads the standard ParticleFX2 resources and any project particle definitions.
     void loadParticleResources(const std::string& script);
     /// Reconciles particle instances after transforms; template/enable changes reset shared pools.
@@ -414,9 +425,13 @@ private:
     const Environment* environment_ = nullptr;
     /// The viewport's exposure and tone-mapping pass material.
     Ogre::MaterialPtr tonemap_;
-    /// Where the light probe was last captured, and the irradiance it gave.
-    std::optional<Vec3> probeAt_;
-    std::array<Ogre::Vector3, 9> probeHarmonics_{};
+    /// The level's baked global illumination, the bake passes still to render (one per
+    /// frame once textures have streamed in), and whether the next pass starts afresh.
+    std::unique_ptr<GlobalIllumination> gi_;
+    unsigned bakePasses_ = 0;
+    bool bakeFromScratch_ = false;
+    /// The reflection last given to model materials.
+    Ogre::TextureGpu* modelReflection_ = nullptr;
 
     EditorPlatform platform_;
     std::unique_ptr<Ogre::ImguiManager> gui_;

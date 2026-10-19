@@ -39,8 +39,16 @@ lanterns. Clear glass refracts; wine and bottles are alpha blended. The path tra
 lights these rooms from their emissive surfaces; point lights stand in for that.
 Their exposure is -1.5 EV.
 
-Every level enables a light probe near its view, so diffuse light includes one
-bounce off the surrounding buildings or room.
+Every level bakes global illumination (two bounces) over the area around its view;
+bake it once with **Lighting → Bake Global Illumination**, or from the repository root:
+
+```powershell
+out/build/windows-clang-ninja/bin/Release/ogrethrone.exe --bake-gi samples/bistro out/bistro.ppm levels/plaza.level.lton
+```
+
+The results are written to `levels/*.gi/` (about 50 MB each) and ignored by Git.
+The sun uses power 150 at 6500 K, and the exterior levels scale the environment by
+20, so the lighting ratio between sun, sky and shade follows ORCA's preview renders.
 
 Reading a file takes several seconds on first open.
 

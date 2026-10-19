@@ -491,6 +491,8 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         c.type=static_cast<LightType>(type);
         edited|=ImGui::Checkbox("Enabled",&c.enabled); track(); edited|=colour(c);
         edited|=scalar("Power",c.power,0);
+        edited|=scalar("Temperature (K)",c.temperature,0,40000);
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Tints the colour like a black body: 6500 K is white, lower is warmer, 0 is off.");
         auto direction=c.direction;
         if(vector("Direction (local)",direction) && direction.x*direction.x+direction.y*direction.y+direction.z*direction.z>1e-10f) { c.direction=direction; edited=true; }
         if(c.type!=LightType::Directional) {

@@ -80,8 +80,10 @@ int main(int argc, char** argv) {
 #endif
     const bool smoke = showcaseSmoke || physicsSmoke || profilePhysics || navigationSmoke || (argc > 1 && std::strcmp(argv[1], "--smoke") == 0);
     // --capture <folder> [file] [level]: opens the project (and the project-relative level,
-    // else its main level), saves the settled viewport as PPM and exits.
-    const bool captureRun = argc > 2 && std::strcmp(argv[1], "--capture") == 0;
+    // else its main level), saves the settled viewport as PPM and exits. --bake-gi takes
+    // the same arguments and first bakes and saves the level's global illumination.
+    const bool bakeRun = argc > 2 && std::strcmp(argv[1], "--bake-gi") == 0;
+    const bool captureRun = bakeRun || (argc > 2 && std::strcmp(argv[1], "--capture") == 0);
     // Unattended captures report OGRE's failed assertions on stderr instead of a dialog.
     if (captureRun)
         Ogre::Assert::SetHandler([](const char* condition, const char* message, const char* file, int line) {
@@ -212,6 +214,8 @@ int main(int argc, char** argv) {
             }
             if (captureRun) {
                 root.getRenderSystem()->getTextureGpuManager()->waitForStreamingCompletion();
+                if (bakeRun) editor.requestGlobalIlluminationBake();
+                while (editor.bakingGlobalIllumination()) editor.frame(1.0f / 60);
                 for (int i = 0; i < 4; ++i) editor.frame(1.0f / 60);
                 editor.captureViewport(std::filesystem::u8path(argc > 3 ? argv[3] : "out/capture.ppm"));
             }

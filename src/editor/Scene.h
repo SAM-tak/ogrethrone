@@ -96,6 +96,9 @@ struct LightComponent {
     LightType type = LightType::Point;
     std::array<float,3> colour{1,1,1};
     float power = 3.14159265f, radius = 10, threshold = 0.01f;
+    /// Colour temperature in kelvin that tints colour like a black body (6500 K is
+    /// white, lower is warmer); 0 leaves colour as it is.
+    float temperature = 0;
     Vec3 direction{0,0,-1};
     float innerAngle = 30, outerAngle = 45;
     float width = 1, height = 1;

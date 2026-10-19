@@ -100,7 +100,7 @@ Vulkan の `--smoke-physics` は Forward Clustered が選択されているこ�
 
 ［補足］マテリアルはメタリックワークフロー。テクスチャは WRAP と異方性 8 でサンプルする（OGRE 既定の CLAMP では、UV が 0〜1 を超えるタイル模様が端の色一色になる）。FBX の透過色（transparency_color × factor）を持つマテリアルはアルファブレンド（深度書き込みなし、両面）とし、ガラスと液体の反射を残す。不透明度 0.25 未満（グラス、窓）は OGRE の Refractive モードで画面空間屈折（強さ 0.05）とし、その Item を描画キュー 200 に置く。液体と瓶は Transparent モードのまま第 1 パスに描き、手前のグラスの屈折に映す（屈折は第 1 パスの画像だけを背景にするため、同じパスの液体は上書きされる）。透過マテリアルだけでできたメッシュは影を落とさない。BaseColor（アルファは不透明度、DXT5 ならアルファテスト 0.5 と両面）、Normal、glTF 式 ORM（R=遮蔽、G=粗さ、B=金属度）、Emissive を使う。ORM はデータブロック単位のカスタムピースで SampleSpecular／SampleRoughness の参照チャンネルを差し替え、既存のショーケース材質には影響させない。DirectX 法線は接線の w 符号で扱う。
 
-［補足］レベルの rendering は environment（プロジェクト相対の正距円筒 HDR）と environmentScale を持つ。CPU で 512² のキューブマップ（2×2 スーパーサンプル）と 9 係数の球面調和へ変換する。ミップは OGRE の IblSpecular 計算パス（Compute/Algorithms/IBL）で GGX 粗さ別に事前フィルタする。キューブマップは空と、自前の反射マップを持たない全 PBS マテリアルの反射に、球面調和は AmbientSh の拡散環境光に使う。放射輝度は 64 で打ち切り、HDR 内の太陽は Light Component の平行光源に任せる。空の太陽は既定の太陽か、最初の平行光源 Component の向きに追従する。
+［補足］レベルの rendering は environment（プロジェクト相対の正距円筒 HDR）と environmentScale を持つ。CPU で 512² のキューブマップ（2×2 スーパーサンプル）と 9 係数の球面調和へ変換する。ミップは OGRE の IblSpecular 計算パス（Compute/Algorithms/IBL）で GGX 粗さ別に事前フィルタする。キューブマップは空と、自前の反射マップを持たない全 PBS マテリアルの反射に、球面調和は AmbientSh の拡散環境光に使う。放射輝度は 16（environmentScale を掛ける前）で打ち切り、HDR 内の太陽は Light Component の平行光源に任せる。空の太陽は既定の太陽か、最初の平行光源 Component の向きに追従する。
 
 ［補足］ビューポートはシーンを RGBA16F に 2 パスで描く。描画キュー 0〜199 を Opaque へ（深度は共有の D32 テクスチャ）、それを Hdr へ複製し、キュー 200 以上を Opaque と深度を屈折元として Hdr へ描く（影ノードは再利用）。その後クアッドパス（media/postprocess/Tonemap）で露出（EV）を掛けて表示先へ書く。レベルの toneMapping が真なら ACES フィルミック曲線（Narkowicz の近似）、偽なら従来どおりクランプする。既定は偽・EV 0 で、既存レベルの見た目は変わらない。
 
@@ -119,6 +119,7 @@ Vulkan の `--smoke-physics` は Forward Clustered が選択されているこ�
 - STBI コーデック: Radiance HDR（.hdr）を RGBA32F で読む。
 - HlmsPbs: アルファテストの影キャスターが反射マップを除いたテクスチャ数を宣言し、Vulkan が反射込みの記述子セット全体をバインドしてルートレイアウトと食い違っていた。反射マップも数に含める。
 - PBS 屈折テンプレート: GLSL の max に 3 引数を渡していた（金属ワークフローでコンパイル不能）。2 段の max に修正。
+- IrradianceField: 照度テクスチャを RGBA16F にする（§9）。
 - SceneManager::clearScene: ルートに付いたままのスカイ矩形を再アタッチして例外になっていた。未アタッチ時だけ付け直す。
 
 ［補足］Point／Spot の Light Component は castShadows を持つ。影ノードは平行光源の 3 カスケードに加え、1024² の FOCUSED 影マップ 4 枠を同じアトラス（4096×4096）に持ち、OGRE がカメラに近い影付き局所光へ割り当てる。点光源はキューブから DPSM へ変換する（Common/DPSM.material を読む）。Bistro 内装では天井灯 4 灯が影を落とす。
@@ -127,19 +128,22 @@ Vulkan の `--smoke-physics` は Forward Clustered が選択されているこ�
 
 ## 9. 間接光（GI）
 
-［補足］Bistro の参照画像は Falcor のパストレースで、建物間の照り返しが日陰を明るく中立色にしている。現状は HDR 環境の球面調和と反射キューブマップのみで、plaza の平均 RGB は 109/99/94（参照 104/103/102）。差の主因は一次反射光の欠如。
+固定済み OGRE-Next の既存機能を 2 つ組み合わせ、レベルごとに焼き込む。
 
-［提案］固定済み OGRE-Next の既存機能から次の 3 段階で選ぶ。
+- 反射: ParallaxCorrectedCubemapAuto（per-pixel）を PccPerPixelGridPlacement で領域内の格子に置き、各プローブの形を周囲の深度に合わせる。256² RGBA16F、GGX 事前フィルタ付き。Forward Clustered のセルあたり 16 プローブ。
+- 拡散: IrradianceField のラスタ生成（IrradianceFieldRaster）。各プローブ位置でキューブを描き、DDGI 方式の照度と深度（チェビシェフ可視性）へ積分する。VCT は使わない。照度テクスチャは fork で R10G10B10A2 から RGBA16F に変え、HDR の空と日向の照り返しをクリップしない。
 
-- A. 局所キューブマッププローブ（ParallaxCorrectedCubemapAuto ＋ PccPerPixelGridPlacement）。シーンを数か所でキューブに描き、反射と EnvFeatures_DiffuseGiFromReflectionProbe による拡散 GI に使う。追加コードが最小で静的シーン向き。プローブ位置はレベルに保存し、エディターで再焼き込みする。
-- B. VCT（VctCascadedVoxelizer ＋ VctLighting）。シーンをボクセル化し、拡散・鏡面の間接光を円錐追跡で求める。動的光源にも追従するが、280 万三角形の外観ではボクセル化の時間とメモリが大きい。
-- C. IrradianceField（B のボクセルから放射照度プローブ格子を作る）。B より軽く、拡散 GI のみ。
+レベルの rendering.gi が領域（lower／upper）、反射プローブ数、照度プローブ数（2 のべき）、bounces を持つ。焼き込みは Lighting メニューの Bake Global Illumination か `ogrethrone --bake-gi <folder> [file] [level]`。最初のパスは既存の焼き込みを外し、HDR 環境の球面調和と反射だけで照らしたシーンを描く。以降のパスは 1 フレームごとに直前の焼き込みを使ったシーンを描くので、パスごとに 1 回分の照り返しが増える（bounces、既定 2）。
 
-まず A を samples/bistro に入れ、参照との平均 RGB と日陰の明るさで効果を測る。足りなければ C、動的光源が必要になった時点で B へ進む。
+焼き込み結果はプロジェクトに保存する。レベル `levels/x.level.lton` の結果は `levels/x.gi/` に置き、gi.lton（設定と各反射プローブの位置・領域・形）、reflections.oitd（全プローブのキューブ配列とミップ）、irradiance.oitd、depth.oitd からなる。レベルを開くと読み込み、描き直さない（PCC は一時停止したまま）。設定が焼き込み時と違えば使わず、ログで再焼き込みを促す。
 
-［補足］A〜C の判断までの暫定として、単一の光プローブを入れた。レベルの lightProbe と probePosition で指定し、テクスチャのストリーミング完了後に 1 回、その位置から 64² RGBA16F のキューブへシーンを描く（描画キュー 0〜199 と 201 以上。屈折ガラスの 200 は除く）。CPU へ読み戻して球面調和へ投影し、HDR 環境の拡散光（AmbientSh）を置き換える。反射は HDR 環境のまま（単一プローブの反射は視差が合わない）。撮影時のシーンは HDR 環境で照らされているので、空・太陽に加え周囲の面からの一次反射光が入り、建物に遮られた空の分は暗くなる。位置を変えるか Recapture で撮り直す。Bistro の 4 レベルで有効。plaza の平均 RGB は 100/91/87（参照 104/103/102）。残る差は主に色温度で、FBX の太陽色（橙寄り）による。
+GI の使用中は環境光（AmbientSh／半球）を切り、照度場だけを拡散光とする（EnvFeatures_DiffuseGiFromReflectionProbe も切る）。マテリアルの反射マップに HDR 環境を割り当てない。割り当てると OGRE は手動 PCC として扱い、シェーダーが壊れる（toProbeLocalSpace の不一致）。空は HDR 環境のまま描く。プローブ撮影は描画キュー 0〜199 と 201〜249（屈折ガラスの 200 と PCC 補助の 250 を除く）を、エディターの影ノードで描く（media/gi/ThroneGi.compositor）。
 
-［未決］A〜C のどれを採るか。焼き込み結果をプロジェクトに保存するか、レベルを開くたびに作るか。
+レベルの environmentScale は HDR 環境の放射輝度そのものに掛かる（空・プローブ撮影・反射・環境光）。読み込み時の打ち切りは 16（スケール前）で、HDR 内の太陽は Light に任せる。Light Component は色温度（K、0 で無効、6500 K が白）を持ち、色に黒体色を掛ける。
+
+samples/bistro の 4 レベルで焼き込む。太陽は power 150・6500 K、外観 2 レベルは environmentScale 20・露出 −2.9 EV。参照画像（plaza 視点）との平均 RGB は 99/95/94（参照 104/103/102）。焼き込み結果（1 レベル約 50 MB）は素材と同じく Git 管理外とする。Debug ビルドでの焼き込みは 1 パス約 40〜130 秒。
+
+［補足］B（VCT）は動的光源が必要になった時点で再検討する。
 
 ## 10. 参考
 

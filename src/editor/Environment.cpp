@@ -55,7 +55,7 @@ std::array<Ogre::Vector3, 9> irradianceHarmonics(const Ogre::Image2& cube) {
 }
 
 Environment loadEnvironment(Ogre::TextureGpuManager& textures, const std::filesystem::path& file,
-                            const std::string& name, float limit) {
+                            const std::string& name, float scale, float limit) {
     std::ifstream in(file, std::ios::binary);
     std::vector<char> bytes(std::istreambuf_iterator<char>(in), {});
     if (bytes.empty()) throw std::runtime_error("Could not read " + file.u8string());
@@ -67,7 +67,7 @@ Environment loadEnvironment(Ogre::TextureGpuManager& textures, const std::filesy
     const auto width = source.getWidth(), height = source.getHeight();
     const auto texel = [&](unsigned x, unsigned y) {
         const auto* p = static_cast<const float*>(box.at(x % width, (std::min)(y, height - 1), 0));
-        return Ogre::Vector3((std::min)(p[0], limit), (std::min)(p[1], limit), (std::min)(p[2], limit));
+        return Ogre::Vector3((std::min)(p[0], limit), (std::min)(p[1], limit), (std::min)(p[2], limit)) * scale;
     };
     // Bilinear lookup by world direction: -Z at the image centre, +Y along its top.
     const auto sample = [&](const Ogre::Vector3& d) {

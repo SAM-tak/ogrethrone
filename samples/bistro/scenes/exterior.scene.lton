@@ -2,5 +2,5 @@ format = "ogrethrone-scene",
 version = 2,
 nodes = {
     {id = 1, name = "Bistro Exterior", parent = 0, components = {transform = {position = {0, 0, 0}, rotation = {0, 0, 0}, scale = {1, 1, 1}}, model = {path = "Bistro_v5_2/BistroExterior.fbx", directXNormals = true^}}},
-    {id = 2, name = "Sun", parent = 0, components = {transform = {position = {0, 0, 0}, rotation = {0, 0, 0}, scale = {1, 1, 1}}, light = {type = "Directional", direction = {0, -0.876, -0.481}, colour = {1, 0.794, 0.514}, power = 3.141592653589793}}}},
+    {id = 2, name = "Sun", parent = 0, components = {transform = {position = {0, 0, 0}, rotation = {0, 0, 0}, scale = {1, 1, 1}}, light = {type = "Directional", direction = {0, -0.876, -0.481}, colour = {1, 1, 1}, power = 150, temperature = 6500}}}},
 runners = {},

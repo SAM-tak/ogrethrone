@@ -2,6 +2,7 @@
 
 #include "editor/Scene.h"
 #include "runtime/FramePipeline.h"
+#include <array>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -18,6 +19,28 @@ struct SceneInstance {
     Transform transform;
 };
 
+/// Where and how densely a level bakes its global illumination (TDDja/09 9).
+struct GiSettings {
+    /// Whether the level uses baked global illumination.
+    bool enabled = false;
+    /// The world-space box the probes cover.
+    Vec3 lower{-10, 0, -10}, upper{10, 5, 10};
+    /// Parallax-corrected reflection probes along X, Y and Z.
+    std::array<unsigned, 3> reflectionProbes{2, 1, 2};
+    /// Irradiance-field probes along X, Y and Z; each a power of two.
+    std::array<unsigned, 3> fieldProbes{8, 2, 8};
+    /// How many times the probes are rendered, each lit by the previous rendering:
+    /// one bounce of light off the scene per rendering.
+    unsigned bounces = 2;
+    /// Equality, to tell when a bake no longer matches its settings.
+    bool operator==(const GiSettings& other) const {
+        return enabled == other.enabled && lower == other.lower && upper == other.upper &&
+               reflectionProbes == other.reflectionProbes && fieldProbes == other.fieldProbes && bounces == other.bounces;
+    }
+    /// Negation of equality.
+    bool operator!=(const GiSettings& other) const { return !(*this == other); }
+};
+
 /// Persisted level lighting and the initial editor camera for authored showcases.
 struct RenderingSettings {
     bool defaultSun = true, sky = true, grid = true, clustered = true, debugClusters = false;
@@ -28,13 +51,11 @@ struct RenderingSettings {
     Vec3 ambientDirection{0,1,0};
     float minDistance = .1f, maxDistance = 100;
     /// Optional project-relative equirectangular HDR file lighting the level and drawn as
-    /// its sky; environmentScale scales the light it gives.
+    /// its sky; environmentScale multiplies its radiance (sky, reflections and ambient light).
     std::string environment;
     float environmentScale = 1;
-    /// When set, the level itself is captured at probePosition and its irradiance
-    /// replaces the environment's diffuse light, adding one bounce off nearby surfaces.
-    bool lightProbe = false;
-    Vec3 probePosition{0,1.5f,0};
+    /// Baked global illumination; the bake lives in the `<level>.gi` folder beside the level.
+    GiSettings gi;
     /// Optional opening view: orbit target, radians and distance.
     bool openingCamera = false;
     Vec3 target{0,.5f,0};

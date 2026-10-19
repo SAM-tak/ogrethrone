@@ -27,9 +27,9 @@ struct Environment {
 /// (in OGRE's cubemap space, any colour format) gives, divided by pi.
 std::array<Ogre::Vector3, 9> irradianceHarmonics(const Ogre::Image2& cube);
 
-/// Reads @p file into an Environment whose cubemap is named @p name. Radiance above
-/// @p limit (the sun, which a Light component draws) is clamped. Throws when the
-/// file cannot be read as an HDR image.
+/// Reads @p file into an Environment whose cubemap is named @p name, multiplying its
+/// radiance by @p scale. Radiance above @p limit before scaling (the sun, which a Light
+/// component draws) is clamped. Throws when the file cannot be read as an HDR image.
 Environment loadEnvironment(Ogre::TextureGpuManager& textures, const std::filesystem::path& file,
-                            const std::string& name, float limit = 64.0f);
+                            const std::string& name, float scale = 1.0f, float limit = 16.0f);
 }

@@ -436,15 +436,24 @@ by the model's bounds.
 The editor converts it to a 512² cubemap, drawn as the sky and reflected by every
 PBS material without its own reflection map, and to spherical harmonics for diffuse
 ambient light. OGRE's IBL compute pass prefilters the cubemap's mipmaps for GGX
-roughness. Radiance above 64 (a sun in the image) is clamped; use a directional
+roughness. Radiance above 16 (a sun in the image) is clamped; use a directional
 Light component for the sun, which the sky's sun then follows.
 
-**Lighting → Light Probe** captures the level itself into a 64² cubemap at
-**Probe Position** once its textures have streamed in, and uses that capture's
-irradiance (spherical harmonics) as the diffuse ambient light instead of the
-environment's: surfaces then receive one bounce off their surroundings, and walls
-shade what they hide from the sky. Reflections keep the environment map.
-**Recapture Probe** renders it again after the scene changes.
+**Lighting → Global Illumination** bakes a level's indirect light over the box
+**GI Lower**–**GI Upper**: parallax-corrected reflection probes on a grid (fitted to
+the surrounding geometry) for reflections, and a raster irradiance field (DDGI-style
+probes with depth) for diffuse light. **Bake Global Illumination** renders them from
+the level as drawn, once per **Bounces** (each pass lit by the previous one), and
+saves the result in `levels/<level>.gi/` beside the level; opening the level reads
+it back without rendering it again. `ogrethrone --bake-gi <folder> [file] [level]`
+bakes from the command line, then captures like `--capture`. While a bake is in use
+it replaces the ambient light, and the environment map is drawn only as the sky.
+Changing the GI settings drops the bake until it is baked again.
+
+A Light component's **Temperature (K)** tints its colour like a black body (6500 K
+is white, lower is warmer; 0 leaves the colour as it is). **Environment Scale**
+multiplies the environment's radiance, so the sky, reflections and ambient light
+follow it.
 
 The viewport renders the scene in half float, in two passes: render queues below
 200, then (after copying that image) queue 200 and above, where refractive materials
