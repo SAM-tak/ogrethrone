@@ -7,6 +7,10 @@
 
 ノードには Transform などのデータ Component と、データ・処理を一緒に持つ Behaviour Component を付ける。BehaviourSystem は対応するメソッドを持つ Behaviour を問い合わせて呼び出す（07）。
 
+これでもれっきとした Entity Component System だが、純粋データ指向ではなく、オブジェクト指向とのハイブリッドである。
+OGRE/Box3Dなどが内部でSoA型のデータ配置をするのに任せていて、throne自身は特にComponentをSoAで配置するようなことはしていない。
+Behaviour Component が扱う Behaviour はオブジェクト指向、TransformやCollider/Rigidbody/Primitive/Mesh などはデータ指向である。
+
 ## 2. 確定事項
 
 - 処理の実行単位を **System** と呼ぶ。
