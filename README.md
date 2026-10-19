@@ -542,14 +542,21 @@ a spinner otherwise.
 A Light component's **Temperature (K)** tints its colour like a black body (6500 K
 is white, lower is warmer; 0 leaves the colour as it is). **Environment Scale**
 multiplies the environment's radiance, so the sky, reflections and ambient light
-follow it.
+follow it; **Environment Temperature (K)** tints it the same way as a light.
+
+Reflection probes see the scene from where they stand, so under an awning or indoors
+they would reflect light that does not reach the surface. While a bake is in use, a
+probe's reflection is dimmed by the ratio of the irradiance field's light at the
+surface to the diffuse light the probe itself saw (it is never brightened).
 
 The viewport renders the scene in half float, in two passes: render queues below
 200, then (after copying that image) queue 200 and above, where refractive materials
 sample the first image and its depth. It then exposes the result.
 **Lighting → Filmic Tone Mapping** maps it through the ACES filmic curve instead
 of clamping, **Exposure (EV)** scales it in stops and **Field of View** sets the
-camera's vertical angle; all are saved with the level.
+camera's vertical angle; all are saved with the level. Tone mapping writes
+sRGB-encoded colours; the later targets, the viewport texture and the window are
+not sRGB, so ImGui shows the viewport as rendered.
 
 The viewport always applies subtle HDR bloom before exposure/tone mapping, then
 OGRE's SMAA 1x High preset to smooth edges. Editor UI is composed afterwards.
@@ -559,12 +566,13 @@ Gaussian blur, and strength 0.08. These defaults are in
 and lookup textures bundled with OGRE rather than copying them.
 
 [`samples/bistro`](samples/bistro) reproduces the Amazon Lumberyard Bistro (exterior,
-interior and the wine-glass interior) from NVIDIA ORCA (CC BY 4.0). The asset is downloaded separately; see the
+interior and the wine-glass interior) from NVIDIA ORCA (CC BY 4.0), with a level for
+each of ORCA's five preview views. The asset is downloaded separately; see the
 sample's [README](samples/bistro/README.md).
 
 `ogrethrone --capture <folder> [file] [level]` opens a project and the given
 project-relative level (else its main level), waits for its textures, saves the
-viewport as a PPM image (default `out/capture.ppm`) and exits. OGRE
+viewport as a PPM image of the colours shown (default `out/capture.ppm`) and exits. OGRE
 assertions are written to standard error instead of a dialog.
 
 ## Physics playground

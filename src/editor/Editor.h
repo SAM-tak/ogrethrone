@@ -352,7 +352,7 @@ private:
     void readModel(const ModelComponent& model, const std::string& key);
     /// Reads the project-relative environment @p path on a worker thread, then uploads it
     /// into environments_[@p key].
-    void readEnvironmentFile(const std::string& path, float scale, const std::string& key);
+    void readEnvironmentFile(const std::string& path, const Ogre::Vector3& scale, const std::string& key);
     /// Draws the modal open/save dialog requested through showFiles_.
     void fileDialog();
     /// Enters Play mode on the level's expansion (TDDja/02 3, 06 6); scripts change

@@ -56,7 +56,7 @@ std::array<Ogre::Vector3, 9> irradianceHarmonics(const Ogre::Image2& cube) {
 }
 }
 
-EnvironmentImage readEnvironment(const std::filesystem::path& file, float scale, float limit) {
+EnvironmentImage readEnvironment(const std::filesystem::path& file, const Ogre::Vector3& scale, float limit) {
     std::ifstream in(file, std::ios::binary);
     std::vector<char> bytes(std::istreambuf_iterator<char>(in), {});
     if (bytes.empty()) throw std::runtime_error("Could not read " + file.u8string());

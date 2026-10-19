@@ -32,7 +32,7 @@ void Level::save(const std::filesystem::path& path) const {
     for(const auto& v:{std::pair{"ambientUpper",&r.ambientUpper},std::pair{"ambientLower",&r.ambientLower},
         std::pair{"ambientDirection",&r.ambientDirection},std::pair{"target",&r.target}}) out.set(settings,v.first,out.vector(v.second->data()));
     for(const auto& v:{std::pair{"minDistance",r.minDistance},std::pair{"maxDistance",r.maxDistance},
-        std::pair{"yaw",r.yaw},std::pair{"pitch",r.pitch},std::pair{"distance",r.distance},std::pair{"environmentScale",r.environmentScale},std::pair{"exposure",r.exposure},std::pair{"fieldOfView",r.fieldOfView}})
+        std::pair{"yaw",r.yaw},std::pair{"pitch",r.pitch},std::pair{"distance",r.distance},std::pair{"environmentScale",r.environmentScale},std::pair{"environmentTemperature",r.environmentTemperature},std::pair{"exposure",r.exposure},std::pair{"fieldOfView",r.fieldOfView}})
         out.set(settings,v.first,lhat_real(v.second));
     if(!r.environment.empty()) out.set(settings,"environment",out.string(r.environment));
     if(r.gi.enabled) {
@@ -92,7 +92,7 @@ Level Level::load(const std::filesystem::path& path) {
             std::pair{"ambientDirection",&r.ambientDirection},std::pair{"target",&r.target}})
             if(const auto f=lton::field(t,v.first); !lhat_is_nil(f)) lton::vector(f,v.second->data());
         for(const auto& v:{std::pair{"minDistance",&r.minDistance},std::pair{"maxDistance",&r.maxDistance},
-            std::pair{"yaw",&r.yaw},std::pair{"pitch",&r.pitch},std::pair{"distance",&r.distance},std::pair{"environmentScale",&r.environmentScale},std::pair{"exposure",&r.exposure},std::pair{"fieldOfView",&r.fieldOfView}})
+            std::pair{"yaw",&r.yaw},std::pair{"pitch",&r.pitch},std::pair{"distance",&r.distance},std::pair{"environmentScale",&r.environmentScale},std::pair{"environmentTemperature",&r.environmentTemperature},std::pair{"exposure",&r.exposure},std::pair{"fieldOfView",&r.fieldOfView}})
             if(const auto f=lton::field(t,v.first); !lhat_is_nil(f)) *v.second=static_cast<float>(lton::number(f));
         if(const auto f=lton::field(t,"environment"); !lhat_is_nil(f)) r.environment=lton::relativePath(f);
         if(const auto f=lton::field(t,"gi"); !lhat_is_nil(f)) {
@@ -117,7 +117,7 @@ Level Level::load(const std::filesystem::path& path) {
             for(const auto n:r.gi.fieldProbes) if(n&(n-1)) lton::invalid();
             for(const float d:{r.gi.upper.x-r.gi.lower.x,r.gi.upper.y-r.gi.lower.y,r.gi.upper.z-r.gi.lower.z}) if(!(d>0)) lton::invalid();
         }
-        if(r.environmentScale<0 || r.fieldOfView<1 || r.fieldOfView>170) lton::invalid();
+        if(r.environmentScale<0 || r.environmentTemperature<0 || r.fieldOfView<1 || r.fieldOfView>170) lton::invalid();
         if(r.minDistance<=0 || r.maxDistance<=r.minDistance || r.distance<.1f || r.pitch< -1.55f || r.pitch>1.55f) lton::invalid();
         for(const auto* c:{&r.ambientUpper,&r.ambientLower}) for(float v:{c->x,c->y,c->z}) if(v<0) lton::invalid();
         if(r.ambientDirection.x*r.ambientDirection.x+r.ambientDirection.y*r.ambientDirection.y+r.ambientDirection.z*r.ambientDirection.z<1e-10f) lton::invalid();

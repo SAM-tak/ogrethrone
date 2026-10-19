@@ -423,8 +423,7 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
         }
         for (const auto* name : {"Tonemapped", "SmaaEdges", "SmaaWeights"}) {
             auto* texture = node->addTextureDefinition(name);
-            texture->format = Ogre::String(name) == "Tonemapped" ? Ogre::PFG_RGBA8_UNORM_SRGB :
-                              Ogre::String(name) == "SmaaEdges" ? Ogre::PFG_RG8_UNORM : Ogre::PFG_RGBA8_UNORM;
+            texture->format = Ogre::String(name) == "SmaaEdges" ? Ogre::PFG_RG8_UNORM : Ogre::PFG_RGBA8_UNORM;
             texture->depthBufferId = Ogre::DepthBuffer::POOL_NO_DEPTH;
         }
         node->setNumTargetPass(9);
@@ -509,7 +508,9 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
     texture_ = root.getRenderSystem()->getTextureGpuManager()->createTexture(
         "ThroneEditor/ViewportTexture", Ogre::GpuPageOutStrategy::Discard,
         Ogre::TextureFlags::RenderToTexture, Ogre::TextureTypes::Type2D);
-    texture_->setPixelFormat(Ogre::PFG_RGBA8_UNORM_SRGB);
+    // Not sRGB: tone mapping writes sRGB-encoded values, which ImGui copies unchanged to the
+    // (non-sRGB) window. An sRGB view would be decoded to linear when sampled and shown dark.
+    texture_->setPixelFormat(Ogre::PFG_RGBA8_UNORM);
     resizeViewport(640, 360);
 
     createMaterial(unlit_, lineMaterial)->setColour(Ogre::ColourValue::White);
@@ -951,14 +952,14 @@ void Editor::setSkyboxEnabled(bool enabled) {
 void Editor::captureViewport(const std::filesystem::path& path) {
     Ogre::Image2 image;
     image.convertFromTexture(texture_,0,0);
+    // The viewport holds sRGB-encoded RGBA8 bytes, the colours shown.
+    if(image.getPixelFormat()!=Ogre::PFG_RGBA8_UNORM) throw std::runtime_error("Unexpected viewport capture format");
+    const auto box=image.getData(0);
     std::ofstream stream(path,std::ios::binary);
-    stream << "P6\n" << image.getWidth() << ' ' << image.getHeight() << "\n255\n";
-    for(unsigned y=0;y<image.getHeight();++y) for(unsigned x=0;x<image.getWidth();++x) {
-        const auto colour=image.getColourAt(x,y,0);
-        const char rgb[]={static_cast<char>(std::clamp(colour.r,0.0f,1.0f)*255),
-                          static_cast<char>(std::clamp(colour.g,0.0f,1.0f)*255),
-                          static_cast<char>(std::clamp(colour.b,0.0f,1.0f)*255)};
-        stream.write(rgb,3);
+    stream << "P6\n" << box.width << ' ' << box.height << "\n255\n";
+    for(unsigned y=0;y<box.height;++y) {
+        const auto* row=static_cast<const char*>(box.atFromOffsettedOrigin(0,y,0));
+        for(unsigned x=0;x<box.width;++x) stream.write(row+x*4,3);
     }
     if(!stream) throw std::runtime_error("Could not save viewport capture");
 }
@@ -1305,7 +1306,7 @@ void Editor::readModel(const ModelComponent& model, const std::string& key) {
         });
 }
 
-void Editor::readEnvironmentFile(const std::string& path, float scale, const std::string& key) {
+void Editor::readEnvironmentFile(const std::string& path, const Ogre::Vector3& scale, const std::string& key) {
     ++reads_;
     environments_[key];
     struct Read { EnvironmentImage image; std::string error; };
@@ -1341,12 +1342,13 @@ void Editor::syncLighting() {
     }
     scene_.getForwardPlus()->setDebugMode(r.debugClusters);
     sun_->setVisible(r.defaultSun);
-    // An environment is read once per file and scale; the scale multiplies its radiance.
+    // An environment is read once per file, scale and temperature, which multiply its radiance.
+    const auto environmentScale=toOgre(blackBody(r.environmentTemperature)*r.environmentScale);
     const auto environmentFile=r.environment.empty() || !project_ ? std::string{}
-        : project_->resolve(r.environment).generic_u8string()+"#"+std::to_string(r.environmentScale);
+        : project_->resolve(r.environment).generic_u8string()+"#"+std::to_string(r.environmentScale)+"#"+std::to_string(r.environmentTemperature);
     if(environmentFile!=environmentFile_) {
         environmentFile_=environmentFile;
-        if(!environmentFile.empty() && !environments_.count(environmentFile)) readEnvironmentFile(r.environment,r.environmentScale,environmentFile);
+        if(!environmentFile.empty() && !environments_.count(environmentFile)) readEnvironmentFile(r.environment,environmentScale,environmentFile);
         const auto it=environments_.find(environmentFile);
         environment_=it!=environments_.end() && it->second ? &*it->second : nullptr;
         setSkyboxEnabled(skyboxEnabled_);
@@ -2359,6 +2361,8 @@ void Editor::menu() {
         if(ImGui::InputText("Environment (HDR)",environment,sizeof environment,ImGuiInputTextFlags_EnterReturnsTrue)) { checkpoint(); r.environment=environment; }
         float scale=r.environmentScale;
         if(ImGui::DragFloat("Environment Scale",&scale,.01f,0,100)) { checkpoint(); r.environmentScale=scale; }
+        float temperature=r.environmentTemperature;
+        if(ImGui::DragFloat("Environment Temperature (K)",&temperature,10,0,40000)) { checkpoint(); r.environmentTemperature=temperature; }
         ImGui::Separator();
         auto gi=r.gi;
         bool giEdited=ImGui::MenuItem("Global Illumination",nullptr,&gi.enabled);

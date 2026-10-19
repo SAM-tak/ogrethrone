@@ -2,6 +2,7 @@
 
 // Scales the half-float scene by the exposure and, when filmic is set, maps it
 // through the ACES filmic curve; otherwise it is clamped as an LDR target would.
+// The result is sRGB-encoded here: the following targets and the window are not sRGB.
 
 vulkan_layout( ogre_t0 ) uniform texture2D scene;
 vulkan( layout( ogre_s0 ) uniform sampler sceneSampler );
@@ -34,5 +35,7 @@ void main()
 	vec4 colour = texture( vkSampler2D( scene, sceneSampler ), inPs.uv0 );
 	vec3 glow = texture( vkSampler2D( bloom, bloomSampler ), inPs.uv0 ).rgb;
 	vec3 exposed = (colour.rgb + glow * bloomStrength) * exposure;
-	fragColour = vec4( filmic > 0.5 ? aces( exposed ) : clamp( exposed, 0.0, 1.0 ), colour.a );
+	vec3 mapped = filmic > 0.5 ? aces( exposed ) : clamp( exposed, 0.0, 1.0 );
+	vec3 encoded = mix( mapped * 12.92, 1.055 * pow( mapped, vec3( 1.0 / 2.4 ) ) - 0.055, step( 0.0031308, mapped ) );
+	fragColour = vec4( encoded, colour.a );
 }

@@ -32,10 +32,10 @@ struct EnvironmentImage {
     std::array<Ogre::Vector3, 9> harmonics;
 };
 
-/// Reads @p file, multiplying its radiance by @p scale. Radiance above @p limit before
+/// Reads @p file, multiplying its radiance by @p scale (per channel). Radiance above @p limit before
 /// scaling (the sun, which a Light component draws) is clamped. Touches no GPU state, so
 /// it can run on a worker thread. Throws when the file cannot be read as an HDR image.
-EnvironmentImage readEnvironment(const std::filesystem::path& file, float scale = 1.0f, float limit = 16.0f);
+EnvironmentImage readEnvironment(const std::filesystem::path& file, const Ogre::Vector3& scale = Ogre::Vector3(1.0f), float limit = 16.0f);
 /// Uploads @p image into an Environment whose cubemap is named @p name.
 Environment uploadEnvironment(Ogre::TextureGpuManager& textures, const EnvironmentImage& image, const std::string& name);
 }

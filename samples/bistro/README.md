@@ -15,17 +15,24 @@ out/build/windows-clang-ninja/bin/Release/ogrethrone.exe samples/bistro
 ```
 
 The project opens `levels/exterior.level.lton`; click a file in **Browser > Levels**
-to switch. Each level uses filmic tone mapping and the files' 34° field of view.
-`exterior`, `interior` and `interior-wine` open at their file's camera;
-`plaza.level.lton` is the exterior seen from ORCA's first exterior preview render
-(the corner of Le Petit Coin with the scooter), at +1.3 EV.
+to switch. Each level uses filmic tone mapping. `exterior` and `interior` open at their
+file's camera. Five levels are seen from ORCA's preview renders, framed by eye (the
+renders' cameras are not published):
+
+- `plaza`: the corner of Le Petit Coin with the scooter (exterior preview 1).
+- `terrace`: the table under the awning with the bottle and ashtray (exterior preview 2).
+- `interior-wine`: the room and the bar (interior preview 1).
+- `wine-table`: a laid table with wine glasses (interior preview 2).
+- `wine-counter`: the end of the counter with the cooler and cookie jars (interior preview 3).
 
 `exterior.level.lton` places `scenes/exterior.scene.lton`:
 
 - **Bistro Exterior**: a Model component reading `BistroExterior.fbx` (1296 meshes,
   132 metal-rough materials, 2.8 M triangles). The file's DirectX normal maps and
   ORM "Specular" maps (occlusion, roughness, metalness) are used as authored.
-- **Sun**: the file's directional light (its direction and warm colour).
+- **Sun**: a directional light, power 90 at 4300 K. Its direction (from the
+  south-west, 45° high) is chosen so the plaza and terrace shadows fall as in ORCA's
+  renders; the FBX's own sun is steeper.
 
 The level's environment is the scene's own `san_giuseppe_bridge_4k.hdr`: it is drawn
 as the sky and lights every surface (spherical harmonics for diffuse light, a
@@ -38,7 +45,7 @@ file has no lights, so point lights sit at its ceiling lights, wall lights and
 lanterns. Clear glass refracts; red and white wine, beer and the wine bottles absorb
 light with the coefficients of ORCA's `BistroInterior_Wine.pyscene`. The path tracer that ORCA's renders use
 lights these rooms from their emissive surfaces; point lights stand in for that.
-Their exposure is -1.5 EV.
+Their exposure is -2.9 EV.
 
 Every level bakes global illumination (two bounces) over the area around its view;
 bake it once with **Lighting → Bake Global Illumination**, or from the repository root:
@@ -48,10 +55,10 @@ out/build/windows-clang-ninja/bin/Release/ogrethrone.exe --bake-gi samples/bistr
 ```
 
 The results are written to `levels/*.gi/` (about 50 MB each) and ignored by Git.
-The sun uses power 150 at 5000 K, the exterior levels scale the environment by 200
-at -3.45 EV, and the exterior's lamps and signs glow with emission 30, so the
-balance of sun, sky, shade and lamps follows ORCA's preview renders. Bakes made
-before the irradiance-field fixes of October 2026 are too dark; bake them again.
+The exterior levels scale the environment by 28 and tint it to 5000 K (exposure
+-2.5 EV, the terrace -2.7 EV), and the exterior's lamps and signs glow with emission
+30, so the balance of sun, sky, shade and lamps follows ORCA's preview renders. Bakes
+made before October 20, 2026 do not match these settings; bake them again.
 
 Opening a level reads its files in the background and then shows the models a few
 materials at a time; the **Working** window shows the progress. In a Debug build this

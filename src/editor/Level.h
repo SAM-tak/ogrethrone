@@ -51,9 +51,10 @@ struct RenderingSettings {
     Vec3 ambientDirection{0,1,0};
     float minDistance = .1f, maxDistance = 100;
     /// Optional project-relative equirectangular HDR file lighting the level and drawn as
-    /// its sky; environmentScale multiplies its radiance (sky, reflections and ambient light).
+    /// its sky; environmentScale multiplies its radiance (sky, reflections and ambient light),
+    /// tinted by environmentTemperature like a light's (K; 0 leaves its colour as it is).
     std::string environment;
-    float environmentScale = 1;
+    float environmentScale = 1, environmentTemperature = 0;
     /// Baked global illumination; the bake lives in the `<level>.gi` folder beside the level.
     GiSettings gi;
     /// Optional opening view: orbit target, radians and distance.
