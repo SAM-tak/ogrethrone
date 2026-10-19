@@ -104,7 +104,7 @@ if(THRONE_BUILD_GRAPHICS)
     if(WIN32)
         # The application icon and the manifest (visual styles, per-monitor DPI, UTF-8).
         target_sources(ogrethrone PRIVATE media/ogrethrone.rc media/ogrethrone.manifest)
-        target_link_libraries(ogrethrone PRIVATE dwmapi)
+        target_link_libraries(ogrethrone PRIVATE dwmapi ole32 shell32 uuid imm32)
     endif()
     target_link_libraries(ogrethrone PRIVATE throne_runtime throne_audio throne_script OgreNextMain
         RenderSystem_Vulkan OgreNextHlmsPbs OgreNextHlmsUnlit OgreNextImgui OgreNextAtmosphere Plugin_ParticleFX2 ColibriGui)

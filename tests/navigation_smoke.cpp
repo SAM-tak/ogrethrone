@@ -10,6 +10,13 @@
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#include <imm.h>
+#undef near
+#endif
 
 namespace throne {
 void navigationSmoke(Editor& editor, Ogre::Window& nativeWindow, Ogre::Camera& camera,const std::filesystem::path& project) {
@@ -44,6 +51,45 @@ void navigationSmoke(Editor& editor, Ogre::Window& nativeWindow, Ogre::Camera& c
         wheel = 0;
     };
     for (int i = 0; i < 3; ++i) frame();
+#ifdef _WIN32
+    // Exercise real IME result messages, rather than inserting UTF-8 directly into ImGui.
+    const auto previousLayout = GetKeyboardLayout(0);
+    const auto japanese = LoadKeyboardLayoutW(L"00000411", KLF_ACTIVATE);
+    struct KeyboardGuard {
+        HKL previous;
+        ~KeyboardGuard() { ActivateKeyboardLayout(previous, 0); }
+    } keyboardGuard{previousLayout};
+    if (japanese && ImmIsIME(japanese)) {
+        HWND hwnd = nullptr;
+        nativeWindow.getCustomAttribute("WINDOW", &hwnd);
+        const auto previousFocus = GetFocus();
+        SetFocus(hwnd);
+        const auto context = ImmGetContext(hwnd);
+        require(context != nullptr, "IME context unavailable");
+        const auto previousOpen = ImmGetOpenStatus(context);
+        struct ImeGuard {
+            HWND window, focus;
+            HIMC context;
+            BOOL open;
+            ~ImeGuard() { ImmSetOpenStatus(context, open); ImmReleaseContext(window, context); SetFocus(focus); }
+        } imeGuard{hwnd, previousFocus, context, previousOpen};
+        ImmSetOpenStatus(context, TRUE);
+        const auto begin = ImGui::GetCurrentContext()->InputEventsQueue.Size;
+        wchar_t text[] = L"\u65E5\u672C\u8A9E";
+        require(ImmSetCompositionStringW(context, SCS_SETSTR, text, sizeof(text) - sizeof(wchar_t), nullptr, 0),
+                "IME composition could not be set");
+        require(ImmNotifyIME(context, NI_COMPOSITIONSTR, CPS_COMPLETE, 0), "IME composition could not be committed");
+        SendMessageA(hwnd, WM_CHAR, '#', 1);
+        std::u32string received;
+        const auto& events = ImGui::GetCurrentContext()->InputEventsQueue;
+        for (int i = begin; i < events.Size; ++i)
+            if (events[i].Type == ImGuiInputEventType_Text) received += static_cast<char32_t>(events[i].Text.Char);
+        require(received == U"\u65E5\u672C\u8A9E#", "IME result was corrupted, duplicated, or ordinary typing was lost");
+        std::puts("IME smoke passed: Japanese commit delivered once and ordinary typing preserved");
+    } else {
+        std::puts("IME smoke skipped: Japanese input method is not installed");
+    }
+#endif
     const auto* systems=ImGui::FindWindowByName("Systems");
     require(systems && systems->Active && systems->ContentSize.y>0,"Systems panel was not rendered");
     // Read the rendered background, rather than merely checking the sky's enabled flag.

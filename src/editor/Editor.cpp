@@ -329,7 +329,13 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
     io.IniFilename = iniFile_.empty() ? nullptr : iniFile_.c_str();
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     styleColours();
-    io.Fonts->AddFontDefault();
+    // Include every BMP glyph supplied by the Japanese font, including uncommon name kanji.
+    static constexpr ImWchar glyphRanges[] = {0x20, 0xFFFD, 0};
+    ImFontConfig fontConfig;
+    fontConfig.OversampleH = 1;
+    if (!io.Fonts->AddFontFromFileTTF(THRONE_MEDIA_DIR "/fonts/NotoSansJP-Regular.otf", 16.0f,
+                                    &fontConfig, glyphRanges))
+        throw std::runtime_error("Could not load the editor's Noto Sans JP font.");
     // The synchronous upload path asserts upstream (AlwaysKeepSystemRamCopy without
     // a RAM copy), so upload asynchronously and wait for it instead.
     gui_->setupFont(io.Fonts, false);
@@ -570,6 +576,25 @@ void Editor::launcher() {
     constexpr auto flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                            ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking;
     if (ImGui::Begin("Launcher", nullptr, flags)) {
+        const auto folderInput = [&](const char* label, const char* hint, char* text, std::size_t capacity) {
+            ImGui::PushID(label);
+            ImGui::InputTextWithHint(label, hint, text, capacity);
+            ImGui::SameLine();
+            if (ImGui::Button("Browse...")) {
+                try {
+                    if (const auto folder = platform_.pickFolder(std::filesystem::u8path(text))) {
+                        const auto path = folder->u8string();
+                        if (path.size() >= capacity) throw std::runtime_error("The selected folder path is too long.");
+                        std::copy(path.begin(), path.end(), text);
+                        text[path.size()] = '\0';
+                        launcherError_.clear();
+                    }
+                } catch (const std::exception& error) {
+                    launcherError_ = error.what();
+                }
+            }
+            ImGui::PopID();
+        };
         ImGui::TextUnformatted("Ogre Throne - Projects");
         ImGui::Separator();
         if (ImGui::Button("New Project")) form_ = Form::New, launcherError_.clear();
@@ -577,7 +602,7 @@ void Editor::launcher() {
         if (ImGui::Button("Import")) form_ = Form::Import, launcherError_.clear();
         if (form_ == Form::New) {
             ImGui::InputText("Name", newName_, sizeof newName_);
-            ImGui::InputText("Parent folder", newParent_, sizeof newParent_);
+            folderInput("Parent folder", "parent folder for the new project", newParent_, sizeof newParent_);
             if (ImGui::Button("Create")) {
                 try {
                     openProject(Project::create(std::filesystem::u8path(newParent_), newName_).root);
@@ -589,8 +614,7 @@ void Editor::launcher() {
             ImGui::SameLine();
             if (ImGui::Button("Cancel")) form_ = Form::None;
         } else if (form_ == Form::Import) {
-            ImGui::InputTextWithHint("Folder", "folder containing project.throne.lton", importPath_,
-                                     sizeof importPath_);
+            folderInput("Folder", "folder containing project.throne.lton", importPath_, sizeof importPath_);
             if (ImGui::Button("Import and Open")) {
                 openProject(std::filesystem::u8path(importPath_));
                 if (project_) form_ = Form::None;
@@ -2476,10 +2500,12 @@ void Editor::viewport() {
             ImGui::SetCursorScreenPos(ImVec2(origin.x + 6, origin.y + 30));
             breadcrumb();
             if (showStatistics_) {
-                ImGui::SetCursorScreenPos(ImVec2(origin.x + size.x - 290, origin.y + 8));
+                const float fontScale = ImGui::GetFontSize() / 13.0f;
+                const ImVec2 statisticsSize(280 * fontScale, (statisticsCollapsed_ ? 28 : 200) * fontScale);
+                ImGui::SetCursorScreenPos(ImVec2(origin.x + size.x - statisticsSize.x - 10, origin.y + 8));
                 ImGui::SetNextWindowBgAlpha(0.75f);
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6, 4));
-                if (ImGui::BeginChild("ViewportStatistics", ImVec2(280, statisticsCollapsed_ ? 28 : 200), ImGuiChildFlags_Borders,
+                if (ImGui::BeginChild("ViewportStatistics", statisticsSize, ImGuiChildFlags_Borders,
                                      ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoScrollbar)) {
                     if (ImGui::SmallButton(statisticsCollapsed_ ? "+" : "-")) statisticsCollapsed_ = !statisticsCollapsed_;
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip(statisticsCollapsed_ ? "Expand statistics" : "Minimize statistics");

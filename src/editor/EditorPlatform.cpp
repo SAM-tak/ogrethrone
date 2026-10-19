@@ -5,12 +5,16 @@
 #include <cwchar>
 #include <stdexcept>
 #include <utility>
+#include <memory>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
 #include <commctrl.h>
 #include <dwmapi.h>
+#include <imm.h>
+#include <shobjidl.h>
+#include <wrl/client.h>
 #include <backends/imgui_impl_win32.h>
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
@@ -41,6 +45,24 @@ struct WindowHook {
             Ogre::LogManager::getSingleton().logMessage("Shutdown: WM_CLOSE received");
             platform.closeRequested_ = true;
             return 0;
+        case WM_IME_COMPOSITION:
+            if (lparam & GCS_RESULTSTR) {
+                // OGRE's ANSI window would otherwise convert committed text to code-page bytes.
+                const auto context = ImmGetContext(hwnd);
+                if (!context) break;
+                const auto bytes = ImmGetCompositionStringW(context, GCS_RESULTSTR, nullptr, 0);
+                std::wstring text(bytes > 0 ? static_cast<std::size_t>(bytes) / sizeof(wchar_t) : 0, L'\0');
+                const auto copied = bytes > 0
+                    ? ImmGetCompositionStringW(context, GCS_RESULTSTR, text.data(), static_cast<DWORD>(bytes)) : bytes;
+                ImmReleaseContext(hwnd, context);
+                if (copied < 0) break;
+                text.resize(static_cast<std::size_t>(copied) / sizeof(wchar_t));
+                for (const auto character : text) ImGui::GetIO().AddInputCharacterUTF16(character);
+                // Do not generate WM_IME_CHAR/WM_CHAR for text already delivered to ImGui.
+                lparam &= ~(GCS_RESULTSTR | GCS_RESULTREADSTR | GCS_RESULTCLAUSE | GCS_RESULTREADCLAUSE);
+                if (!lparam) return 0;
+            }
+            break;
         case WM_ENTERSIZEMOVE:
             SetTimer(hwnd, timer, 16, nullptr);
             break;
@@ -83,6 +105,34 @@ EditorPlatform::~EditorPlatform() {
 #endif
 }
 bool EditorPlatform::takeCloseRequest() { return std::exchange(closeRequested_, false); }
+std::optional<std::filesystem::path> EditorPlatform::pickFolder(const std::filesystem::path& initial) const {
+#ifdef _WIN32
+    const auto check = [](HRESULT result) {
+        if (FAILED(result)) throw std::runtime_error("Could not open the folder picker.");
+    };
+    Microsoft::WRL::ComPtr<IFileOpenDialog> dialog;
+    check(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)));
+    DWORD options = 0;
+    check(dialog->GetOptions(&options));
+    check(dialog->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST | FOS_NOCHANGEDIR));
+    if (!initial.empty()) {
+        Microsoft::WRL::ComPtr<IShellItem> folder;
+        if (SUCCEEDED(SHCreateItemFromParsingName(initial.c_str(), nullptr, IID_PPV_ARGS(&folder))))
+            dialog->SetFolder(folder.Get());
+    }
+    const auto result = dialog->Show(static_cast<HWND>(handle_));
+    if (result == HRESULT_FROM_WIN32(ERROR_CANCELLED)) return std::nullopt;
+    check(result);
+    Microsoft::WRL::ComPtr<IShellItem> folder;
+    check(dialog->GetResult(&folder));
+    PWSTR name = nullptr;
+    check(folder->GetDisplayName(SIGDN_FILESYSPATH, &name));
+    const std::unique_ptr<wchar_t, decltype(&CoTaskMemFree)> ownedName(name, &CoTaskMemFree);
+    return std::filesystem::path(ownedName.get());
+#else
+    throw std::runtime_error("The native folder picker is currently available on Windows only.");
+#endif
+}
 void EditorPlatform::newFrame() {
 #ifdef _WIN32
     ImGui_ImplWin32_NewFrame();

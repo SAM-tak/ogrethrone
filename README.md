@@ -45,6 +45,10 @@ the same MSVC runtime as OGRE. SDK shader compiler libraries are not linked.
 
 `ogrethrone` without arguments shows the project launcher: create a project, import
 an existing project folder, or click a known one to open it in the editor.
+On Windows, **Browse...** beside the import folder or new project's parent folder
+opens the native folder picker. Selecting a folder fills the path; cancelling keeps it unchanged.
+The editor bundles Noto Sans JP for Japanese project names, paths and text input;
+no system font installation is needed. Its license is in `media/fonts/OFL.txt`.
 `ogrethrone <folder>` opens that project directly. The known projects are kept in
 `%APPDATA%/OgreThrone/projects.lton` (`$XDG_CONFIG_HOME/ogrethrone/` elsewhere);
 removing one from the list leaves its folder alone. File > Close Project returns

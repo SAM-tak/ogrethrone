@@ -33,6 +33,9 @@
 #include <thread>
 #include <stdexcept>
 #include <array>
+#ifdef _WIN32
+#include <objbase.h>
+#endif
 #ifdef THRONE_NAVIGATION_SMOKE
 #include "navigation_smoke.h"
 #include "showcase_smoke.h"
@@ -112,6 +115,12 @@ int main(int argc, char** argv) {
         project = std::filesystem::u8path(argv[1]);
     }
     try {
+        // Native shell dialogs need an STA; initialize before audio uses COM too.
+#ifdef _WIN32
+        if (FAILED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE)))
+            throw std::runtime_error("Could not initialize Windows shell dialogs.");
+        struct ComGuard { ~ComGuard() { CoUninitialize(); } } comGuard;
+#endif
         // Close smoke also exercises shutdown of the real audio output backend.
         throne::AudioSystem audio(smoke && !closeSmoke);
         const auto abi = Ogre::generateAbiCookie();

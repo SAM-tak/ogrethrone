@@ -16,6 +16,8 @@ target_compile_definitions(throne_soloud PRIVATE WITH_MINIAUDIO WITH_NULL
 find_package(Threads REQUIRED)
 target_link_libraries(throne_soloud PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
 if(WIN32)
+    # Match the editor UI's COM apartment, including miniaudio's balanced uninitialization.
+    target_compile_definitions(throne_soloud PRIVATE MA_COINIT_VALUE=2)
     target_link_libraries(throne_soloud PRIVATE winmm ole32)
 elseif(APPLE)
     target_link_libraries(throne_soloud PRIVATE "-framework CoreAudio" "-framework AudioToolbox"
