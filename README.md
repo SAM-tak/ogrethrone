@@ -4,6 +4,8 @@ A C++ game engine using OGRE-Next 4.0 development sources for Vulkan graphics,
 Box3D for physics, L^ for scripting, Dear ImGui for editor UI, Colibri for
 in-game UI, OIS for device input, and SoLoud + Steam Audio for sound. The name is currently a working name.
 
+![Screenshot](./images/image.png)
+
 ## Checkout
 
 ```sh
