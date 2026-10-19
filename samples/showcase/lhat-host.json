@@ -57,7 +57,7 @@
     {"kind": "member", "module": "throne", "type": "SceneNode", "name": "valid", "signature": "f^self^ -> bool^;"},
     {"kind": "member", "module": "throne", "type": "SceneNode", "name": "spawnBox", "signature": "p^self^, throne.Vec3 -> throne.SceneNode;"},
     {"kind": "member", "module": "throne", "type": "SceneNode", "name": "transform", "signature": "f^self^ -> throne.Transform|nil^;"},
-    {"kind": "member", "module": "throne", "type": "SceneNode", "name": "component", "signature": "f^self^, string^ -> any^;"},
+    {"kind": "member", "module": "throne", "type": "SceneNode", "name": "component", "signature": "f^self^, type^ -> ARG0.T0|nil^;"},
     {"kind": "member", "module": "throne", "type": "SceneNode", "name": "setBehaviourPriority", "signature": "p^self^, number^, number^|nil^;"},
     {"kind": "member", "module": "throne", "type": "SceneNode", "name": "setBehaviourPhasePriority", "signature": "p^self^, number^, throne.System, number^|nil^;"},
     {"kind": "member", "module": "throne", "type": "SceneNode", "name": "setBehaviourEnabled", "signature": "p^self^, number^, bool^;"},

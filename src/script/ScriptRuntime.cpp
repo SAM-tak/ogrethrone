@@ -67,7 +67,6 @@ struct Pending {
     std::size_t node = Expansion::npos;
     std::string stage;
     std::string symbol = "Behaviour";
-    std::string component;
 };
 
 double number(LhatValue value);
@@ -186,7 +185,6 @@ struct ScriptRuntime::State {
     std::uint64_t frame = 0;
     int currentStage = -1;
     std::vector<LhatInteger> freeRoots;
-    std::map<std::pair<std::uintptr_t, std::string>, LhatValue> components;
     double time = 0;
 
     State(const World& world, LevelExpansion& expanded, std::filesystem::path root, Log log)
@@ -461,6 +459,35 @@ THRONE_HOST(nodeComponent, {
                                : lhat_nil();
     *count = 1;
 })
+/// SceneNode.component(type): a typed component handle, or nil when absent.
+THRONE_HOST(typedComponent, {
+    auto* node = s.target(machine, arguments[0]);
+    if (!node) return;
+    if (!lhat_is_object_kind(arguments[1], LHAT_OBJECT_TYPE)) {
+        lhat_machine_panic_text(machine, "Expected a component type");
+        return;
+    }
+    const auto* type = reinterpret_cast<const LhatRuntimeType*>(lhat_as_object(arguments[1]));
+    if (type->kind != LHAT_TYPE_RT_HOSTDATA) {
+        lhat_machine_panic_text(machine, "Expected a built-in component type");
+        return;
+    }
+    bool matched = false;
+    const auto get = [&](auto member) {
+        using Component = typename std::decay_t<decltype(node->*member)>::value_type;
+        const auto* tag = s.componentTags.at(ComponentBinding<Component>::name);
+        if (type->hostdata_tag != tag) return;
+        matched = true;
+        answers[0] = node->*member ? s.handle(machine, tag, reinterpret_cast<std::uintptr_t>(
+            lhat_hostdata_pointer(arguments[0], s.sceneNode))) : lhat_nil();
+        *count = 1;
+    };
+    get(&SceneNode::transform); get(&SceneNode::box); get(&SceneNode::sphere);
+    get(&SceneNode::capsule); get(&SceneNode::plane); get(&SceneNode::boxCollider);
+    get(&SceneNode::sphereCollider); get(&SceneNode::capsuleCollider); get(&SceneNode::planeCollider);
+    get(&SceneNode::rigidBody); get(&SceneNode::material); get(&SceneNode::light); get(&SceneNode::particles);
+    if (!matched) lhat_machine_panic_text(machine, "Expected a built-in component type");
+})
 /// Reads Vec3 @p value into @p out, clamped to [@p low, @p high]; panics when not finite.
 bool finite(LhatMachine* machine, Vec3 value, float low, float high, float* out) {
     for (float* component : {&value.x, &value.y, &value.z}) {
@@ -626,15 +653,6 @@ THRONE_HOST(removeBehaviour, {
     s.registryDirty=true;
 })
 
-/// SceneNode.component(name): returns the per-node script instance, or nil.
-THRONE_HOST(scriptComponent, {
-    if (!s.target(machine, arguments[0])) return;
-    const auto bits = reinterpret_cast<std::uintptr_t>(lhat_hostdata_pointer(arguments[0], s.sceneNode));
-    const auto found = s.components.find({bits, std::string(text(arguments[1]))});
-    answers[0] = found == s.components.end() ? lhat_nil() : found->second;
-    *count = 1;
-})
-
 /// throne.find(name): the first scene node with that name, scene by scene, or nil^.
 THRONE_HOST(find, {
     const auto name = text(arguments[0]);
@@ -711,7 +729,6 @@ void query(LhatMachine* machine, void* context, const LhatValue* arguments, std:
                 if(name=="PbsMaterial") present=bool(node.material);
                 if(name=="Light") present=bool(node.light);
                 if(name=="ParticleSystem") present=bool(node.particles);
-                if(!s.componentTags.count(std::string(name))) present=node.scriptComponents.count(std::string(name))!=0;
                 matches=matches && present;
             }
             if (!matches) continue;
@@ -766,7 +783,7 @@ bool registerThrone(LhatProgram* program, State& s) {
         {"SceneNode", "valid", "f^self^ -> bool^;", nodeValid},
         {"SceneNode", "spawnBox", "p^self^, throne.Vec3 -> throne.SceneNode;", nodeSpawnBox},
         {"SceneNode", "transform", "f^self^ -> throne.Transform|nil^;", nodeComponent<Transform, &SceneNode::transform>},
-        {"SceneNode", "component", "f^self^, string^ -> any^;", scriptComponent},
+        {"SceneNode", "component", "f^self^, type^ -> ARG0.T0|nil^;", typedComponent},
         {"SceneNode", "setBehaviourPriority", "p^self^, number^, number^|nil^;", setBehaviourPriority},
         {"SceneNode", "setBehaviourPhasePriority", "p^self^, number^, throne.System, number^|nil^;", setBehaviourPhasePriority},
         {"SceneNode", "setBehaviourEnabled", "p^self^, number^, bool^;", setBehaviourEnabled},
@@ -914,7 +931,6 @@ const LhatUnit* checkBehaviour(State& s, const std::string& path, std::string& e
     }
     if (!lhat_unit_export_conforms(unit, symbol.c_str(), "t^{ new : f^ -> any^; }"))
         errors += path + ": " + symbol + " must be a def^\n";
-    if (symbol == "Component") return unit;
     for(int method=0;method<4;++method) {
         const std::string name=method==3?"start":behaviourMethods[method];
         if(!behaviourHas(unit,name,"any^",symbol)) continue;
@@ -978,9 +994,8 @@ static BehaviourInfo inspectScript(const std::filesystem::path& root, const std:
     ScriptRuntime::State s(none, nothing, root, {});
     createProgram(s);
     std::string errors;
-    const auto* checked = lhat_program_check(s.program.get(), script.c_str());
-    if (symbol.empty()) symbol = checked && publishes(checked, "Behaviour") ? "Behaviour" :
-        checked && publishes(checked, "System") ? "System" : "Component";
+    if (symbol.empty()) symbol = "Behaviour";
+    if (symbol != "Behaviour") throw ScriptError("Expected a Behaviour script");
     const auto* unit = checkBehaviour(s, script, errors, -1, symbol);
     diagnostics(s.program.get(), errors);
     if (!errors.empty()) throw ScriptError(errors);
@@ -994,14 +1009,14 @@ static BehaviourInfo inspectScript(const std::filesystem::path& root, const std:
     const auto* table = reinterpret_cast<const LhatTable*>(lhat_as_object(instance));
     BehaviourInfo info;
     auto& result=info.fields;
-    if(symbol!="Component") info.defaults=priorityDefaults(table);
+    info.defaults=priorityDefaults(table);
     info.start=behaviourHas(unit,"start","any^",symbol);
     for(int phase=0;phase<3;++phase) info.methods[phase]=behaviourHas(unit,behaviourMethods[phase],"any^",symbol);
     for (std::size_t i = 0; i < type->instance->member_count; ++i) {
         const auto& member = type->instance->members[i];
         if (!member.type) continue;
         const std::string name(member.name->text, member.name->length);
-        if (symbol != "Component" && !exported(unit, name, symbol)) continue;  // The script's own, not the Inspector's.
+        if (!exported(unit, name, symbol)) continue;  // The script's own, not the Inspector's.
         const auto value = lhat_table_get_bytes(table, name.data(), name.size());
         bool node = member.type->kind == LHAT_TYPE_RT_HOSTDATA && member.type->hostdata_tag == s.sceneNode;
         for (std::size_t k = 0; member.type->kind == LHAT_TYPE_RT_UNION && k < member.type->part_count; ++k)
@@ -1033,13 +1048,13 @@ void instantiate(State& s,const Pending& item) {
             lhat_machine_call_member(s.machine.get(), s.definitions.at(key), "new", 3, nullptr, 0), item.what + " new");
         auto entry=std::make_unique<Instance>();
         entry->instanceRoot=s.pin(instance);
-        if(item.symbol!="Component") entry->defaults=priorityDefaults(reinterpret_cast<const LhatTable*>(lhat_as_object(instance)));
+        entry->defaults=priorityDefaults(reinterpret_cast<const LhatTable*>(lhat_as_object(instance)));
         auto* table = reinterpret_cast<LhatTable*>(lhat_as_object(instance));
         for (const auto& [name, value] : item.behaviour->data) {
             if (!behaviourHas(unit, name, fieldType(value), item.symbol) ||
-                (item.symbol != "Component" && !exported(unit, name, item.symbol))) {
+                !exported(unit, name, item.symbol)) {
                 s.log(item.what + ": field " + name + " ignored (the script has no " +
-                      (item.symbol == "Component" ? std::string() : std::string("@export ")) + fieldType(value) +
+                      std::string("@export ") + fieldType(value) +
                       " field of that name)");
                 continue;
             }
@@ -1074,10 +1089,6 @@ void instantiate(State& s,const Pending& item) {
             if (!lhat_machine_make_string(s.machine.get(), name.data(), name.size(), &key) ||
                 !lhat_machine_table_set(s.machine.get(), table, key, written, &refused) || refused)
                 throw ScriptError(item.what + ": could not set field " + name);
-        }
-        if (item.symbol == "Component") {
-            s.components[{State::nodeBits(item.scene, item.node), item.component}] = instance;
-            return;
         }
         entry->what=item.what; entry->instance=instance;
         entry->system=item.node==Expansion::npos?s.systemHandles[item.system]:s.handle(s.machine.get(),s.sceneNode,State::nodeBits(item.scene,item.node));
@@ -1275,7 +1286,7 @@ ScriptRuntime::ScriptRuntime(const World& world, LevelExpansion& expanded, const
         s.systems.push_back(&system);
         for (const auto& behaviour : system.behaviour)
             pending.push_back({scene, prefix, s.systems.size() - 1, &behaviour,
-                               owner + " " + system.name + " " + behaviour.script, Expansion::npos, system.name, behaviour.systemScript ? "System" : "Behaviour"});
+                               owner + " " + system.name + " " + behaviour.script, Expansion::npos, system.name, "Behaviour"});
     };
     // Scene and prefab systems come expanded, one copy per instance (TDDja/06 2).
     for (std::size_t i = 0; i < expanded.instances.size(); ++i)
@@ -1293,22 +1304,12 @@ ScriptRuntime::ScriptRuntime(const World& world, LevelExpansion& expanded, const
                                    nodes[n].node.name + " " + behaviour.script, n, ""});
         }
     }
-    for (std::size_t scene = 0; scene < expanded.instances.size(); ++scene) {
-        const auto& nodes = expanded.instances[scene].expansion.nodes;
-        for (const auto n : expanded.instances[scene].expansion.hierarchy()) {
-            auto prefix = nodes[n].path;
-            if (!prefix.empty() && !nodes[n].root) prefix.pop_back();
-            for (const auto& [name, component] : nodes[n].node.scriptComponents)
-                pending.push_back({static_cast<int>(scene), prefix, 0, &component,
-                    nodes[n].node.name + " " + name, n, "", "Component", name});
-        }
-    }
     std::map<std::string, const LhatUnit*> units;
     for (const auto& item : pending)
         units[item.behaviour->script + "#" + item.symbol] = checkBehaviour(s, item.behaviour->script, errors,
             item.node != Expansion::npos, item.symbol);
     for (const auto& item : pending) {
-        if (item.symbol == "Component" || item.node!=Expansion::npos) continue;
+        if (item.node!=Expansion::npos) continue;
         const auto found = std::find_if(s.stages.begin(), s.stages.end(), [&](const ExecutionStage& stage) {
             return stage.name == item.stage && stage.parallel.empty();
         });

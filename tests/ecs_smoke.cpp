@@ -39,22 +39,14 @@ public^let^ Behaviour = def^{
     },
 }
 )");
-        write(root, "component.lh", R"(module^ test.component
-public^let^ Component = def^{ self^{ speed = 3, ticks = 0 } }
-)");
         write(root, "system.lh", R"(module^ test.system
 import^ throne
-let^ spin = require^ "component.lh"
-public^let^ System = def^{
+public^let^ Behaviour = def^{
     update = p^self^, system:throne.System, dt:number^ {
         throne.log("system " .. system.name())
-        for^ _^, node in^ throne.query("Transform", "Spin") {
-            let^ c = node.component("Spin")
-            if^ c fits^ spin.Component {
-                c.ticks := c.ticks + 1
-                let^ t = node.transform()
-                if^ t != nil^ { t.setRotation(t.rotation() + throne.vec3(0, c.speed * dt, 0)) }
-            }
+        for^ _^, node in^ throne.query("Transform", "BoxPrimitive") {
+            let^ t = node.component(throne.Transform)
+            if^ t != nil^ { t.setRotation(t.rotation() + throne.vec3(0, 30 * dt, 0)) }
         }
     },
 }
@@ -64,16 +56,14 @@ public^let^ System = def^{
         const auto parent = scene.addNode("Parent").id;
         scene.addNode("Child", parent).behaviour.push_back({"node.lh", {{"speed", 20.0}}});
         scene.nodes[0].behaviour.push_back({"node.lh", {}});
-        scene.nodes[0].scriptComponents["Spin"] = {"component.lh", {{"speed", 30.0}}};
         world.level.addScene("scene.lton");
         world.level.addScene("scene.lton");
-        world.level.addSystem("Update").behaviour.push_back({"system.lh", {}, true});
+        world.level.addSystem("Update").behaviour.push_back({"system.lh", {}});
         world.level.stages.insert(world.level.stages.begin() + 3, {"Late", {}});
         scene.save(root / "scene.lton");
         world.level.save(root / "level.lton");
         world.scenes["scene.lton"] = throne::Scene::load(root / "scene.lton");
         world.level = throne::Level::load(root / "level.lton");
-        require(world.scenes["scene.lton"].nodes[0].scriptComponents.count("Spin") == 1, "Component lost on save");
         require(world.level.stages[3].name == "Late", "Schedule lost on save");
         throne::Library library(root);
         auto expanded = throne::expand(world, library);
@@ -84,7 +74,7 @@ public^let^ System = def^{
         require(log == std::vector<std::string>{"system Update", "start Parent", "Parent", "start Child", "Child",
                                                "start Parent", "Parent", "start Child", "Child"}, "Stage or hierarchy order wrong");
         require(std::fabs(expanded.instances[0].expansion.nodes[0].node.transform->rotation.y - 15) < .01f,
-                "System failed to query typed Component");
+                "System failed to query built-in components");
         require(std::fabs(expanded.instances[1].expansion.nodes[1].node.transform->position.x - 10) < .01f,
                 "Node behaviour did not receive its own node");
         const auto move = runtime.evaluate("import^ throne\nlet^ n = throne.find(\"Parent\")\nlet^ r = throne.system(\"Late\")\nif^ n != nil^ and^ r != nil^ { n.setBehaviourPriority(0, 2) }");
@@ -94,33 +84,64 @@ public^let^ System = def^{
         require(log == std::vector<std::string>{"system Update", "Child", "Parent", "Child", "Parent"},
                 "Moving a behaviour repeated start or changed other instances");
         require(throne::ScriptRuntime::fields(root, "node.lh").size() == 1, "Node inspector field reflection failed");
-        require(throne::ScriptRuntime::fields(root, "component.lh").size() == 2, "Component reflection failed");
         require(throne::ScriptRuntime::fields(root, "system.lh").empty(), "System reflection failed");
-
-        write(root, "dual.lh", R"(module^ test.dual
-import^ throne
-public^let^ Component = def^{ self^{ data = 1 } }
-public^let^ System = def^{ self^{ @export setting = 2 } }
-public^let^ Behaviour = def^{ self^{ @export other = 3 } }
+        // Type arguments retain concrete return types and dispatch by native type identity.
+        const auto typed = runtime.evaluate(R"(import^ throne
+let^ n = throne.find("Parent")
+if^ n != nil^ {
+    let^ kind = throne.Transform
+    let^ t:throne.Transform|nil^ = n.component(kind)
+    let^ b:throne.BoxPrimitive|nil^ = n.component(throne.BoxPrimitive)
+    if^ t != nil^ { t.setScale(throne.vec3(2, 3, 4)) }
+    if^ b != nil^ { b.setColour(throne.vec3(0.2, 0.3, 0.4)) }
+}
 )");
-        require(throne::ScriptRuntime::fields(root, "dual.lh", "Component")[0].name == "data" &&
-                throne::ScriptRuntime::fields(root, "dual.lh", "System")[0].name == "setting" &&
-                throne::ScriptRuntime::fields(root, "dual.lh", "Behaviour")[0].name == "other",
-                "Inspector confused different exports of the same module");
+        require(typed.text.empty(), typed.text.c_str());
+        require(expanded.instances[0].expansion.nodes[0].node.transform->scale.y == 3,
+                "Typed component access did not edit the native component");
+        require(std::fabs(expanded.instances[0].expansion.nodes[0].node.box->colour[1] - .3f) < .001f,
+                "Typed BoxPrimitive access returned the wrong native component");
+        for (const auto type : {"SpherePrimitive", "CapsulePrimitive", "PlanePrimitive", "BoxCollider",
+                                "SphereCollider", "CapsuleCollider", "PlaneCollider", "RigidBody",
+                                "PbsMaterial", "Light", "ParticleSystem"}) {
+            const auto before = log.size();
+            const auto absent = runtime.evaluate(std::string("import^ throne\nlet^ n = throne.find(\"Parent\")\n") +
+                "if^ n != nil^ { let^ c:throne." + type + "|nil^ = n.component(throne." + type +
+                ")\nif^ c != nil^ { throne.log(\"unexpected component\") } }");
+            require(absent.text.empty(), absent.text.c_str());
+            require(log.size() == before, "Missing component did not return nil");
+        }
+        const auto mismatch = runtime.evaluate(R"(import^ throne
+let^ n = throne.find("Parent")
+if^ n != nil^ { let^ t:throne.BoxPrimitive|nil^ = n.component(throne.Transform) }
+)");
+        require(!mismatch.text.empty(), "component(type) erased its concrete return type");
+        for (const auto type : {"throne.SceneNode", "throne.Vec3", "number^"}) {
+            const auto missing = runtime.evaluate(std::string("import^ throne\nlet^ n = throne.find(\"Parent\")\n") +
+                "if^ n != nil^ { let^ c = n.component(" + type + ") }");
+            require(!missing.text.empty(), "Unsupported component type was accepted");
+        }
+        for (const auto symbol : {"Component", "System"}) {
+            write(root, "definition.lh", (std::string("module^ test.definition\npublic^let^ ") + symbol +
+                " = def^{ self^{ hp = 100 } }\n").c_str());
+            for (const auto requested : {"", symbol}) {
+                bool rejected = false;
+                try { throne::ScriptRuntime::fields(root, "definition.lh", requested); }
+                catch (const throne::ScriptError&) { rejected = true; }
+                require(rejected, "Component/System script definition was accepted by reflection");
+            }
+        }
 
         throne::Prefab prefab;
         prefab.addNode("Root").behaviour.push_back({"node.lh", {{"speed", 1.0}}});
-        prefab.nodes[0].scriptComponents["Spin"] = {"component.lh", {{"speed", 1.0}}};
         library.put("prefab.lton", prefab);
         throne::Scene instances;
         auto& placed = instances.addNode("Instance");
         placed.prefab = "prefab.lton";
         placed.overrides.node({}).behaviour = std::vector<throne::Behaviour>{{"node.lh", {{"speed", 9.0}}}}
         ; placed.overrides.node({}).behaviour->front().priority=3.0;
-        placed.overrides.node({}).scriptFields["Spin"]["speed"] = 8.0;
         instances.save(root / "instances.lton");
         auto resolved = throne::expand(throne::Scene::load(root / "instances.lton"), library);
-        require(std::get<double>(resolved.nodes[0].node.scriptComponents.at("Spin").data.at("speed")) == 8.0, "Prefab Component field override lost");
         require(resolved.nodes[0].node.behaviour[0].priority == 3.0, "Prefab Behaviour override lost");
         placed.overrides.node({}).behaviour = std::vector<throne::Behaviour>{};
         resolved = throne::expand(instances, library);
@@ -197,7 +218,7 @@ public^let^ Behaviour = def^{ self^{ @export other = 3 } }
         try { throne::validateStages(invalid); } catch (const std::exception&) { rejected = true; }
         require(rejected, "Missing engine stage accepted");
         fs::remove_all(root);
-        std::puts("Node behaviour, stages, script Components and Systems passed");
+        std::puts("Node behaviour, stages, built-in component queries and Systems passed");
     } catch (const std::exception& e) {
         std::fprintf(stderr, "%s\n", e.what());
         return 1;

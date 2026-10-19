@@ -50,7 +50,7 @@ if^ t != nil^ { t.setPosition(t.position() + throne.vec3(1, 0, 0)) }
 node.box()                     // throne.BoxPrimitive|nil^（colour() / setColour()）
 ```
 
-［補足］名前の文字列で引く形（`getComponent("Transform")`）にすると、L^ の検査では戻り値の型が名前ごとに変わることを表せず、`any^` になる。そのため型の付いた引き方にした。スクリプトで定義する Component（6 節）は、そのとき名前で引く汎用の形を足す。
+［補足］名前の文字列で引く形（`getComponent("Transform")`）にすると、L^ の検査では戻り値の型が名前ごとに変わることを表せず、`any^` になる。そのため型の付いた引き方にした。ユーザー定義 Component の拡張方式は C/C++ を前提に今後設計する（6 節）。
 
 ［補足］`prefab`・`overrides` は編集のための構造で、Component ではない（Unity でもプレハブの仕組みは Component ではない）。
 
@@ -101,7 +101,7 @@ System は、実行の段の並びになる。レベル全体で 1 本の並び�
 
 - エンジンの System: FetchInput、ApplyPhysics、SyncRender、Parallel、SyncSimulation。消去・並べ替えはできない。
 - BehaviourSystem: UpdateBehaviourSystem、LateUpdateBehaviourSystem、EndOfFrameBehaviourSystem。対応するメソッドを持つ有効な Behaviour を問い合わせる。
-- ユーザーの System: 名前を付けて固定の段の間に追加できる。直接付けた Behaviour または System スクリプトを実行する。
+- ユーザーの System: 名前を付けて固定の段の間に追加できる。直接付けた Behaviour を実行する。
 - 並行の組: OGRE / Box3D / Animator。L^ の VM はメインスレッドだけで動かし、この組では Behaviour を実行しない。
 
 BehaviourSystem の `order_by` は、そのコンテキストで解決済みの有限実数 priority の昇順とする。同値はシーンインスタンス順、ノード階層順、付加順で決める。
@@ -156,27 +156,21 @@ Box3D には、C++ の小さなスレッドプールを渡す（Box3D はホス�
 
 ## 6. System
 
-L^ スクリプトでも System を定義できる。System は System の段に置き、照会に合うノードを処理する。
+System の段に Behaviour を直接付け、L^ スクリプトから照会に合うノードを処理できる。スクリプトによる System 型の定義は提供しない。
 
 ```lhat
-for^ _^, node in^ throne.query("Transform", "Health") { ... }
+for^ _^, node in^ throne.query("Transform", "BoxPrimitive") { ... }
 ```
 
-［補足］現在の実装では、Component のスクリプトは `public^let^ Component = def^{ self^{ ... } }` を公開する。ノードごとに `new()` して別々の状態を持つ。保存できる欄は number・bool・string・SceneNode 参照で、Component の欄には `@export` は不要とする。ノードの `components.scripts` に照会名をキーとして `{ script = "...", data = {...} }` を保存する。
+ユーザー定義の Component と System は C/C++ で記述する方針とし、登録・拡張の仕組みは今後設計する。スクリプトでデータ専用 Component を定義する Script Component は提供しない。ノードのスクリプトは Behaviour としてデータと処理をまとめて持つ。
 
-```lhat
-# scripts/health.lh
-module^ game.health
-public^let^ Component = def^{ self^{ hitPoints = 100 } }
-```
+［補足］System に直接付けるスクリプトは `Behaviour` を公開する。`start`・`update` の引数には `throne.System` を渡す。編集用の欄は `@export` を使う。
 
-［補足］このデータ専用 Component／System の API は ECS 側の任意の書き方として残す。通常の Behaviour にデータと処理の分離を要求しない。basic の回転サンプルは、すべて `components.behaviour` のスクリプトインスタンスが自分のデータを使って動く。
+`query` は指定したすべての組み込み Component を持つノードの写しの一覧を返す。引数なしなら全ノード、未知の名前なら空の一覧。順番はシーンインスタンス順、その中の階層順。組み込み Component は型付きの `transform()`・`box()` などで取得する。
 
-［補足］System は直接のスクリプトとして保存する。`systemScript = true^` を指定したスクリプトは `Behaviour` の代わりに `System = def^{ ... }` を公開する。`start`・`update` の引数は直接の Behaviour と同じ System とする。System の編集用の欄は Behaviour と同じ `@export` を使う。
+`node.component(throne.Transform)` のように型を指定して、組み込み Component にアクセスできる。シグネチャは `f^self^, type^ -> ARG0.T0|nil^;`。`self^` を除いた最初の引数の型パラメーターを戻り値に使い、この例では `throne.Transform|nil^` となる。未付加なら `nil^` を返す。Component 以外の型は実行時エラーとする。既存の `node.transform()` なども残す。
 
-`query` は指定したすべての Component を持つノードの写しの一覧を返す。引数なしなら全ノード、未知の名前なら空の一覧。順番はシーンインスタンス順、その中の階層順。`Transform`・`BoxPrimitive` と 08 の Primitive／物理 Component は組み込み名で、それ以外は `components.scripts` のキーとする。`node.component(name)` はスクリプト定義 Component のインスタンス（`any^`、無ければ `nil^`）を返し、`fits^` で型を絞って使う。組み込み Component は引き続き型付きの `transform()`・`box()` で取得する。
-
-プレハブのスクリプト定義 Component の欄は `overrides.nodes[].scripts` で上書きする。上書きは元の Component がある場合のみ効く。Component の追加・削除は通常ノードのみ可能とする。ノードの Behaviour の上書きは `overrides.nodes[].behaviour` に一覧を保存する。空の一覧は全削除、省略は継承を意味する。
+ノードの Behaviour の上書きは `overrides.nodes[].behaviour` に一覧を保存する。空の一覧は全削除、省略は継承を意味する。
 
 ## 7. 段階
 
@@ -185,7 +179,7 @@ public^let^ Component = def^{ self^{ hitPoints = 100 } }
 1. Component への整理: ノードの欄を `Transform` と `BoxPrimitive` に分け、形式・上書き・Inspector を Component の単位にする。（実装済み）
 2. ノードの Behaviour: ノードの保存・実行、プレハブの上書き、Inspector、priority・有効状態・付加の変更 API。（実装済み）
 3. エンジンの System: レベルの段の保存、Systems 表示・並べ替え、並行の組、直列切替、描画の写し、Box3D のタスクプール。（実装済み）
-4. System と Component の型をスクリプトで定義する。型の検査・生成・欄の保存、照会、Inspector、サンプルを含む。（実装済み）
+4. System に付ける Behaviour の型の検査・生成・欄の保存、組み込み Component の照会を実装。ユーザー定義 Component／System の C/C++ 拡張方式は今後設計する。
 
 ## 8. 未決事項
 
@@ -201,3 +195,7 @@ public^let^ Component = def^{ self^{ hitPoints = 100 } }
 - System は Behaviour のメソッドを問い合わせて実行する形に整理し、フェーズ別 priority と独立したコルーチンの再開を導入した。
 
 - Behaviour を `components.behaviour` に統合し、各スクリプトの保存データを `data` に統一。旧ノード直下の behaviours は廃止し、basic の Spin Component／Spin System を Behaviour に置き換えた。
+
+- Script Component を廃止。ユーザー定義 Component／System は C/C++ を前提に今後設計する。
+
+- スクリプトによる System 型定義を廃止。`node.component(type)` は型付きアクセスとして提供し、未付加なら `nil^` を返す。

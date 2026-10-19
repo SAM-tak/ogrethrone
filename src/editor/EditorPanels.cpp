@@ -270,7 +270,7 @@ void Editor::systemsPanel() {
             const auto label = system.name + "###system";
             if (ImGui::Selectable(label.c_str())) selected_ = {Selection::Kind::System, instance, path, system.id};
             for (const auto& behaviour : system.behaviour)
-                ImGui::BulletText("%s%s", behaviour.script.c_str(), behaviour.systemScript ? "" : " [Behaviour]");
+                ImGui::BulletText("%s [Behaviour]", behaviour.script.c_str());
             ImGui::PopID();
         };
         for (const auto& stage : stages) {
@@ -490,20 +490,25 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         edited|=scalar("Restitution",c.restitution,0,1);
         edited|=ImGui::Checkbox("Sensor",&c.sensor); track(); return edited;
     };
+    const auto componentSection = [&](const char* label, bool removable, bool overridden,
+                                      auto fields, auto remove, auto revert) {
+        ImGui::PushID(label);
+        bool keep=true;
+        if (ImGui::CollapsingHeader(label,removable?&keep:nullptr,open)) fields();
+        if (!keep) { checkpoint(); remove(); }
+        if (overridden && ImGui::Button("Revert Component")) {
+            checkpoint(); revert();
+        }
+        ImGui::PopID();
+    };
     // Components inherited from a prefab permit value overrides, but not removal.
     const auto component = [&](const char* label, auto& shown, auto member, auto overrideMember, auto fields) {
         if (!shown) return;
-        ImGui::PushID(label);
-        bool keep=true;
-        if (ImGui::CollapsingHeader(label,own?&keep:nullptr,open) && fields(*shown)) {
+        componentSection(label,own!=nullptr,layer && (layer->*overrideMember).has_value(),[&] {
+            if (!fields(*shown)) return;
             if (own) own->*member=shown;
             else if(target.overrides) target.overrides->node(target.relative).*overrideMember=shown;
-        }
-        if (!keep && own) { checkpoint(); (own->*member).reset(); }
-        if (layer && layer->*overrideMember && ImGui::Button("Revert Component")) {
-            checkpoint(); (layer->*overrideMember).reset();
-        }
-        ImGui::PopID();
+        },[&] { (own->*member).reset(); },[&] { (layer->*overrideMember).reset(); });
     };
     const auto texturePath=[&](const char* label,std::string& path) {
         char text[256]; fill(text,path); bool edited=ImGui::InputText(label,text,sizeof text); track();
@@ -615,39 +620,15 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         if(value.planeCollider && c.type==BodyType::Dynamic) ImGui::TextWrapped("PlaneCollider requires Static or Kinematic motion.");
         return edited;
     });
-    if (own && ImGui::BeginCombo("##add", "Add Component")) {
-        if (!own->transform && ImGui::Selectable("Transform")) checkpoint(), own->transform.emplace();
-        const auto addPrimitive=[&](const char* label,PrimitiveKind kind) {
-            if (primitiveShape(*own).kind!=kind && ImGui::Selectable(label)) checkpoint(),setPrimitive(*own,kind);
-        };
-        addPrimitive("Box Primitive",PrimitiveKind::Box); addPrimitive("Sphere Primitive",PrimitiveKind::Sphere);
-        addPrimitive("Capsule Primitive",PrimitiveKind::Capsule); addPrimitive("Plane Primitive",PrimitiveKind::Plane);
-        if(!own->particles && ImGui::Selectable("Particle System")) checkpoint(),own->particles.emplace();
-        if(!own->model && ImGui::Selectable("Model")) checkpoint(),own->model.emplace();
-        if(!own->material && ImGui::Selectable("PBS Material")) checkpoint(),own->material.emplace();
-        if(!own->light && ImGui::Selectable("Light")) checkpoint(),own->light.emplace();
-        if(!own->boxCollider && ImGui::Selectable("Box Collider")) checkpoint(),own->boxCollider.emplace();
-        if(!own->sphereCollider && ImGui::Selectable("Sphere Collider")) checkpoint(),own->sphereCollider.emplace();
-        if(!own->capsuleCollider && ImGui::Selectable("Capsule Collider")) checkpoint(),own->capsuleCollider.emplace();
-        if(!own->planeCollider && ImGui::Selectable("Plane Collider")) checkpoint(),own->planeCollider.emplace();
-        if(!own->rigidBody && ImGui::Selectable("RigidBody")) {
-            checkpoint(); own->rigidBody.emplace();
-            if(own->planeCollider) own->rigidBody->type=BodyType::Static;
-        }
-        ImGui::EndCombo();
-    }
-
-    const auto editAttachment = [&](Behaviour& behaviour, bool hasSystem) {
+    const auto editAttachment = [&](Behaviour& behaviour) {
         bool changed = false;
             char buffer[512];
             fill(buffer, behaviour.script);
-            ImGui::BeginDisabled(!hasSystem && !own);
             changed |= ImGui::InputText("Script", buffer, sizeof buffer);
-            ImGui::EndDisabled();
             behaviour.script = buffer;
             track();
-            const auto& cached = fieldsOf(behaviour.script, hasSystem ? "Behaviour" : "Component");
-            if (hasSystem) {
+            const auto& cached = fieldsOf(behaviour.script, "Behaviour");
+            {
                 changed|=ImGui::Checkbox("Enabled",&behaviour.enabled); track();
                 const auto priority=[&](const char* label,std::optional<double>& value,double inherited) {
                     ImGui::PushID(label);
@@ -661,11 +642,14 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
                     } else ImGui::TextDisabled("%s: %.9g (inherited)",label,inherited);
                     ImGui::PopID();
                 };
-                priority("Priority",behaviour.priority,cached.behaviour.defaults.priority);
-                for(int phase=0;phase<3;++phase) {
-                    auto inherited=behaviour; inherited.phasePriorities[phase].reset();
-                    priority((std::string(behaviourMethods[phase])+" priority").c_str(),behaviour.phasePriorities[phase],
-                             effectivePriority(inherited,cached.behaviour.defaults,phase));
+                if (ImGui::TreeNode("Priority")) {
+                    priority("Priority",behaviour.priority,cached.behaviour.defaults.priority);
+                    for(int phase=0;phase<3;++phase) {
+                        auto inherited=behaviour; inherited.phasePriorities[phase].reset();
+                        priority((std::string(behaviourMethods[phase])+" priority").c_str(),behaviour.phasePriorities[phase],
+                                 effectivePriority(inherited,cached.behaviour.defaults,phase));
+                    }
+                    ImGui::TreePop();
                 }
             }
             if (!cached.error.empty()) ImGui::TextWrapped("%s", cached.error.c_str());
@@ -725,68 +709,43 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
             }
         return changed;
     };
-    for (auto& [name, stored] : value.scriptComponents) {
-        ImGui::PushID(name.c_str());
-        bool keep = true;
-        if (ImGui::CollapsingHeader((name + " [Component]").c_str(), own ? &keep : nullptr, open)) {
-            auto component = stored;
-            if (editAttachment(component, false)) {
-                if (own) own->scriptComponents[name] = std::move(component);
-                else if (target.overrides) target.overrides->node(target.relative).scriptFields[name] = component.data;
-            }
-        }
-        if (!keep && own) checkpoint(), own->scriptComponents.erase(name);
-        if (layer && layer->scriptFields.count(name) && ImGui::Button("Revert Component Fields")) {
-            checkpoint();
-            layer->scriptFields.erase(name);
-        }
-        ImGui::PopID();
-    }
-    if (own) {
-        static char componentName[256] = "Health", componentScript[512] = "scripts/health.lh";
-        ImGui::InputText("Component name", componentName, sizeof componentName);
-        ImGui::InputText("Component script", componentScript, sizeof componentScript);
-        if (ImGui::Button("Add Script Component") && componentName[0] && componentScript[0] &&
-            std::string_view(componentName) != "Transform" && std::string_view(componentName) != "BoxPrimitive" &&
-            !own->scriptComponents.count(componentName)) {
-            checkpoint();
-            own->scriptComponents[componentName] = {componentScript, {}};
-        }
-    }
-
+    // Behaviour uses the same component section as the other built-in components.
     // Work on a copy so edits never invalidate the expansion being displayed.
-    ImGui::SeparatorText("Behaviour Component");
-    auto attachments = value.behaviour;
-    bool attachmentsChanged = false;
-    for (std::size_t k = 0; k < attachments.size(); ++k) {
-        auto& behaviour = attachments[k];
-        ImGui::PushID(static_cast<int>(k));
-        if (ImGui::CollapsingHeader((behaviour.script + "###nodeBehaviour").c_str(), open)) {
-            attachmentsChanged |= editAttachment(behaviour, true);
-            if (ImGui::Button("Remove Behaviour")) {
-                checkpoint();
-                attachments.erase(attachments.begin() + static_cast<std::ptrdiff_t>(k));
-                attachmentsChanged = true;
+    if (!value.behaviour.empty() || (layer && layer->behaviour)) {
+        componentSection("Behaviour",true,layer && layer->behaviour.has_value(),[&] {
+            ImGui::Indent();
+            auto attachments = value.behaviour;
+            bool attachmentsChanged = false;
+            for (std::size_t k = 0; k < attachments.size(); ++k) {
+                auto& behaviour = attachments[k];
+                ImGui::PushID(static_cast<int>(k));
+                bool keep = true;
+                if (ImGui::CollapsingHeader((behaviour.script + "###nodeBehaviour").c_str(), &keep, open))
+                    attachmentsChanged |= editAttachment(behaviour);
+                if (!keep) {
+                    checkpoint();
+                    attachments.erase(attachments.begin() + static_cast<std::ptrdiff_t>(k));
+                    attachmentsChanged = true;
+                    ImGui::PopID();
+                    break;
+                }
                 ImGui::PopID();
-                break;
             }
-        }
-        ImGui::PopID();
+            if (ImGui::Button("Add Script")) {
+                checkpoint();
+                attachments.push_back({});
+                attachmentsChanged = true;
+            }
+            ImGui::Unindent();
+            if (attachmentsChanged) {
+                if (own) own->behaviour = std::move(attachments);
+                else if (target.overrides) target.overrides->node(target.relative).behaviour = std::move(attachments);
+            }
+        },[&] {
+            if (own) own->behaviour.clear();
+            else if (target.overrides) target.overrides->node(target.relative).behaviour = std::vector<Behaviour>{};
+        },[&] { layer->behaviour.reset(); });
     }
-    if (ImGui::Button("Add Behaviour")) {
-        checkpoint();
-        attachments.push_back({});
-        attachmentsChanged = true;
-    }
-    if (attachmentsChanged) {
-        if (own) own->behaviour = std::move(attachments);
-        else if (target.overrides) target.overrides->node(target.relative).behaviour = std::move(attachments);
-    }
-    if (layer && layer->behaviour && ImGui::Button("Revert Behaviour Component")) {
-        checkpoint();
-        layer->behaviour.reset();
-    }
-
     // The system fields that refer to this node; clicking one selects its system.
     const auto& nodes = view_.instances[selected_.instance].expansion.nodes;
     if (const auto found = references_.find({static_cast<std::size_t>(selected_.instance), &expanded - nodes.data()});
@@ -820,8 +779,37 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         if (target.node && target.overrides)
             removedList(*target.overrides, view_.instances[selected_.instance].expansion, selected_.path);
     }
+    if (own || target.overrides || target.node) ImGui::Separator();
+    if ((own || target.overrides) && ImGui::BeginCombo("##add", "Add Component")) {
+        if (value.behaviour.empty() && ImGui::Selectable("Behaviour")) {
+            checkpoint();
+            if (own) own->behaviour.push_back({});
+            else target.overrides->node(target.relative).behaviour = std::vector<Behaviour>(1);
+        }
+        if (own) {
+            if (!own->transform && ImGui::Selectable("Transform")) checkpoint(), own->transform.emplace();
+            const auto addPrimitive=[&](const char* label,PrimitiveKind kind) {
+                if (primitiveShape(*own).kind!=kind && ImGui::Selectable(label)) checkpoint(),setPrimitive(*own,kind);
+            };
+            addPrimitive("Box Primitive",PrimitiveKind::Box); addPrimitive("Sphere Primitive",PrimitiveKind::Sphere);
+            addPrimitive("Capsule Primitive",PrimitiveKind::Capsule); addPrimitive("Plane Primitive",PrimitiveKind::Plane);
+            if(!own->particles && ImGui::Selectable("Particle System")) checkpoint(),own->particles.emplace();
+            if(!own->model && ImGui::Selectable("Model")) checkpoint(),own->model.emplace();
+            if(!own->material && ImGui::Selectable("PBS Material")) checkpoint(),own->material.emplace();
+            if(!own->light && ImGui::Selectable("Light")) checkpoint(),own->light.emplace();
+            if(!own->boxCollider && ImGui::Selectable("Box Collider")) checkpoint(),own->boxCollider.emplace();
+            if(!own->sphereCollider && ImGui::Selectable("Sphere Collider")) checkpoint(),own->sphereCollider.emplace();
+            if(!own->capsuleCollider && ImGui::Selectable("Capsule Collider")) checkpoint(),own->capsuleCollider.emplace();
+            if(!own->planeCollider && ImGui::Selectable("Plane Collider")) checkpoint(),own->planeCollider.emplace();
+            if(!own->rigidBody && ImGui::Selectable("RigidBody")) {
+                checkpoint(); own->rigidBody.emplace();
+                if(own->planeCollider) own->rigidBody->type=BodyType::Static;
+            }
+        }
+        ImGui::EndCombo();
+    }
+
     if (target.node) {
-        ImGui::Separator();
         if (!target.addedTo && ImGui::Button("Duplicate")) duplicate();
         if (!target.addedTo) ImGui::SameLine();
         if (ImGui::Button("Delete")) erase();
@@ -925,10 +913,8 @@ void Editor::systemInspector(const System& shown) {
                 if (ImGui::InputTextWithHint("Script", "scripts/....lh", text, sizeof text))
                     target.system->behaviour[k].script = text;
                 track();
-                ImGui::Checkbox("Script publishes System", &target.system->behaviour[k].systemScript);
-                track();
             }
-            const auto& cached = fieldsOf(behaviour.script, behaviour.systemScript ? "System" : "Behaviour");
+            const auto& cached = fieldsOf(behaviour.script, "Behaviour");
             if (!cached.error.empty()) ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "%s", cached.error.c_str());
             for (const auto& info : cached.fields) {
                 ImGui::PushID(info.name.c_str());

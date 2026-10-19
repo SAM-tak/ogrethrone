@@ -67,7 +67,7 @@ scenes = {{ id = 1, scene = "scenes/main.scene.lton" }},
 systems = {
     {
         id = 1, name = "GameFlow",
-        behaviour = {{ script = "scripts/game-flow.lh", systemScript = true^, data = {} }},
+        behaviour = {{ script = "scripts/game-flow.lh", data = {} }},
     },
 },
 ```
@@ -103,12 +103,12 @@ BehaviourSystem は `update`・`lateupdate`・`onendofframe` の対応するメ�
 ```lhat
 module^ samples.gameFlow
 import^ throne
-public^let^ System = def^{
+public^let^ Behaviour = def^{
     start = p^self^, system:throne.System { throne.log(system.name()) },
 }
 ```
 
-［補足］直接のスクリプトは `systemScript = true^` なら `System`、省略時は `Behaviour` を公開する。どちらもノードへの付加とは別の実行単位であり、第 2 引数は `throne.System` となる。
+［補足］System に直接付けるスクリプトも `Behaviour` を公開する。ノードへの付加とは別の実行単位であり、第 2 引数は `throne.System` となる。スクリプトによる Component／System の型定義は提供しない。
 
 `self^{ ... }` の `@export` 欄は Inspector で編集でき、`data` に保存する。対応する型は number・bool・string・SceneNode 参照。その他の欄はスクリプト内部の状態として保持する。保存した値は生成直後に既定値を上書きする。型が違う値や公開していない欄は警告して読み飛ばす。
 

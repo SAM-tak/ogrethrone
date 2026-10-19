@@ -45,14 +45,11 @@ struct NodeRef {
 using FieldValue = std::variant<double, bool, std::string, NodeRef>;
 
 /// One object-oriented script attachment: a script reference and its instance data.
-/// Also used to store script-defined Component data.
 struct Behaviour {
     /// Project-relative path of a module^ publishing `Behaviour = def^{ ... }`.
     std::string script;
     /// Saved instance data; omitted fields retain the script's defaults.
     std::map<std::string, FieldValue> data;
-    /// System attachments may publish System instead of Behaviour.
-    bool systemScript = false;
     /// Attachment identity, retained across field changes and prefab overrides.
     NodeId id = newNodeId();
     bool enabled = true;
@@ -231,8 +228,6 @@ struct NodeOverride {
 
     /// Replacement attachment list, including field edits, additions and removals.
     std::optional<std::vector<Behaviour>> behaviour;
-    /// Field overrides for existing script components; never adds or removes a component.
-    std::map<std::string, std::map<std::string, FieldValue>> scriptFields;
 };
 
 /// Field values an instance gives one behaviour of a system in its prefab.
@@ -322,8 +317,6 @@ struct SceneNode {
 
     /// The Behaviour component: independent script/data instances, in attachment order.
     std::vector<Behaviour> behaviour;
-    /// Script-defined component types, keyed by their query name. Each attachment publishes Component.
-    std::map<std::string, Behaviour> scriptComponents;
     /// Project-relative path of the prefab this node instantiates; empty for a plain node.
     std::string prefab;
     /// What this instance changes in the prefab.

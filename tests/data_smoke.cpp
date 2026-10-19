@@ -98,6 +98,18 @@ int main() {
     if (!rejects(path, R"(format = "ogrethrone-scene", version = 1, nodes = {}, x = std.io.write("x"))"))
         return fail("A scene that calls a procedure was accepted");
 
+    // Removed Script Component data must be refused rather than silently lost on save.
+    if (!rejects(path, R"(format = "ogrethrone-scene", version = 2, systems = {}, nodes = {
+            {id = 1, name = "A", parent = 0, components = {
+                scripts = {Health = {script = "health.lh", data = {hp = 100}}}
+            }} })"))
+        return fail("Removed Script Component data was accepted");
+    if (!rejects(path, R"(format = "ogrethrone-scene", version = 2, systems = {}, nodes = {
+            {id = 1, name = "A", parent = 0, components = {}, prefab = "base.prefab.lton",
+             overrides = {nodes = {{path = {}, scripts = {Health = {hp = 50}}}}}}
+        })"))
+        return fail("Removed Script Component overrides were accepted");
+
     // A new project reopens with its main level, which loads the example scene.
     const auto project = throne::Project::create(directory, "My Game");
     const auto reopened = throne::Project::open(project.root / throne::Project::markerName);

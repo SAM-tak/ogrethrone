@@ -1784,8 +1784,6 @@ void assign(NodeOverride& into, const NodeOverride& from) {
     if (from.scale) into.scale = from.scale;
     if (from.colour) into.colour = from.colour;
     if (from.behaviour) into.behaviour = from.behaviour;
-    for (const auto& [name, fields] : from.scriptFields)
-        for (const auto& [field, value] : fields) into.scriptFields[name][field] = value;
 }
 
 /// Writes the properties @p from sets into @p into's components, where it has them.
@@ -1793,9 +1791,6 @@ void assign(SceneNode& into, const NodeOverride& from) {
     applyExtraComponents(into, from);
     if (from.name) into.name = *from.name;
     if (from.behaviour) into.behaviour = *from.behaviour;
-    for (const auto& [name, fields] : from.scriptFields)
-        if (const auto component = into.scriptComponents.find(name); component != into.scriptComponents.end())
-            for (const auto& [field, value] : fields) component->second.data[field] = value;
     if (auto& transform = into.transform) {
         if (from.position) transform->position = *from.position;
         if (from.rotation) transform->rotation = *from.rotation;
@@ -1955,11 +1950,9 @@ void Editor::unpack(int instance, NodeId id) {
         auto base = expansion.nodes[inside[k]].path;
         if (!base.empty() && !expansion.nodes[inside[k]].root) base.pop_back();
         for (auto& attachment : plain[k].behaviour) refs(attachment.data, 0, base);
-        for (auto& [name, component] : plain[k].scriptComponents) refs(component.data, 0, base);
     }
     for (auto& each : edited->nodes) {
         for (auto& attachment : each.behaviour) refs(attachment.data, 0, {});
-        for (auto& [name, component] : each.scriptComponents) refs(component.data, 0, {});
     }
     // The instance's systems become the file's, by the instance they came from and their ID.
     std::map<std::pair<std::size_t, std::uint32_t>, std::uint32_t> systemIds;
@@ -2104,7 +2097,6 @@ void Editor::duplicate() {
                     ref->node = added.id;
         };
         for (auto& attachment : added.behaviour) remap(attachment);
-        for (auto& [name, component] : added.scriptComponents) remap(component);
         // Systems that refer to the node come along, referring to the copy instead
         // (the file's own, and at the level the level's naming this scene instance).
         const auto copySystems = [&](SystemSet& owner, std::uint32_t scene) {

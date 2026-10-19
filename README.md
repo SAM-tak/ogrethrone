@@ -105,6 +105,9 @@ effect-free data):
   prefab file with no nodes, only a `base` prefab and overrides of it.
 - A **Behaviour component** holds object-oriented script instances, each with its
   own data and methods. **BehaviourSystems** query and call their phase methods.
+  In Inspector it uses the same collapsible section and close button as other
+  components. Add it through **Add Component → Behaviour**, then use **Add Script**
+  inside the section to attach more scripts.
   Custom systems can also query components or use node references; scenes and
   levels can both hold them. Systems have no transform or scene-hierarchy entry.
 - A **level** (`*.level.lton`) holds scene instances and its own systems. The
@@ -386,18 +389,11 @@ Box3D uses a bounded native task pool and simulates the playing scene. Completed
 poses are applied at the next ApplyPhysics stage; physics motion appears two frames
 later. Animator currently has no animation components to process.
 
-A script-defined component publishes `Component = def^{ self^{ ... } }`. Attach it
-under `components.scripts`, keyed by its query name, with `script` and `data`.
-It is constructed separately for every node. All supported data fields are editable
-without `@export`. Instances can override existing component fields.
-
-A direct system attachment with `systemScript = true^` publishes `System` instead of
-`Behaviour`. Its optional callbacks receive the system. It can iterate
-`throne.query("Transform", "Health")`, which returns nodes having every named
-component. `node.component("Health")` returns that script component as `any^`;
-narrow it with `fits^` and the required script's `Component` type. This data-only
-Component API is optional; ordinary node behaviours keep their data and methods
-together in the Behaviour component.
+A Behaviour script attached directly to a system receives the system in its
+optional callbacks. It can iterate
+`throne.query("Transform", "BoxPrimitive")`, which returns nodes having every named
+component. User-defined native components and systems are planned for C/C++;
+scripts cannot define Component or System types. Scripts use Behaviour.
 
 The `throne` module provides:
 
@@ -430,11 +426,14 @@ The `throne` module provides:
   overrides. Nil restores inheritance; indexes are zero-based.
 - `node.setBehaviourEnabled(index, enabled)`, `addBehaviour(script)` (returns its
   index), and `removeBehaviour(index)`: change the next frame's Behaviour registry.
+- `node.component(type)`: a handle of the requested component type, or nil when
+  absent. For example, `node.component(throne.Transform)` returns
+  `throne.Transform|nil^`; after a nil check its native methods are available.
+  The host signature is `f^self^, type^ -> ARG0.T0|nil^;` (`self^` is not counted
+  in argument numbering). Non-component types are rejected at runtime.
 - `throne.query(names...)`: a snapshot list in scene-instance/hierarchy order;
   no names matches all nodes, an unknown name matches none. Built-in names are
-  `Transform` and `BoxPrimitive`; custom names come from `components.scripts`.
-- `node.component(name)`: a custom Component instance, or nil. Built-in components
-  retain their typed getters.
+  `Transform`, `BoxPrimitive` and the other built-in render/physics components.
 - `throne.find(name)` (the first node with that name, scene by scene),
   `throne.log(text)` and `throne.time()` (seconds since Play).
 

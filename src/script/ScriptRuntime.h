@@ -52,9 +52,9 @@ enum class PlayScope {
     Game,
 };
 
-/// Runs a world's L^ node Behaviours, direct system attachments and Systems.
+/// Runs a world's L^ node Behaviours, direct system attachments.
 /// Each Play checks and compiles its scripts, then constructs isolated Behaviour
-/// and Component instances for every expanded scene/prefab instance. All VM calls
+/// instances for every expanded scene/prefab instance. All VM calls
 /// stay on the calling thread; native engine callbacks may run in the parallel group.
 class ScriptRuntime {
 public:
@@ -106,8 +106,8 @@ public:
     /// Returns the host API scripts can use (the `throne` module and `std.math`) as
     /// the JSON the L^ language server reads from `lhat-host.json`.
     static std::string hostApi();
-    /// Returns editable fields of Behaviour, System or Component, in name order.
-    /// Behaviour/System fields require @export; Component data fields do not.
+    /// Returns editable fields of Behaviour, in name order.
+    /// Editable fields require @export.
     /// @throws ScriptError when the script is missing, rejected or publishes no Behaviour.
     static std::vector<FieldInfo> fields(const std::filesystem::path& root, const std::string& script,
                                          std::string symbol = {});

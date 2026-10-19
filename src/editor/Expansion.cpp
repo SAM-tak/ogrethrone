@@ -127,9 +127,6 @@ void apply(Expansion& out, const NodePath& prefix, const Overrides& overrides, s
         applyExtraComponents(node, entry);
         if (entry.name) node.name = *entry.name;
         if (entry.behaviour) node.behaviour = *entry.behaviour;
-        for (const auto& [name, fields] : entry.scriptFields)
-            if (const auto component = node.scriptComponents.find(name); component != node.scriptComponents.end())
-                for (const auto& [field, value] : fields) component->second.data[field] = value;
         if (auto& transform = node.transform) {
             if (entry.position) transform->position = *entry.position;
             if (entry.rotation) transform->rotation = *entry.rotation;
