@@ -103,7 +103,13 @@ void EditorPreferences::save(const fs::path& file) const {
 
 fs::path ProjectList::defaultFile() {
 #ifdef _WIN32
-    if (const wchar_t* appData = _wgetenv(L"APPDATA")) return fs::path(appData) / "OgreThrone" / "projects.lton";
+    wchar_t* appData = nullptr;
+    std::size_t length = 0;
+    if (_wdupenv_s(&appData, &length, L"APPDATA") == 0 && appData) {
+        const auto file = fs::path(appData) / "OgreThrone" / "projects.lton";
+        std::free(appData);
+        return file;
+    }
 #else
     if (const char* config = std::getenv("XDG_CONFIG_HOME"); config && *config)
         return fs::path(config) / "ogrethrone" / "projects.lton";

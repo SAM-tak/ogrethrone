@@ -448,9 +448,9 @@ ModelLibrary::Parsed ModelLibrary::parse(const std::filesystem::path& file, cons
         out.parts.push_back(part);
     }
     out.surface.reserve(cells.size());
-    for (const auto& [cell, size] : cells) {
-        const auto c = [&](int shift) { return (float(std::int64_t(cell >> shift & 0x1fffff) - (1 << 20)) + .5f) * surfaceCell; };
-        out.surface.push_back({{c(0), c(21), c(42)}, size});
+    for (const auto& [cell, volume] : cells) {
+        const auto c = [key = cell](int shift) { return (float(std::int64_t(key >> shift & 0x1fffff) - (1 << 20)) + .5f) * surfaceCell; };
+        out.surface.push_back({{c(0), c(21), c(42)}, volume});
     }
     ufbx_free_scene(scene);
     if (out.parts.empty()) {
