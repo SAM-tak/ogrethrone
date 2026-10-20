@@ -277,7 +277,16 @@ private:
     /// The cubemap surfaces without their own reflection map reflect: the environment's,
     /// unless baked reflection probes are in use.
     Ogre::TextureGpu* environmentReflection() const;
-    /// The project folder holding the open level's baked global illumination.
+    /// The scene whose environment and global illumination the view shows (TDDja/13): the
+    /// scene being edited, else the level's first scene; empty when there is none.
+    std::string lightingScenePath() const;
+    /// That scene's lighting, or the defaults when it is not loaded.
+    const SceneLighting& lighting() const;
+    /// The view instance whose scene's bake is shown: the first; -1 inside a prefab.
+    int giInstance() const;
+    /// How view instance @p instance is placed (its scene root's world transform).
+    Ogre::Matrix4 instanceTransform(int instance) const;
+    /// The project folder holding the baked global illumination of the scene shown.
     std::filesystem::path giFolder() const;
     /// Loads the standard ParticleFX2 resources and any project particle definitions.
     void loadParticleResources(const std::string& script);
@@ -351,8 +360,12 @@ private:
     void menu();
     /// Reads the open level's baked global illumination on a worker thread, then uses it.
     void readGlobalIllumination();
-    /// The level's GI enabled setting as last applied: the bake is read when it turns on.
+    /// The scene whose bake is in use (empty for none) and whether its GI was enabled, as last
+    /// applied: the bake is read again when either changes.
+    std::string giScene_;
     bool giEnabled_ = false;
+    /// The scene whose environment was last applied; its sky setting applies when it changes.
+    std::optional<std::string> lightingScene_;
     /// Shows newly placed model parts a few materials per frame, under a progress entry.
     void revealModels();
     /// Reads a model on a worker thread, then adds it to the library under @p key.
@@ -393,8 +406,10 @@ private:
     void nodeInspector(const ExpandedNode& node);
     /// Draws a scene instance's scene and transform.
     void sceneInspector(SceneInstance& instance);
-    /// Draws the open level's properties: the view's camera, which is not saved.
+    /// Draws the open level's properties: its rendering, and the view's camera, which is not saved.
     void levelInspector();
+    /// Draws the environment and global illumination of the scene at @p path, written to its file.
+    void lightingInspector(const std::string& path);
     /// Sets the view to node @p index of view instance @p instance and its Camera component:
     /// its position, its direction (without roll) and its projection.
     void alignViewToCamera(std::size_t instance, std::size_t index, const CameraComponent& camera);
@@ -512,10 +527,12 @@ private:
     /// Brings octree_ up to date with the level's GI settings and placed models, on a worker
     /// thread: octree_ changes a few frames later.
     void updateProbeLayout();
-    /// The world bounds of every drawn node, into @p lower and @p upper; false when none.
-    bool sceneBounds(Vec3& lower, Vec3& upper) const;
-    /// Where the placed models' surfaces are, in world space (ModelLibrary::surface()).
-    std::vector<SurfacePoint> sceneSurface() const;
+    /// The bounds of the drawn nodes of view instance @p instance, in its scene's coordinates,
+    /// into @p lower and @p upper; false when none.
+    bool sceneBounds(Vec3& lower, Vec3& upper, int instance) const;
+    /// Where the surfaces of the models placed in view instance @p instance are, in its scene's
+    /// coordinates (ModelLibrary::surface()).
+    std::vector<SurfacePoint> sceneSurface(int instance) const;
     std::vector<RenderObject> renderObjects_;
     /// One OGRE node per view_ instance, placing its scene; the scene's roots are its children.
     std::vector<Ogre::SceneNode*> sceneRoots_;

@@ -1,7 +1,8 @@
 #pragma once
 
 #include "editor/AdaptiveIrradianceField.h"
-#include "editor/Level.h"
+#include "editor/SceneLighting.h"
+#include <OgreMatrix4.h>
 #include <array>
 #include <chrono>
 #include <filesystem>
@@ -26,8 +27,9 @@ namespace throne {
 /// octree of irradiance probes finer near surfaces, give diffuse light. Both render the level
 /// as it is drawn when baked, so they hold one bounce of its lighting.
 ///
-/// A bake is written to a folder in the project and read back when the level opens,
-/// so it is never rendered again until it is rebaked.
+/// A bake belongs to a scene (TDDja/13): it is written to a folder beside the scene, in the
+/// scene's coordinates, and shown through the transform of the scene instance it lights. It
+/// is read back when the level opens, so it is never rendered again until it is rebaked.
 class GlobalIllumination {
 public:
     /// Receives progress and problems.
@@ -41,12 +43,12 @@ public:
     GlobalIllumination(const GlobalIllumination&) = delete;
     GlobalIllumination& operator=(const GlobalIllumination&) = delete;
 
-    /// Starts baking @p settings with the diffuse probes of @p octree: prepares the reflection
-    /// probes, which continueBake() then renders from the scene as drawn, and then the diffuse
-    /// probes. When it is done the bake replaces the one in use; as the scene is drawn with that
-    /// one, baking again adds one more bounce. @p camera only seeds the reflection probes'
-    /// tracking; it is not moved.
-    void beginBake(const GiSettings& settings, Ogre::Camera& camera, ProbeOctree octree);
+    /// Starts baking @p settings with the diffuse probes of @p octree, in the scene's coordinates,
+    /// for the scene instance placed by @p transform: prepares the reflection probes, which
+    /// continueBake() then renders from the scene as drawn, and then the diffuse probes. When it
+    /// is done the bake replaces the one in use; as the scene is drawn with that one, baking again
+    /// adds one more bounce. @p camera only seeds the reflection probes' tracking; it is not moved.
+    void beginBake(const GiSettings& settings, Ogre::Camera& camera, ProbeOctree octree, const Ogre::Matrix4& transform);
     /// Renders more probes of the bake begun last, for about @p budget: reflection probes (at
     /// least one) or, once they are all done, diffuse probes, whose images are read back and
     /// projected a few frames later. Call it once a frame.
@@ -86,9 +88,11 @@ public:
     /// Reads the bake save() wrote into @p folder, with the settings it was made with; safe on
     /// a worker thread. Holds no images when the folder has none.
     static Stored read(const std::filesystem::path& folder);
-    /// Uses a bake read(), replacing the one in use; answers false (after logging why) when
-    /// it holds none.
-    bool use(const Stored& stored);
+    /// Uses a bake read(), replacing the one in use, for the scene instance placed by
+    /// @p transform; answers false (after logging why) when it holds none.
+    bool use(const Stored& stored, const Ogre::Matrix4& transform);
+    /// Moves the bake in use with its scene instance, now placed by @p transform.
+    void setTransform(const Ogre::Matrix4& transform);
     /// Stops using and destroys the bake, and abandons any bake in progress.
     void clear();
 
@@ -102,7 +106,7 @@ public:
     void setDebugVisible(bool visible) { debug_ = visible; }
     /// Whether the debug display is on.
     bool debugVisible() const { return debug_; }
-    /// The bake's reflection probes' areas, as centres and half sizes.
+    /// The bake's reflection probes' areas, as centres and half sizes in the scene's coordinates.
     std::vector<std::pair<Vec3, Vec3>> reflectionAreas() const;
     /// Changes whenever the bake in use does.
     unsigned version() const { return version_; }
@@ -113,9 +117,12 @@ private:
 
     /// Creates a reflection-probe system sized for @p probes probes, unbound.
     std::unique_ptr<Ogre::ParallaxCorrectedCubemapAuto> createReflections(unsigned probes);
-    /// Replaces the bake in use with these, made for @p settings.
+    /// Replaces the bake in use with these, made for @p settings: reflection probes placed (in the
+    /// scene's coordinates) at @p placements, through @p transform.
     void use(const GiSettings& settings, std::unique_ptr<Ogre::ParallaxCorrectedCubemapAuto> reflections,
-             const Diffuse& diffuse);
+             std::vector<Stored::Probe> placements, const Diffuse& diffuse, const Ogre::Matrix4& transform);
+    /// Places the reflection probes in use and the diffuse light by transform_.
+    void place();
     /// Destroys the textures the diffuse light is read from.
     void destroyDiffuseTextures();
 
@@ -126,6 +133,10 @@ private:
     GiSettings settings_;
     double bakeSeconds_ = 0;
     std::unique_ptr<Ogre::ParallaxCorrectedCubemapAuto> reflections_;
+    /// Where the reflection probes in use are, in the scene's coordinates.
+    std::vector<Stored::Probe> placements_;
+    /// How the scene instance the bake lights is placed.
+    Ogre::Matrix4 transform_ = Ogre::Matrix4::IDENTITY;
     Diffuse diffuse_;
     std::array<Ogre::TextureGpu*, 4> diffuseTextures_{};
     std::unique_ptr<Listener> listener_;
@@ -136,6 +147,10 @@ private:
         GiSettings settings;
         std::unique_ptr<Ogre::ParallaxCorrectedCubemapAuto> reflections;
         unsigned reflectionProbesDone = 0;
+        /// The reflection probes placed so far, in the scene's coordinates.
+        std::vector<Stored::Probe> placements;
+        /// How the baked scene instance is placed.
+        Ogre::Matrix4 transform = Ogre::Matrix4::IDENTITY;
         ProbeOctree octree;
         /// The probes to render (the octree's not hanging ones), how many have been sent to
         /// render and how many have come back.

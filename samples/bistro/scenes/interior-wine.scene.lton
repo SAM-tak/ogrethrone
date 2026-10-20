@@ -757,3 +757,4 @@ nodes = {
 systems = {
 },
 version = 2,
+lighting = {ambientDirection = {0.0, 1.0, 0.0}, ambientLower = {0.03, 0.03, 0.03}, ambientUpper = {0.05, 0.05, 0.05}, defaultSun = false^, environmentScale = 1.0, environmentTemperature = 0.0, exposure = -2.9000000953674316, gi = {bounces = 2, lower = {-3.0, 0.3, -20.4}, minObjectVolume = 0.10000000149011612, probeOffset = {0.0, -1.0, 0.0}, probeSpacing = {2.0, 2.0, 2.0}, reflectionProbes = {3.0, 1.0, 4.0}, upper = {20.0, 6.2, 8.1}}, sky = true^, toneMapping = true^},

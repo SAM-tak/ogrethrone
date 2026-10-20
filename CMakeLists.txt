@@ -50,8 +50,8 @@ if(BUILD_TESTING)
 endif()
 
 # Levels, projects and the project list: the editor's LTON data, without OGRE.
-add_library(throne_data STATIC src/editor/Lton.cpp src/editor/Scene.cpp src/editor/Level.cpp
-    src/editor/Expansion.cpp src/editor/Project.cpp src/editor/PrimitiveGeometry.cpp src/editor/PrimitiveGeometry.h src/runtime/FramePipeline.cpp src/runtime/FramePipeline.h src/editor/Lton.h src/editor/Scene.h src/editor/Level.h
+add_library(throne_data STATIC src/editor/Lton.cpp src/editor/Scene.cpp src/editor/SceneLighting.cpp src/editor/Level.cpp
+    src/editor/Expansion.cpp src/editor/Project.cpp src/editor/PrimitiveGeometry.cpp src/editor/PrimitiveGeometry.h src/runtime/FramePipeline.cpp src/runtime/FramePipeline.h src/editor/Lton.h src/editor/Scene.h src/editor/SceneLighting.h src/editor/Level.h
     src/editor/Expansion.h src/editor/Project.h src/core/Math.h src/core/Ids.h)
 target_include_directories(throne_data PUBLIC src)
 # stdlib/*.h are included by path relative to the L^ source root.

@@ -27,8 +27,9 @@
 namespace throne {
 namespace {
 constexpr const char* giFormat = "ogrethrone-gi";
-/// 2: the Adaptive Irradiance Field instead of OGRE's irradiance field.
-constexpr LhatInteger giVersion = 2;
+/// 2: the Adaptive Irradiance Field instead of OGRE's irradiance field. 3: a scene's bake, in the
+/// scene's coordinates (TDDja/13).
+constexpr LhatInteger giVersion = 3;
 /// Reflection probe cubemaps: edge in texels and format.
 constexpr Ogre::uint32 probeResolution = 256;
 constexpr Ogre::PixelFormatGpu probeFormat = Ogre::PFG_RGBA16_FLOAT;
@@ -49,6 +50,29 @@ constexpr const char* diffuseTextureNames[4] = {"aifTop", "aifNodes", "aifCells"
 
 Ogre::Vector3 toOgre(const Vec3& v) { return {v.x, v.y, v.z}; }
 Vec3 fromOgre(const Ogre::Vector3& v) { return {float(v.x), float(v.y), float(v.z)}; }
+
+/// The rotation of @p transform, without its scale.
+Ogre::Matrix3 rotationOf(const Ogre::Matrix4& transform) {
+    Ogre::Vector3 position, scale;
+    Ogre::Quaternion rotation;
+    transform.decomposition(position, scale, rotation);
+    Ogre::Matrix3 axes;
+    rotation.ToRotationMatrix(axes);
+    return axes;
+}
+
+/// Sets @p probe to @p placement, given in the scene's coordinates, placed by @p transform:
+/// its areas become boxes turned with the scene.
+template <class Placement>
+void place(Ogre::CubemapProbe& probe, const Placement& placement, const Ogre::Matrix4& transform) {
+    Ogre::Vector3 position, scale;
+    Ogre::Quaternion rotation;
+    transform.decomposition(position, scale, rotation);
+    const auto at = [&](const Vec3& v) { return transform.transformAffine(toOgre(v)); };
+    probe.set(at(placement.camera), Ogre::Aabb(at(placement.areaCentre), toOgre(placement.areaHalfSize) * scale),
+              toOgre(placement.innerRegion), rotationOf(transform),
+              Ogre::Aabb(at(placement.shapeCentre), toOgre(placement.shapeHalfSize) * scale));
+}
 
 /// Writes every mipmap and slice of @p texture to @p file.
 void saveTexture(Ogre::TextureGpu& texture, const std::filesystem::path& file) {
@@ -179,10 +203,14 @@ GiSettings readSettings(const LhatTable& table) {
 /// placement into the pass buffer, all in passes that are not shadow casters.
 class GlobalIllumination::Listener final : public Ogre::HlmsListener {
 public:
-    /// The textures to bind (none while there is no diffuse light) and where the octree lies.
+    /// The textures to bind (none while there is no diffuse light), where the octree lies in the
+    /// scene's coordinates, and the world into the scene's coordinates: positions, and directions
+    /// (rotation only, as the probes' spherical harmonics were turned).
     std::array<Ogre::TextureGpu*, 4> textures{};
     Vec3 lower, spacing{1, 1, 1};
     std::array<std::uint32_t, 3> top{};
+    Ogre::Matrix4 worldToScene = Ogre::Matrix4::IDENTITY;
+    Ogre::Matrix3 worldToSceneAxes = Ogre::Matrix3::IDENTITY;
 
     explicit Listener(Ogre::HlmsManager& manager) : manager_(manager) {
         Ogre::HlmsSamplerblock point;
@@ -213,16 +241,18 @@ public:
     float* preparePassBuffer(const Ogre::CompositorShadowNode*, bool casterPass, bool, Ogre::SceneManager* sceneManager,
                              float* out) override {
         if (casterPass || !textures[0]) return out;
-        // View space to finest cells from lower, then view to world directions (TDDja/12 5).
+        // View space to finest cells from lower in the scene, then view to scene directions (TDDja/12 5).
         const auto* camera = sceneManager->getCamerasInProgress().renderingCamera;
         const auto viewToWorld = camera->getVrViewMatrix(0).inverseAffine();
         Ogre::Matrix4 toGrid = Ogre::Matrix4::getScale(Ogre::Vector3(1 / spacing.x, 1 / spacing.y, 1 / spacing.z)) *
-                               Ogre::Matrix4::getTrans(-toOgre(lower)) *
-                               viewToWorld;
+                               Ogre::Matrix4::getTrans(-toOgre(lower)) * worldToScene * viewToWorld;
         for (int row = 0; row < 3; ++row)
             for (int column = 0; column < 4; ++column) *out++ = float(toGrid[row][column]);
+        Ogre::Matrix3 viewAxes;
+        viewToWorld.extract3x3Matrix(viewAxes);
+        const auto toScene = worldToSceneAxes * viewAxes;
         for (int row = 0; row < 3; ++row)
-            for (int column = 0; column < 4; ++column) *out++ = column < 3 ? float(viewToWorld[row][column]) : 0.0f;
+            for (int column = 0; column < 4; ++column) *out++ = column < 3 ? float(toScene[row][column]) : 0.0f;
         *out++ = float(top[0]);
         *out++ = float(top[1]);
         *out++ = float(top[2]);
@@ -374,6 +404,7 @@ void GlobalIllumination::clear() {
     pending_ = {};
     pbs_.setParallaxCorrectedCubemap(nullptr);
     reflections_.reset();
+    placements_.clear();
     destroyDiffuseTextures();
     diffuse_ = {};
     bakeSeconds_ = 0;
@@ -389,12 +420,7 @@ void GlobalIllumination::destroyDiffuseTextures() {
 
 std::vector<std::pair<Vec3, Vec3>> GlobalIllumination::reflectionAreas() const {
     std::vector<std::pair<Vec3, Vec3>> areas;
-    if (reflections_)
-        for (const auto* probe : reflections_->getProbes()) {
-            const auto& area = probe->getArea();
-            areas.emplace_back(Vec3{area.mCenter.x, area.mCenter.y, area.mCenter.z},
-                               Vec3{area.mHalfSize.x, area.mHalfSize.y, area.mHalfSize.z});
-        }
+    for (const auto& placement : placements_) areas.emplace_back(placement.areaCentre, placement.areaHalfSize);
     return areas;
 }
 
@@ -407,10 +433,12 @@ std::unique_ptr<Ogre::ParallaxCorrectedCubemapAuto> GlobalIllumination::createRe
 }
 
 void GlobalIllumination::use(const GiSettings& settings, std::unique_ptr<Ogre::ParallaxCorrectedCubemapAuto> reflections,
-                             const Diffuse& diffuse) {
+                             std::vector<Stored::Probe> placements, const Diffuse& diffuse, const Ogre::Matrix4& transform) {
     clear();
     settings_ = settings;
     reflections_ = std::move(reflections);
+    placements_ = std::move(placements);
+    transform_ = transform;
     pbs_.setParallaxCorrectedCubemap(reflections_.get());
     diffuse_ = diffuse;
     auto& textures = *root_.getRenderSystem()->getTextureGpuManager();
@@ -423,10 +451,26 @@ void GlobalIllumination::use(const GiSettings& settings, std::unique_ptr<Ogre::P
     listener_->lower = diffuse.lower;
     listener_->spacing = diffuse.spacing;
     listener_->top = diffuse.top;
+    place();
     ++version_;
 }
 
-void GlobalIllumination::beginBake(const GiSettings& settings, Ogre::Camera& camera, ProbeOctree octree) {
+void GlobalIllumination::place() {
+    listener_->worldToScene = transform_.inverseAffine();
+    listener_->worldToSceneAxes = rotationOf(transform_).Transpose();
+    if (!reflections_) return;
+    const auto& probes = reflections_->getProbes();
+    for (std::size_t i = 0; i < probes.size() && i < placements_.size(); ++i) ::throne::place(*probes[i], placements_[i], transform_);
+}
+
+void GlobalIllumination::setTransform(const Ogre::Matrix4& transform) {
+    if (transform == transform_ || baking()) return;
+    transform_ = transform;
+    place();
+}
+
+void GlobalIllumination::beginBake(const GiSettings& settings, Ogre::Camera& camera, ProbeOctree octree,
+                                   const Ogre::Matrix4& transform) {
     const auto& counts = settings.reflectionProbes;
     auto reflections = createReflections(counts[0] * counts[1] * counts[2]);
     reflections->setUpdatedTrackedDataFromCamera(&camera);
@@ -435,6 +479,7 @@ void GlobalIllumination::beginBake(const GiSettings& settings, Ogre::Camera& cam
     pending_ = {};
     pending_.settings = settings;
     pending_.reflections = std::move(reflections);
+    pending_.transform = transform;
     for (std::uint32_t i = 0; i < octree.probes.size(); ++i)
         if (octree.probes[i].from < 0) pending_.toRender.push_back(i);
     pending_.values.resize(octree.probes.size());
@@ -448,20 +493,21 @@ void GlobalIllumination::beginBake(const GiSettings& settings, Ogre::Camera& cam
 
 void GlobalIllumination::renderNextReflectionProbe() {
     // The probes stand on a grid over the diffuse probes' volume, each reaching over its cell by
-    // a quarter, and are parallax-corrected against the whole volume.
+    // a quarter, and are parallax-corrected against the whole volume; all in the scene's
+    // coordinates, then placed with the scene instance.
     const auto& counts = pending_.settings.reflectionProbes;
     const auto i = pending_.reflectionProbesDone;
-    const Ogre::Vector3 cell((i % counts[0]) + .5f, ((i / counts[0]) % counts[1]) + .5f, (i / (counts[0] * counts[1])) + .5f);
-    const auto lower = toOgre(pending_.octree.lower), size = toOgre(pending_.octree.upper - pending_.octree.lower);
-    const Ogre::Vector3 numbers{float(counts[0]), float(counts[1]), float(counts[2])};
-    const auto centre = lower + size * cell / numbers;
-    Ogre::Aabb region;
-    region.setExtents(lower, lower + size);
+    const Vec3 cell{float(i % counts[0]) + .5f, float((i / counts[0]) % counts[1]) + .5f, float(i / (counts[0] * counts[1])) + .5f};
+    const auto lower = pending_.octree.lower, size = pending_.octree.upper - pending_.octree.lower;
+    const Vec3 step{size.x / float(counts[0]), size.y / float(counts[1]), size.z / float(counts[2])};
+    const Vec3 centre{lower.x + step.x * cell.x, lower.y + step.y * cell.y, lower.z + step.z * cell.z};
+    const Stored::Probe placement{centre, centre, step * (.5f * 1.25f), Vec3{.05f, .05f, .05f}, lower + size * .5f, size * .5f};
     auto* probe = pending_.reflections->createProbe();
     probe->setTextureParams(probeResolution, probeResolution);
     probe->initWorkspace(probeNear, probeFar);
-    probe->set(centre, Ogre::Aabb(centre, size * .5f * 1.25f / numbers), Ogre::Vector3(.05f), Ogre::Matrix3::IDENTITY, region);
+    ::throne::place(*probe, placement, pending_.transform);
     probe->setStatic(true);
+    pending_.placements.push_back(placement);
     // Renders the dirty probes, which is only the new one.
     pending_.reflections->updateAllDirtyProbes();
     ++pending_.reflectionProbesDone;
@@ -477,7 +523,13 @@ void GlobalIllumination::continueBake(std::chrono::milliseconds budget) {
         return;
     }
     auto& renderer = *pending_.renderer;
-    renderer.collect([&](std::uint32_t probe, const std::array<float, 12>& values) {
+    // The light along a direction turns with the scene: kept in the scene's coordinates.
+    const auto toScene = rotationOf(pending_.transform).Transpose();
+    renderer.collect([&](std::uint32_t probe, std::array<float, 12> values) {
+        for (std::size_t c = 0; c < 3; ++c) {
+            const auto b = toScene * Ogre::Vector3(values[c * 4 + 1], values[c * 4 + 2], values[c * 4 + 3]);
+            values[c * 4 + 1] = float(b.x), values[c * 4 + 2] = float(b.y), values[c * 4 + 3] = float(b.z);
+        }
         pending_.values[probe] = values;
         ++pending_.collected;
     });
@@ -492,7 +544,9 @@ void GlobalIllumination::continueBake(std::chrono::milliseconds budget) {
              ++n) {
             if (n > 0 && n % 8 == 0) system->_beginFrameOnce();
             const auto probe = pending_.toRender[pending_.sent++];
-            renderer.render(pending_.octree.position(pending_.octree.probes[probe]), probe);
+            renderer.render(fromOgre(pending_.transform.transformAffine(
+                                toOgre(pending_.octree.position(pending_.octree.probes[probe])))),
+                            probe);
             if (n > 0 && n % 8 == 0) {
                 system->_update();
                 system->_endFrameOnce();
@@ -511,8 +565,10 @@ void GlobalIllumination::continueBake(std::chrono::milliseconds budget) {
     // use() clears pending_, so the finished bake is moved out of it first.
     auto settings = pending_.settings;
     auto reflections = std::move(pending_.reflections);
+    auto placements = std::move(pending_.placements);
+    const auto transform = pending_.transform;
     pending_ = {};
-    use(settings, std::move(reflections), diffuse);
+    use(settings, std::move(reflections), std::move(placements), diffuse, transform);
 }
 
 float GlobalIllumination::bakeProgress() const {
@@ -543,16 +599,17 @@ void GlobalIllumination::save(const std::filesystem::path& folder, double second
     writeSettings(out, settings, settings_);
     out.set(root, "settings", settings);
     out.set(root, "seconds", lhat_real(seconds));
+    // In the scene's coordinates, as placed before the scene instance's transform.
     const auto probes = out.table();
-    for (const auto* probe : reflections_->getProbes()) {
+    for (const auto& placement : placements_) {
         const auto item = out.table();
-        const auto put = [&](const char* key, const Ogre::Vector3& v) { out.set(item, key, out.vector(fromOgre(v).data())); };
-        put("camera", probe->getProbeCameraPos());
-        put("areaCentre", probe->getArea().mCenter);
-        put("areaHalfSize", probe->getArea().mHalfSize);
-        put("innerRegion", probe->getAreaInnerRegion());
-        put("shapeCentre", probe->getProbeShape().mCenter);
-        put("shapeHalfSize", probe->getProbeShape().mHalfSize);
+        const auto put = [&](const char* key, const Vec3& v) { out.set(item, key, out.vector(v.data())); };
+        put("camera", placement.camera);
+        put("areaCentre", placement.areaCentre);
+        put("areaHalfSize", placement.areaHalfSize);
+        put("innerRegion", placement.innerRegion);
+        put("shapeCentre", placement.shapeCentre);
+        put("shapeHalfSize", placement.shapeHalfSize);
         out.push(probes, item);
     }
     out.set(root, "reflectionProbes", probes);
@@ -605,24 +662,21 @@ GlobalIllumination::Stored GlobalIllumination::read(const std::filesystem::path&
     return stored;
 }
 
-bool GlobalIllumination::use(const Stored& stored) {
+bool GlobalIllumination::use(const Stored& stored, const Ogre::Matrix4& transform) {
     if (!stored.message.empty()) log_(stored.message);
     if (!stored.reflections) return false;
     try {
         auto reflections = createReflections(unsigned(stored.probes.size()));
-        for (const auto& placement : stored.probes) {
+        for (std::size_t i = 0; i < stored.probes.size(); ++i) {
             auto* probe = reflections->createProbe();
             probe->setTextureParams(probeResolution, probeResolution);
             probe->initWorkspace(probeNear, probeFar);
-            probe->set(toOgre(placement.camera), Ogre::Aabb(toOgre(placement.areaCentre), toOgre(placement.areaHalfSize)),
-                       toOgre(placement.innerRegion), Ogre::Matrix3::IDENTITY,
-                       Ogre::Aabb(toOgre(placement.shapeCentre), toOgre(placement.shapeHalfSize)));
             probe->setStatic(true);
         }
         // The probes keep the saved images; they are never rendered again.
         reflections->mPaused = true;
         uploadTexture(*stored.reflections, *reflections->getBindTexture());
-        use(stored.settings, std::move(reflections), stored.diffuse);
+        use(stored.settings, std::move(reflections), stored.probes, stored.diffuse, transform);
         bakeSeconds_ = stored.seconds;
     } catch (const std::exception& error) {
         log_("Could not use baked global illumination: " + std::string(error.what()));

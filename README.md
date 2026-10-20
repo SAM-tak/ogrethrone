@@ -297,9 +297,9 @@ Select **Systems → Parallel → OGRE** to inspect rendering settings. **Game
 rendering (project) → VSync** is a separate project-wide setting, saved in
 `project.throne.lton` as `rendering = { vsync = true^ }`. It supports Save and Undo
 and never overrides editor Play's checkbox. Standalone game execution is not yet
-implemented; this setting records its presentation preference. The same Inspector
-also exposes the current level's Forward Clustered mode, tone mapping and exposure.
-Existing Lighting menu controls remain available.
+implemented; this setting records its presentation preference. A level's rendering
+(Forward Clustered and its depth range, Show Clusters) is in the level's Inspector,
+and the environment and global illumination are in each scene's (below).
 Box3D and Animator are selectable too; their Inspectors currently show only the
 system name, reserving the same place for future settings.
 
@@ -523,16 +523,22 @@ front of it shows it. Only opaque materials cast shadows. Lights and
 cameras in the file are not placed. A node with only a Model is picked and outlined
 by the model's bounds.
 
-**Lighting → Environment (HDR)** names a project-relative equirectangular Radiance
-`.hdr` file for the level, and **Environment Scale** scales the light it gives.
+A scene keeps its environment and global illumination (`lighting = { ... }` in the scene
+file): the default sun, the procedural sky, the ambient light, an HDR environment, filmic tone
+mapping and exposure, and its bake. They are edited in the scene's Inspector: select the
+scene's row inside it, or a scene instance at the Level step (**Lighting → Scene Lighting...**
+selects the one shown). A level is shown in the environment and GI of its first scene; inside
+a scene, in that scene's.
+
+**Environment (HDR)** names a project-relative equirectangular Radiance
+`.hdr` file for the scene, and **Environment Scale** scales the light it gives.
 The editor converts it to a 512² cubemap, drawn as the sky and reflected by every
 PBS material without its own reflection map, and to spherical harmonics for diffuse
 ambient light. OGRE's IBL compute pass prefilters the cubemap's mipmaps for GGX
 roughness. Radiance above 16 (a sun in the image) is clamped; use a directional
 Light component for the sun, which the sky's sun then follows.
 
-Global illumination is set in the renderer's Inspector (**Systems → Parallel → OGRE**, or
-**Lighting → Global Illumination Settings...**). A bake has parallax-corrected reflection
+Global illumination is set in the scene's Inspector. A bake has parallax-corrected reflection
 probes on a grid over the probes' volume for reflections, and **Adaptive Irradiance Field** for
 diffuse light: an octree of irradiance probes that is finest (**Finest Spacing**, along X, Y
 and Z) in cells holding surfaces and coarser, by halves, away from them. The probes lie on a
@@ -541,21 +547,24 @@ ground and 2 m above it). Neighbouring cells share the probes at their corners; 
 on the edge or face of a coarser cell is interpolated from it instead of rendered, so levels
 meet without seams, except for the corners of cells holding a surface, which are always
 rendered. By default
-(**Probe Volume: Global**) the probes cover the bounds of everything drawn; **Local** uses the
-box **Box Lower**–**Box Upper** (editable only then; **Fit to Scene** fits it to the scene
-but its floor). Surfaces of objects smaller than **Min Object Volume** do not refine the cells, and
+(**Probe Volume: Global**) the probes cover the bounds of the scene's nodes; **Local** uses the
+box **Box Lower**–**Box Upper**, in the scene's coordinates (editable only then; **Fit to
+Scene** fits it to the scene but its floor). Surfaces of objects smaller than **Min Object Volume** do not refine the cells, and
 **Fill Empty Spaces** also covers space far from any surface. **Fast Bake Shadows** (on by
 default) bakes the diffuse probes with one 2048² map for the sun instead of the viewport's
 three cascades (local lights keep their shadows): about a fifth faster, with hardly any
 visible difference. The Inspector shows the cells,
 probes and cubemap renders a bake needs.
 
-**Bake** (or **Lighting → Bake Global Illumination**) renders the probes from the level as
-drawn, once per **Bounces** (each pass lit by the previous one), a few probes per frame under
-a progress window (it waits for files being read), and saves the result in
-`levels/<level>.gi/` beside the level, with the time it took (shown in the Inspector beside
-the bake's name); opening the level reads it back without rendering it again. `ogrethrone --bake-gi <folder> [file] [level]` bakes from the command line, then
-captures like `--capture`. Bakes made before the Adaptive Irradiance Field are not read; bake again.
+**Bake** (or **Lighting → Bake Global Illumination**) bakes the scene shown, where its
+instance is placed, rendering the probes from everything drawn (other scenes too), once per
+**Bounces** (each pass lit by the previous one), a few probes per frame under a progress
+window (it waits for files being read). It saves the result, in the scene's coordinates, in
+`scenes/<scene>.gi/` beside the scene, with the time it took (shown in the Inspector beside
+the bake's name); opening a level reads its first scene's bake back without rendering it
+again, and the bake moves with its scene instance. For now only the first scene's GI is shown
+and baked. `ogrethrone --bake-gi <folder> [file] [level]` bakes from the command line, then
+captures like `--capture`. Bakes of levels (`levels/<level>.gi/`) are no longer read; bake again.
 While a bake is in use it replaces the ambient light, and the environment map is drawn only
 as the sky. The bake is used while Global Illumination is enabled and its files exist, with
 the settings it was made with; after the settings change, the Inspector warns until it is
@@ -584,8 +593,8 @@ surface to the diffuse light the probe itself saw (it is never brightened).
 The viewport renders the scene in half float, in two passes: render queues below
 200, then (after copying that image) queue 200 and above, where refractive materials
 sample the first image and its depth. It then exposes the result.
-**Lighting → Filmic Tone Mapping** maps it through the ACES filmic curve instead
-of clamping and **Exposure (EV)** scales it in stops; both are saved with the level. Tone mapping writes
+**Filmic Tone Mapping** maps it through the ACES filmic curve instead
+of clamping and **Exposure (EV)** scales it in stops; both are the scene's. Tone mapping writes
 sRGB-encoded colours; the later targets, the viewport texture and the window are
 not sRGB, so ImGui shows the viewport as rendered.
 

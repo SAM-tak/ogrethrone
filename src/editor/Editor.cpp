@@ -1250,9 +1250,20 @@ Ogre::TextureGpu* Editor::environmentReflection() const {
 void Editor::requestGlobalIlluminationBake() {
     if(baking_) return;
     baking_=true;
-    struct Bake { unsigned passes, left; bool dropped=false; std::chrono::steady_clock::time_point start{}; };
-    const unsigned passes=doc_.world.level.rendering.gi.bounces;
-    auto bake=std::make_shared<Bake>(Bake{passes,passes});
+    struct Bake {
+        unsigned passes, left;
+        std::filesystem::path folder;
+        bool dropped=false;
+        std::chrono::steady_clock::time_point start{};
+    };
+    // The scene whose GI is shown is baked, where its instance is placed (TDDja/13 4).
+    if(giInstance()<0 || lightingScenePath().empty()) {
+        baking_=false;
+        log("Nothing to bake: global illumination belongs to a scene");
+        return;
+    }
+    const unsigned passes=lighting().gi.bounces;
+    auto bake=std::make_shared<Bake>(Bake{passes,passes,giFolder()});
     tasks_.add("Baking global illumination",[this,bake] {
         // The first pass sees only the environment's light: an earlier bake is dropped and the
         // lighting it replaced returns next frame. Each later pass, a frame after the one before,
@@ -1265,10 +1276,10 @@ void Editor::requestGlobalIlluminationBake() {
             if(reads_ || revealing_ || !root_.getRenderSystem()->getTextureGpuManager()->isDoneStreaming()) return false;
             // The diffuse probes are those placed for the settings and scene as they are.
             updateProbeLayout();
-            if(placing_ || layoutSettings_!=doc_.world.level.rendering.gi) return false;
+            if(placing_ || layoutSettings_!=lighting().gi) return false;
             // The time recorded runs from the first pass's start, after files are read.
             if(bake->left==bake->passes) bake->start=std::chrono::steady_clock::now();
-            gi_->beginBake(doc_.world.level.rendering.gi,camera_,octree_);
+            gi_->beginBake(lighting().gi,camera_,octree_,instanceTransform(giInstance()));
             return false;
         }
         // The editor's lines stay out of the probes; syncTransforms() shows them again.
@@ -1276,8 +1287,8 @@ void Editor::requestGlobalIlluminationBake() {
         // Probes render for about a tenth of a second each frame.
         gi_->continueBake(std::chrono::milliseconds(100));
         if(gi_->baking() || --bake->left) return false;
-        gi_->save(giFolder(),std::chrono::duration<double>(std::chrono::steady_clock::now()-bake->start).count());
-        log("Global illumination saved into "+giFolder().u8string());
+        gi_->save(bake->folder,std::chrono::duration<double>(std::chrono::steady_clock::now()-bake->start).count());
+        log("Global illumination saved into "+bake->folder.u8string());
         baking_=false;
         return true;
     },[this,bake] {
@@ -1295,8 +1306,9 @@ void Editor::readGlobalIllumination() {
         return GlobalIllumination::read(folder);
     },[this,folder](GlobalIllumination::Stored& stored) {
         --reads_;
-        // A bake for the level still open, with GI still enabled.
-        if(!baking_ && giFolder()==folder && doc_.world.level.rendering.gi.enabled) gi_->use(stored);
+        // A bake for the scene still shown, with GI still enabled.
+        if(!baking_ && giFolder()==folder && lighting().gi.enabled && giInstance()>=0)
+            gi_->use(stored,instanceTransform(giInstance()));
     });
 }
 
@@ -1315,11 +1327,13 @@ void Editor::revealModels() {
     [this] { return std::to_string(models_->hiddenTotal()-models_->hidden())+" of "+std::to_string(models_->hiddenTotal())+" model parts shown"; });
 }
 
-std::vector<SurfacePoint> Editor::sceneSurface() const {
+std::vector<SurfacePoint> Editor::sceneSurface(int instance) const {
     std::vector<SurfacePoint> points;
+    if (instance < 0 || std::size_t(instance) >= sceneRoots_.size()) return points;
+    const auto toScene = instanceTransform(instance).inverseAffine();
     for (const auto& render : renderObjects_) {
-        if (!render.placedModel.root) continue;
-        const auto& m = render.placedModel.root->_getFullTransformUpdated();
+        if (!render.placedModel.root || render.instance != std::size_t(instance)) continue;
+        const auto m = toScene * render.placedModel.root->_getFullTransformUpdated();
         for (const auto& p : models_->surface(render.modelKey)) {
             const auto world = m.transformAffine(toOgre(p.position));
             points.push_back({{world.x, world.y, world.z}, p.volume});
@@ -1328,10 +1342,13 @@ std::vector<SurfacePoint> Editor::sceneSurface() const {
     return points;
 }
 
-bool Editor::sceneBounds(Vec3& lower, Vec3& upper) const {
+bool Editor::sceneBounds(Vec3& lower, Vec3& upper, int instance) const {
     bool any = false;
+    if (instance < 0 || std::size_t(instance) >= sceneRoots_.size()) return false;
+    const auto toScene = instanceTransform(instance).inverseAffine();
     for (const auto& render : renderObjects_) {
-        const auto& m = render.node->_getFullTransformUpdated();
+        if (render.instance != std::size_t(instance)) continue;
+        const auto m = toScene * render.node->_getFullTransformUpdated();
         for (int corner = 0; corner < 8; ++corner) {
             const Ogre::Vector3 local(corner & 1 ? render.upper.x : render.lower.x, corner & 2 ? render.upper.y : render.lower.y,
                                       corner & 4 ? render.upper.z : render.lower.z);
@@ -1346,12 +1363,15 @@ bool Editor::sceneBounds(Vec3& lower, Vec3& upper) const {
 }
 
 void Editor::updateProbeLayout() {
-    const auto& gi = doc_.world.level.rendering.gi;
+    // The probes of the scene whose GI is shown, in its coordinates (TDDja/13).
+    const auto instance = giInstance();
+    if (instance < 0) return;
+    const auto& gi = lighting().gi;
     std::size_t placed = 0;
-    for (const auto& render : renderObjects_) placed += render.placedModel.root != nullptr;
-    // Global: the bounds of everything drawn, as Unity's APV sizes a Global volume.
+    for (const auto& render : renderObjects_) placed += render.placedModel.root != nullptr && render.instance == std::size_t(instance);
+    // Global: the bounds of the scene's drawn nodes, as Unity's APV sizes a Global volume.
     Vec3 lower = gi.lower, upper = gi.upper;
-    if (!gi.localProbeVolume && !sceneBounds(lower, upper)) lower = upper = {};
+    if (!gi.localProbeVolume && !sceneBounds(lower, upper, instance)) lower = upper = {};
     // One placement at a time, on a worker thread; settings changed meanwhile (a drag) are
     // placed once it is done.
     if (placing_ || (gi == layoutSettings_ && placed == layoutModels_ && lower == layoutLower_ && upper == layoutUpper_)) return;
@@ -1361,7 +1381,7 @@ void Editor::updateProbeLayout() {
     layoutUpper_ = upper;
     placing_ = true;
     tasks_.background<ProbeOctree>("Placing GI probes",
-        [gi, lower, upper, surface = sceneSurface()] {
+        [gi, lower, upper, surface = sceneSurface(instance)] {
             return AdaptiveIrradianceField::build(lower, upper, gi.probeSpacing, gi.probeOffset, gi.minObjectVolume,
                                                   gi.fillEmptySpaces, surface);
         },
@@ -1404,20 +1424,47 @@ void Editor::readEnvironmentFile(const std::string& path, const Ogre::Vector3& s
 }
 
 std::filesystem::path Editor::giFolder() const {
-    // levels/exterior.level.lton keeps its bake in levels/exterior.gi.
-    const auto level=project_ ? project_->resolve(levelPath_) : std::filesystem::path(levelPath_);
-    auto name=level.filename().u8string();
-    return level.parent_path()/std::filesystem::u8path(name.substr(0,name.find('.'))+".gi");
+    // scenes/exterior.scene.lton keeps its bake in scenes/exterior.gi.
+    const auto path=lightingScenePath();
+    const auto scene=project_ ? project_->resolve(path) : std::filesystem::path(path);
+    auto name=scene.filename().u8string();
+    return scene.parent_path()/std::filesystem::u8path(name.substr(0,name.find('.'))+".gi");
+}
+
+std::string Editor::lightingScenePath() const {
+    if (contexts_.back().kind == Context::Kind::Scene) return contexts_.back().path;
+    return doc_.world.level.scenes.empty() ? std::string() : doc_.world.level.scenes.front().scene;
+}
+
+const SceneLighting& Editor::lighting() const {
+    static const SceneLighting defaults;
+    const auto found = doc_.world.scenes.find(lightingScenePath());
+    return found == doc_.world.scenes.end() ? defaults : found->second.lighting;
+}
+
+int Editor::giInstance() const {
+    return contexts_.back().kind == Context::Kind::Prefab || view_.instances.empty() ? -1 : 0;
+}
+
+Ogre::Matrix4 Editor::instanceTransform(int instance) const {
+    if (instance < 0 || std::size_t(instance) >= sceneRoots_.size()) return Ogre::Matrix4::IDENTITY;
+    return sceneRoots_[std::size_t(instance)]->_getFullTransformUpdated();
 }
 
 void Editor::syncLighting() {
-    const auto& r=doc_.world.level.rendering;
-    if(!clustered_ || *clustered_!=r.clustered || clusterMin_!=r.minDistance || clusterMax_!=r.maxDistance) {
-        if(r.clustered) scene_.setForwardClustered(true,16,8,24,96,0,16,r.minDistance,r.maxDistance);
-        else scene_.setForward3D(true,4,4,5,96,r.minDistance,r.maxDistance);
-        clustered_=r.clustered; clusterMin_=r.minDistance; clusterMax_=r.maxDistance;
+    const auto& level=doc_.world.level.rendering;
+    if(!clustered_ || *clustered_!=level.clustered || clusterMin_!=level.minDistance || clusterMax_!=level.maxDistance) {
+        if(level.clustered) scene_.setForwardClustered(true,16,8,24,96,0,16,level.minDistance,level.maxDistance);
+        else scene_.setForward3D(true,4,4,5,96,level.minDistance,level.maxDistance);
+        clustered_=level.clustered; clusterMin_=level.minDistance; clusterMax_=level.maxDistance;
     }
-    scene_.getForwardPlus()->setDebugMode(r.debugClusters);
+    scene_.getForwardPlus()->setDebugMode(level.debugClusters);
+    // The environment and GI of the scene shown (TDDja/13).
+    const auto& r=lighting();
+    if(const auto path=lightingScenePath(); path!=lightingScene_) {
+        lightingScene_=path;
+        setSkyboxEnabled(r.sky);
+    }
     sun_->setVisible(r.defaultSun);
     // An environment is read once per file, scale and temperature, which multiply its radiance.
     const auto environmentScale=toOgre(blackBody(r.environmentTemperature)*r.environmentScale);
@@ -1433,13 +1480,18 @@ void Editor::syncLighting() {
     auto params=tonemap_->getTechnique(0)->getPass(0)->getFragmentProgramParameters();
     params->setNamedConstant("exposure",std::exp2(r.exposure));
     params->setNamedConstant("filmic",r.toneMapping?1.0f:0.0f);
-    // The level's bake is used while GI is enabled, whatever settings it was made with (the
-    // Inspector warns when they differ); enabling GI reads it again.
-    if(r.gi.enabled!=giEnabled_) {
-        giEnabled_=r.gi.enabled;
+    // The shown scene's bake is used while its GI is enabled, whatever settings it was made with
+    // (the Inspector warns when they differ); enabling GI or showing another scene reads it again.
+    const auto giScene=giInstance()>=0 ? lightingScenePath() : std::string();
+    const bool giEnabled=!giScene.empty() && r.gi.enabled;
+    if(!baking_ && (giScene!=giScene_ || giEnabled!=giEnabled_)) {
+        giScene_=giScene;
+        giEnabled_=giEnabled;
         gi_->clear();
         if(giEnabled_) readGlobalIllumination();
     }
+    // The bake moves with its scene instance.
+    if(gi_->active()) gi_->setTransform(instanceTransform(giInstance()));
     // Baked reflection probes (which saw the sky) take over from the environment map; a
     // material's own reflection map would otherwise be treated as one more probe.
     if(auto* reflection=environmentReflection(); reflection!=modelReflection_) {
@@ -1626,11 +1678,20 @@ void Editor::syncTransforms(const LevelExpansion* snapshot) {
     }
     gridNode_->setVisible(showGrid_);
     if (gi_->debugVisible()) updateProbeLayout();
+    // Drawn in the scene's coordinates, under a node placed as its instance.
+    if (const auto instance = giInstance(); instance >= 0) {
+        Ogre::Vector3 position, scale;
+        Ogre::Quaternion rotation;
+        instanceTransform(instance).decomposition(position, scale, rotation);
+        giBoxesNode_->setPosition(position);
+        giBoxesNode_->setOrientation(rotation);
+        giBoxesNode_->setScale(scale);
+    }
     if (gi_->debugVisible() && (gi_->version() != giBoxesVersion_ || layoutVersion_ != giBoxesLayout_)) {
         giBoxesVersion_ = gi_->version();
         giBoxesLayout_ = layoutVersion_;
         giBoxes_->clear();
-        const auto& gi = doc_.world.level.rendering.gi;
+        const auto& gi = lighting().gi;
         const auto box = [](const Vec3& centre, const Vec3& half, std::vector<Ogre::Vector3>& into) {
             for (const auto& corner : cubeEdges()) into.push_back(toOgre(centre) + corner * toOgre(half) * 2.0f);
         };
@@ -1665,7 +1726,7 @@ void Editor::syncTransforms(const LevelExpansion* snapshot) {
             // is below Min Object Volume.
             std::vector<Ogre::Vector3> left;
             lines.clear();
-            for (const auto& point : sceneSurface()) {
+            for (const auto& point : sceneSurface(giInstance())) {
                 auto& into = point.volume < gi.minObjectVolume ? left : lines;
                 for (int axis = 0; axis < 3; ++axis) {
                     Ogre::Vector3 arm(0.0f);
@@ -1677,7 +1738,7 @@ void Editor::syncTransforms(const LevelExpansion* snapshot) {
             if (!left.empty()) addLines(*giBoxes_, left, Ogre::ColourValue(.5f, .5f, .5f));
         }
     }
-    giBoxesNode_->setVisible(gi_->debugVisible());
+    giBoxesNode_->setVisible(gi_->debugVisible() && giInstance() >= 0);
     outlineNode_->setVisible(outlined != nullptr);
     if (outlined) {
         const auto centre=(outlined->lower+outlined->upper)*.5f;
@@ -2365,12 +2426,12 @@ bool Editor::open() {
         if (!view_.instances.empty() && !view_.instances[0].expansion.nodes.empty())
             selected_ = {Selection::Kind::Node, 0, view_.instances[0].expansion.nodes[0].path};
         focusSelection();
-        const auto& r=doc_.world.level.rendering;
-        setSkyboxEnabled(r.sky);
+        // The environment and GI apply from the scene shown at the next lighting update.
         gi_->clear();
-        giEnabled_=r.gi.enabled;
-        if(giEnabled_) readGlobalIllumination();
-        showGrid_=r.grid;
+        giScene_.clear();
+        giEnabled_=false;
+        lightingScene_.reset();
+        showGrid_=doc_.world.level.rendering.grid;
         log(std::string("Opened ") + levelPath_);
         return true;
     } catch (const std::exception& error) {
@@ -2483,25 +2544,11 @@ void Editor::menu() {
         if(ImGui::MenuItem("Area Lights: LTC",nullptr,areaLightModel_==1)) areaLightModel_=1;
         ImGui::Separator();
         ImGui::BeginDisabled(runtime_!=nullptr);
-        bool defaultSun=r.defaultSun;
-        if(ImGui::MenuItem("Default Sun",nullptr,&defaultSun)) { checkpoint(); r.defaultSun=defaultSun; }
-        auto upper=r.ambientUpper,lower=r.ambientLower;
-        if(ImGui::ColorEdit3("Ambient Upper",upper.data())) { checkpoint(); r.ambientUpper=upper; }
-        if(ImGui::ColorEdit3("Ambient Lower",lower.data())) { checkpoint(); r.ambientLower=lower; }
-        char environment[256]; std::snprintf(environment,sizeof environment,"%s",r.environment.c_str());
-        if(ImGui::InputText("Environment (HDR)",environment,sizeof environment,ImGuiInputTextFlags_EnterReturnsTrue)) { checkpoint(); r.environment=environment; }
-        float scale=r.environmentScale;
-        if(ImGui::DragFloat("Environment Scale",&scale,.01f,0,100)) { checkpoint(); r.environmentScale=scale; }
-        float temperature=r.environmentTemperature;
-        if(ImGui::DragFloat("Environment Temperature (K)",&temperature,10,0,40000)) { checkpoint(); r.environmentTemperature=temperature; }
-        ImGui::Separator();
-        // The settings are in the renderer's Inspector (Systems > Parallel > OGRE).
-        if(ImGui::MenuItem("Global Illumination Settings...")) selectRenderer();
-        if(ImGui::MenuItem("Bake Global Illumination",nullptr,false,r.gi.enabled)) requestGlobalIlluminationBake();
-        bool filmic=r.toneMapping;
-        if(ImGui::MenuItem("Filmic Tone Mapping",nullptr,&filmic)) { checkpoint(); r.toneMapping=filmic; }
-        float exposure=r.exposure;
-        if(ImGui::DragFloat("Exposure (EV)",&exposure,.05f,-16,16)) { checkpoint(); r.exposure=exposure; }
+        // The environment and GI are the shown scene's, set in its Inspector (TDDja/13).
+        if(ImGui::MenuItem("Scene Lighting...",nullptr,false,giInstance()>=0))
+            selected_=content() ? Selection{Selection::Kind::Level} : Selection{Selection::Kind::Scene,0};
+        if(ImGui::MenuItem("Bake Global Illumination",nullptr,false,lighting().gi.enabled && giInstance()>=0))
+            requestGlobalIlluminationBake();
         ImGui::EndDisabled();
         ImGui::EndMenu();
     }

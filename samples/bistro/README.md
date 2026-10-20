@@ -49,14 +49,16 @@ light with the coefficients of ORCA's `BistroInterior_Wine.pyscene`. The path tr
 lights these rooms from their emissive surfaces; point lights stand in for that.
 Their exposure is -2.9 EV.
 
-Every level bakes global illumination (two bounces) over the area around its view;
-bake it once with **Lighting → Bake Global Illumination**, or from the repository root:
+Each scene bakes its global illumination (two bounces); the exterior levels share
+`scenes/exterior.scene.lton`, and the wine-glass levels `scenes/interior-wine.scene.lton`, with
+their environment, exposure and bake. Bake once with **Lighting → Bake Global Illumination**,
+or from the repository root:
 
 ```powershell
 out/build/windows-clang-ninja/bin/Release/ogrethrone.exe --bake-gi samples/bistro out/bistro.ppm levels/plaza.level.lton
 ```
 
-The results are written to `levels/*.gi/` (about 50 MB each) and ignored by Git.
+The results are written to `scenes/*.gi/` (about 50 MB each) and ignored by Git.
 The exterior levels scale the environment by 28 and tint it to 5000 K (exposure
 -2.5 EV, the terrace -2.7 EV), and the exterior's lamps and signs glow with emission
 30, so the balance of sun, sky, shade and lamps follows ORCA's preview renders. Bakes

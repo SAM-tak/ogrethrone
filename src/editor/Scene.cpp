@@ -680,6 +680,8 @@ Scene Scene::load(const std::filesystem::path& path) {
     document.expect(sceneFormat, sceneVersion);
     Scene result;
     result.read(document.root());
+    if (const auto lighting = lton::field(document.root(), "lighting"); !lhat_is_nil(lighting))
+        result.lighting = readLighting(lton::table(lighting));
     return result;
 }
 
@@ -689,6 +691,7 @@ void Scene::save(const std::filesystem::path& path) const {
     out.set(root, "format", out.string(sceneFormat));
     out.set(root, "version", lhat_integer(sceneVersion));
     write(out, root);
+    out.set(root, "lighting", writeLighting(out, lighting));
     out.save(root, path);
 }
 

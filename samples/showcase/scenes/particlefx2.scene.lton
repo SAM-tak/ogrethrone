@@ -13,3 +13,4 @@ nodes = {
     {id = 10, name = "Marble billboard", parent = 0, components = {transform = {position = {0, 0, 0}, rotation = {90, 0, 0}, scale = {1, 1, 1}}, plane = {width = 15, depth = 9, colour = {1, 1, 1}}, material = {roughness = 1, diffuseMap = "@ogre/materials/textures/MRAMOR6X6.jpg", roughnessMap = "@ogre/materials/textures/MRAMOR-bump.jpg", uvScale = 5}}}
 },
 systems = {},
+lighting = {defaultSun = false^, sky = false^, ambientUpper = {0.0225, 0.0375, 0.0525}, ambientLower = {0.02925, 0.0219375, 0.014625}, ambientDirection = {1, 1.34641, 1}},

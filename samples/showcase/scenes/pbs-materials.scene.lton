@@ -86,3 +86,4 @@ nodes = {
     {id = 83, name = "Warm spot", parent = 0, components = {transform = {position = {-10, 10, 10}, rotation = {0, 0, 0}, scale = {1, 1, 1}}, light = {type = "Spot", direction = {1, -1, -1}, colour = {0.8, 0.4, 0.2}, power = 3.141592653589793, radius = 10, threshold = 0.01, innerAngle = 30, outerAngle = 40}}},
     {id = 84, name = "Cool spot", parent = 0, components = {transform = {position = {10, 10, -10}, rotation = {0, 0, 0}, scale = {1, 1, 1}}, light = {type = "Spot", direction = {-1, -1, 1}, colour = {0.2, 0.4, 0.8}, power = 3.141592653589793, radius = 10, threshold = 0.01, innerAngle = 30, outerAngle = 40}}}},
 systems = {},
+lighting = {defaultSun = false^, sky = true^, ambientUpper = {0.0225, 0.0375, 0.0525}, ambientLower = {0.02925, 0.0219375, 0.014625}, ambientDirection = {1, 1.34641, 1}},

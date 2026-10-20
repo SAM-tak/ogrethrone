@@ -144,11 +144,15 @@ void Editor::scenePanel() {
             const auto label = instanceLabel(i);
             // At the level a scene instance is a row of its own, selected for its transform.
             auto flags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_OpenOnArrow;
-            if (!content() && selected_.kind == Selection::Kind::Scene && selected_.instance == static_cast<int>(i))
+            // Inside a scene its row stands for the scene file, whose Inspector holds its lighting.
+            const bool sceneFile = contexts_.back().kind == Context::Kind::Scene;
+            if ((!content() && selected_.kind == Selection::Kind::Scene && selected_.instance == static_cast<int>(i)) ||
+                (sceneFile && selected_.kind == Selection::Kind::Level))
                 flags |= ImGuiTreeNodeFlags_Selected;
             const bool open = ImGui::TreeNodeEx("##root", flags, "%s", label.c_str());
             if (!content() && ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
                 selected_ = {Selection::Kind::Scene, static_cast<int>(i)};
+            if (sceneFile && ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) selected_ = {Selection::Kind::Level};
             // Double-clicking a scene instance drills into its scene file.
             if (!content() && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !runtime_)
                 if (const auto* instance = doc_.world.level.findScene(view_.instances[i].id))
@@ -388,6 +392,10 @@ void Editor::inspector() {
         else if (const auto* system = selectedSystem()) systemInspector(*system);
         else if (auto* placed = selectedScene()) sceneInspector(*placed);
         else if (selected_.kind==Selection::Kind::Level && !content()) levelInspector();
+        else if (selected_.kind==Selection::Kind::Level && contexts_.back().kind==Context::Kind::Scene) {
+            ImGui::TextUnformatted(contexts_.back().path.c_str());
+            lightingInspector(contexts_.back().path);
+        }
         else ImGui::TextDisabled("Nothing selected");
         ImGui::EndDisabled();
     }
@@ -401,22 +409,53 @@ void Editor::rendererInspector() {
     bool vsync=doc_.gameRendering.vsync;
     if(ImGui::Checkbox("VSync",&vsync)) { checkpoint(); doc_.gameRendering.vsync=vsync; }
     ImGui::TextWrapped("Editor Play uses the VSync control in viewport statistics.");
-    ImGui::SeparatorText("Level rendering");
-    auto& rendering=doc_.world.level.rendering;
-    bool clustered=rendering.clustered;
-    if(ImGui::Checkbox("Forward Clustered",&clustered)) { checkpoint(); rendering.clustered=clustered; }
-    bool toneMapping=rendering.toneMapping;
-    if(ImGui::Checkbox("Filmic Tone Mapping",&toneMapping)) { checkpoint(); rendering.toneMapping=toneMapping; }
+    ImGui::TextWrapped("A level's rendering is set in its Inspector (the Level panel's first row); a scene's "
+                       "environment and global illumination in the scene's.");
+}
+
+void Editor::lightingInspector(const std::string& path) {
+    const auto found=doc_.world.scenes.find(path);
+    if(found==doc_.world.scenes.end()) return;
+    auto& lighting=found->second.lighting;
+    // The view shows one scene's environment and GI: the scene edited, or the level's first.
+    const bool shown=path==lightingScenePath() && giInstance()>=0;
     const auto track=[&] {
         if(ImGui::IsItemActivated()) editStart_=doc_;
         if(ImGui::IsItemDeactivatedAfterEdit()) commit(std::move(editStart_));
     };
-    float exposure=rendering.exposure;
-    const bool exposureEdited=ImGui::DragFloat("Exposure (EV)",&exposure,.05f,-16,16);
-    track(); if(exposureEdited) rendering.exposure=exposure;
+    ImGui::SeparatorText("Environment");
+    if(!shown) ImGui::TextDisabled("Not shown: the view uses the level's first scene's environment.");
+    bool defaultSun=lighting.defaultSun;
+    if(ImGui::Checkbox("Default Sun",&defaultSun)) { checkpoint(); lighting.defaultSun=defaultSun; }
+    ImGui::SameLine();
+    bool sky=lighting.sky;
+    if(ImGui::Checkbox("Sky",&sky)) {
+        checkpoint(); lighting.sky=sky;
+        if(shown) setSkyboxEnabled(sky);
+    }
+    auto ambientUpper=lighting.ambientUpper,ambientLower=lighting.ambientLower;
+    const bool ambientUpperEdited=ImGui::ColorEdit3("Ambient Upper",ambientUpper.data()); track();
+    const bool ambientLowerEdited=ImGui::ColorEdit3("Ambient Lower",ambientLower.data()); track();
+    if(ambientUpperEdited) lighting.ambientUpper=ambientUpper;
+    if(ambientLowerEdited) lighting.ambientLower=ambientLower;
+    char environment[256]; std::snprintf(environment,sizeof environment,"%s",lighting.environment.c_str());
+    if(ImGui::InputText("Environment (HDR)",environment,sizeof environment,ImGuiInputTextFlags_EnterReturnsTrue)) {
+        checkpoint(); lighting.environment=environment;
+    }
+    float scale=lighting.environmentScale;
+    const bool scaleEdited=ImGui::DragFloat("Environment Scale",&scale,.01f,0,100); track();
+    if(scaleEdited) lighting.environmentScale=(std::max)(scale,0.0f);
+    float temperature=lighting.environmentTemperature;
+    const bool temperatureEdited=ImGui::DragFloat("Environment Temperature (K)",&temperature,10,0,40000); track();
+    if(temperatureEdited) lighting.environmentTemperature=(std::max)(temperature,0.0f);
+    bool toneMapping=lighting.toneMapping;
+    if(ImGui::Checkbox("Filmic Tone Mapping",&toneMapping)) { checkpoint(); lighting.toneMapping=toneMapping; }
+    float exposure=lighting.exposure;
+    const bool exposureEdited=ImGui::DragFloat("Exposure (EV)",&exposure,.05f,-16,16); track();
+    if(exposureEdited) lighting.exposure=exposure;
 
     ImGui::SeparatorText("Global illumination (baked)");
-    auto& gi=rendering.gi;
+    auto& gi=lighting.gi;
     bool enabled=gi.enabled;
     if(ImGui::Checkbox("Enabled",&enabled)) { checkpoint(); gi.enabled=enabled; }
     ImGui::BeginDisabled(!gi.enabled || gi_->baking());
@@ -437,7 +476,7 @@ void Editor::rendererInspector() {
         // Every drawn node's bounds; the floor is left alone (it sits a little above the
         // ground, or probes under it see the sky through the ground's back faces).
         Vec3 low,high;
-        if(sceneBounds(low,high)) { checkpoint(); gi.lower.x=low.x; gi.lower.z=low.z; gi.upper.x=high.x; gi.upper.y=(std::max)(high.y,gi.lower.y+.1f); gi.upper.z=high.z; }
+        if(sceneBounds(low,high,giInstance())) { checkpoint(); gi.lower.x=low.x; gi.lower.z=low.z; gi.upper.x=high.x; gi.upper.y=(std::max)(high.y,gi.lower.y+.1f); gi.upper.z=high.z; }
     }
     ImGui::EndDisabled();
     auto spacing=gi.probeSpacing;
@@ -457,7 +496,8 @@ void Editor::rendererInspector() {
     bool fill=gi.fillEmptySpaces;
     if(ImGui::Checkbox("Fill Empty Spaces",&fill)) { checkpoint(); gi.fillEmptySpaces=fill; }
     if(ImGui::IsItemHovered()) ImGui::SetTooltip("Also covers empty space far from any surface, with the coarsest cells.");
-    updateProbeLayout();
+    // The probes placed and baked are those of the scene whose GI is shown.
+    if(shown) updateProbeLayout();
     unsigned perLevel[ProbeOctree::levels]={};
     for(const auto& cell:octree_.cells) ++perLevel[cell.level];
     std::size_t rendered=0;
@@ -485,8 +525,12 @@ void Editor::rendererInspector() {
     // A bake renders a cubemap from every probe once per bounce: the reflection probes and the
     // diffuse probes that are not interpolated (TDDja/12 4).
     ImGui::TextDisabled("Cubemap renders per bake: %zu (x%u bounces: %u reflection + %zu diffuse)",gi.bounces*(reflectionCount+rendered),gi.bounces,reflectionCount,rendered);
+    ImGui::BeginDisabled(!shown);
     if(ImGui::Button("Bake")) requestGlobalIlluminationBake();
     ImGui::EndDisabled();
+    if(!shown) ImGui::TextDisabled("Only the GI of the level's first scene is shown and baked for now.");
+    ImGui::EndDisabled();
+    if(!shown) return;
     bool probes=gi_->debugVisible();
     if(ImGui::Checkbox("Show Probes",&probes)) gi_->setDebugVisible(probes);
     ImGui::SameLine();
@@ -923,6 +967,22 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
 
 void Editor::levelInspector() {
     ImGui::TextUnformatted(std::filesystem::u8path(levelPath_).filename().u8string().c_str());
+    ImGui::SeparatorText("Rendering");
+    auto& rendering=doc_.world.level.rendering;
+    bool clustered=rendering.clustered;
+    if(ImGui::Checkbox("Forward Clustered",&clustered)) { checkpoint(); rendering.clustered=clustered; }
+    ImGui::SameLine();
+    bool clusters=rendering.debugClusters;
+    if(ImGui::Checkbox("Show Clusters",&clusters)) { checkpoint(); rendering.debugClusters=clusters; }
+    float range[2]={rendering.minDistance,rendering.maxDistance};
+    const bool rangeEdited=ImGui::DragFloat2("Forward+ Depth Range",range,.1f,.001f,1.0e6f,"%.2f",ImGuiSliderFlags_AlwaysClamp);
+    if(ImGui::IsItemActivated()) editStart_=doc_;
+    if(rangeEdited) {
+        rendering.minDistance=range[0];
+        rendering.maxDistance=(std::max)(range[1],range[0]*1.01f);
+    }
+    if(ImGui::IsItemDeactivatedAfterEdit()) commit(std::move(editStart_));
+    if(ImGui::IsItemHovered()) ImGui::SetTooltip("The depth range Forward+ divides into cells for local lights.");
     // The view's camera, edited here as by navigating; it is not saved with the level.
     ImGui::SeparatorText("Scene View Camera (not saved)");
     const Ogre::Vector3 offset(std::cos(pitch_) * std::sin(yaw_), std::sin(pitch_), std::cos(pitch_) * std::cos(yaw_));
@@ -969,6 +1029,8 @@ void Editor::sceneInspector(SceneInstance& instance) {
     if (ImGui::Button("Open Scene")) enter({Context::Kind::Scene, instance.scene});
     ImGui::SameLine();
     if (ImGui::Button("Remove")) removeScene(instance.id);
+    // The scene's own settings, written to its file.
+    lightingInspector(instance.scene);
 }
 
 void Editor::removedList(Overrides& overrides, const Expansion& expansion, const NodePath& prefix) {

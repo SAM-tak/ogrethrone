@@ -16,11 +16,13 @@ int main(int argc,char** argv) {
         for(const char* name:{"forward3d","pbs-materials","area-lights","particlefx2"}) {
             const bool forward=std::string(name)=="forward3d",area=std::string(name)=="area-lights",particles=std::string(name)=="particlefx2";
             auto level=throne::Level::load(project.resolve(std::string("levels/")+name+".level.lton"));
-            require(level.scenes.size()==2 && !level.rendering.defaultSun,"Showcase environment missing");
+            require(level.scenes.size()==2,"Showcase scenes missing");
             // The second scene holds the level's view: one Camera node.
             const auto view=throne::Scene::load(project.resolve(level.scenes[1].scene));
             require(view.nodes.size()==1 && view.nodes[0].camera && view.nodes[0].transform,"Showcase view camera missing");
             auto scene=throne::Scene::load(project.resolve(level.scenes[0].scene));
+            // The scene keeps the environment (TDDja/13): no default sun, dim ambient light.
+            require(!scene.lighting.defaultSun && scene.lighting.ambientUpper.y<.1f,"Showcase environment missing");
             require(scene.nodes.size()==(particles?10u:forward?212u:84u),"Unexpected showcase node count");
             unsigned palette=0,animated=0,point=0,spot=0,rect=0,systems=0;
             for(const auto& n:scene.nodes) {
@@ -43,8 +45,8 @@ int main(int argc,char** argv) {
             const auto bytes=[](const auto& path) { std::ifstream f(path,std::ios::binary); return std::string(std::istreambuf_iterator<char>(f),{}); };
             require(bytes(temporary/"scene.lton")==bytes(temporary/"scene-again.lton"),"Light/material round trip is unstable");
             level.save(temporary/"level.lton"); const auto reopened=throne::Level::load(temporary/"level.lton");
-            require(reopened.rendering.maxDistance==level.rendering.maxDistance && reopened.scenes.size()==level.scenes.size() &&
-                reopened.rendering.ambientUpper.y==level.rendering.ambientUpper.y,"Level rendering settings lost on save");
+            require(reopened.rendering.maxDistance==level.rendering.maxDistance && reopened.scenes.size()==level.scenes.size(),
+                "Level rendering settings lost on save");
         }
         throne::Prefab prefab;
         auto& root=prefab.addNode("Emitter"); root.light.emplace(); root.material.emplace(); root.particles.emplace(); const auto id=root.id;

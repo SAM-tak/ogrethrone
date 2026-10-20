@@ -86,3 +86,4 @@ nodes = {
     {id = 83, name = "Warm textured rectangle", parent = 0, components = {transform = {position = {-10, 6, 10}, rotation = {0, 0, 0}, scale = {1, 1, 1}}, light = {type = "AreaApprox", direction = {1, -1, -1}, colour = {0.8, 0.4, 0.2}, power = 3.141592653589793, width = 15, height = 15, radius = 10, threshold = 0.01, mask = "textures/area-frame.dds"}}},
     {id = 84, name = "Cool rectangle", parent = 0, components = {transform = {position = {5, 4, -5}, rotation = {0, 0, 0}, scale = {1, 1, 1}}, light = {type = "AreaApprox", direction = {-1, -1, 1}, colour = {0.2, 0.4, 0.8}, power = 3.141592653589793, width = 5, height = 5, radius = 10, threshold = 0.01}}}},
 systems = {},
+lighting = {defaultSun = false^, sky = true^, ambientUpper = {0.0225, 0.0375, 0.0525}, ambientLower = {0.02925, 0.0219375, 0.014625}, ambientDirection = {1, 1.34641, 1}},

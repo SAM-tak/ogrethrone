@@ -8,7 +8,7 @@
 
 ## 2. 現在の既定設定
 
-［補足］現実装の数値は次のとおりとする。明示指定がないレベルのプレビュー照明に用いる。レベルの rendering に環境光、既定太陽光の有無、Forward 方式・範囲、クラスタ表示、初期カメラ・空・グリッドを保存できる。
+［補足］現実装の数値は次のとおりとする。明示指定がないレベルのプレビュー照明に用いる。レベルの rendering に Forward 方式・範囲、クラスタ表示、グリッドを、シーンの lighting に環境光、既定太陽光の有無、空、トーンマッピング、露出、HDR 環境、GI を保存する（13）。
 
 - Forward Clustered: 16×8×24 セル、セルあたり最大 96 ローカルライト、奥行き範囲 0.1〜100。
 - 太陽光: Directional Light、方向 (-0.6, -1, -0.4) を正規化、power scale は π。
@@ -32,7 +32,7 @@ View → Shadows は太陽光の影だけを切り替える。拡散光と環境
 
 ［補足］ビューポートの既定のスカイボックスには OGRE-Next の AtmosphereNpr によるプロシージャルな青空と太陽を使う。View → Skybox で表示を切り替える。既定の Directional Light と太陽の方向を合わせるが、Light 自体は Atmosphere にリンクせず、既存の照明・環境光の値を保つ。fogDensity は 0 とする。LDR のビューポートに合わせ、skyPower は 0.5、horizonLimit は 0.15 とし、下向きの視線では地平線以下の落ち着いた色を使う。
 
-［補足］空は背景深度の画面矩形として描画し、カメラに応じた視線から色を求める。シーンノード・物理ボディ・ピッキングの対象には追加しない。Quad.program と Atmosphere.material、および対応する GLSL／Any の固定済みリソースだけを読み込む。Editor 終了時は Atmosphere と専用リソースグループを破棄する。View の切替は表示状態のみであり、初期の空の有無はレベルの rendering.sky に保存する。
+［補足］空は背景深度の画面矩形として描画し、カメラに応じた視線から色を求める。シーンノード・物理ボディ・ピッキングの対象には追加しない。Quad.program と Atmosphere.material、および対応する GLSL／Any の固定済みリソースだけを読み込む。Editor 終了時は Atmosphere と専用リソースグループを破棄する。View の切替は表示状態のみであり、初期の空の有無はシーンの lighting.sky に保存する（13）。
 
 OGRE は従来どおりメインスレッドで、完成済みの描画用の写しを使う。影の深度描画と本描画は同じ OGRE ノードの配置を参照するので、物体と影は同じ時点を表示する。Box3D のワーカーは OGRE オブジェクトや影のテクスチャーを操作しない。
 
@@ -110,7 +110,7 @@ Vulkan の `--smoke-physics` は Forward Clustered が選択されているこ�
 
 液体の吸収: Model Component は materials に名前ごとの変更を持つ（name、absorption［1/m、RGB］、thickness［m］）。吸収を持つ透過マテリアルは体積とみなし、ベール＝ランベルト則の透過率 T = exp(−absorption × thickness × |N·V|) をシェーダーの出力とし（カスタムピース custom_ps_posExecution）、乗算ブレンド（dst × src）で背後を着色する。丸い容器の弦は中央で長いので |N·V| を掛ける（法線が内向きの液体にも対応するため絶対値）。表面のみ描く。描画キューは 99（不透明パスの最後）で、手前のグラス（キュー 200）は着色済みの画像を屈折して見せる。屈折は第 1 パスの画像だけを背景にできるため、液体をグラスと同じ屈折パスに入れると上書きされる。データブロックのカスタムピースはステージごとに 1 つなので、ORM と吸収のピースは 1 つの文字列に結合する。ピースの名前は内容のハッシュとし、同じピースのマテリアルはシェーダー（影キャスターを含む）を共有する。マテリアル名で付けると、OGRE はピース名をハッシュに含めるので全マテリアルが別シェーダーになり、Bistro 内装を開くと 1 フレームで約 180 本をコンパイルしていた。samples/bistro の interior-wine は pyscene の吸収係数（赤ワイン・白ワイン・ビール・ワイン瓶）を使う。BaseColor（アルファは不透明度、DXT5 ならアルファテスト 0.5 と両面）、Normal、glTF 式 ORM（R=遮蔽、G=粗さ、B=金属度）、Emissive を使う。ORM はデータブロック単位のカスタムピースで SampleSpecular／SampleRoughness の参照チャンネルを差し替え、既存のショーケース材質には影響させない。DirectX 法線は接線の w 符号で扱う。
 
-［補足］レベルの rendering は environment（プロジェクト相対の正距円筒 HDR）と environmentScale を持つ。CPU で 512² のキューブマップ（2×2 スーパーサンプル）と 9 係数の球面調和へ変換する。ミップは OGRE の IblSpecular 計算パス（Compute/Algorithms/IBL）で GGX 粗さ別に事前フィルタする。キューブマップは空と、自前の反射マップを持たない全 PBS マテリアルの反射に、球面調和は AmbientSh の拡散環境光に使う。放射輝度は 16（environmentScale を掛ける前）で打ち切り、HDR 内の太陽は Light Component の平行光源に任せる。空の太陽は既定の太陽か、最初の平行光源 Component の向きに追従する。
+［補足］シーンの lighting（以前はレベルの rendering。13）は environment（プロジェクト相対の正距円筒 HDR）と environmentScale を持つ。CPU で 512² のキューブマップ（2×2 スーパーサンプル）と 9 係数の球面調和へ変換する。ミップは OGRE の IblSpecular 計算パス（Compute/Algorithms/IBL）で GGX 粗さ別に事前フィルタする。キューブマップは空と、自前の反射マップを持たない全 PBS マテリアルの反射に、球面調和は AmbientSh の拡散環境光に使う。放射輝度は 16（environmentScale を掛ける前）で打ち切り、HDR 内の太陽は Light Component の平行光源に任せる。空の太陽は既定の太陽か、最初の平行光源 Component の向きに追従する。
 
 ［補足］ビューポートはシーンを RGBA16F に 2 パスで描く。描画キュー 0〜199 を Opaque へ（深度は共有の D32 テクスチャ）、それを Hdr へ複製し、キュー 200 以上を Opaque と深度を屈折元として Hdr へ描く（影ノードは再利用）。その後クアッドパス（media/postprocess/Tonemap）で露出（EV）を掛けて表示先へ書く。レベルの toneMapping が真なら ACES フィルミック曲線（Narkowicz の近似）、偽なら従来どおりクランプする。既定は偽・EV 0 で、既存レベルの見た目は変わらない。
 
@@ -148,16 +148,16 @@ Vulkan の `--smoke-physics` は Forward Clustered が選択されているこ�
 
 ## 9. 間接光（GI）
 
-反射は固定済み OGRE-Next の既存機能、拡散は Adaptive Irradiance Field（12）で、レベルごとに焼き込む。
+反射は固定済み OGRE-Next の既存機能、拡散は Adaptive Irradiance Field（12）で、シーンごとに焼き込む（13）。
 
 - 反射: ParallaxCorrectedCubemapAuto（per-pixel）のプローブを領域内の格子に置く。各プローブの影響範囲はセルを 1/4 ずつはみ出し、視差補正の形は領域全体の箱とする（PccPerPixelGridPlacement の深度による形合わせは全プローブを一度に描くため使わない）。256² RGBA16F、GGX 事前フィルタ付き。Forward Clustered のセルあたり 16 プローブ。
 - 拡散: Adaptive Irradiance Field（12）。角を共有する八分木の各プローブでキューブを描き、球面調和 L1 へ射影する。以前は IrradianceField のラスタ生成（DDGI 方式、1 つの箱を均一格子で覆う）を使った。下の照度場の補足は、そのときの記録。
 
 ［補足］IrradianceField::update() はパラメーター（処理開始プローブ番号）を永続マップのバッファに書き、同じフレームの 2 回目の呼び出しが GPU の積分前に上書きする。1 フレームに update(1) を繰り返すと、最後のプローブだけが積分され、他は生のキューブ（放射輝度）と生の深度のまま残る（照度場が暗くまだらになっていた）。焼き込みは照度場の update を 1 フレーム 1 回とし、その本数を前フレームの所要時間で倍・半分に調整する。OGRE は場を 1 セル分ずつ広げてからプローブを格子位置に置き、シェーダーは最後のプローブの先を読めない（次の行へ回り込む）。そこで initialize に渡す原点と大きさを逆算し、各軸の最初と最後のプローブを GI 領域の面に置く（1 本なら中央）。領域の下面は地面より少し上にする。地下のプローブは裏面カリングで地面越しに空を見る。
 
-レベルの rendering.gi が領域（lower／upper、反射プローブと Local の Adaptive Irradiance Field の範囲）、反射プローブ数、bounces、Adaptive Irradiance Field の設定（12 §3）を持つ。焼き込みは Inspector の Bake、Lighting メニューの Bake Global Illumination か `ogrethrone --bake-gi <folder> [file] [level]`。反射プローブ、続いて拡散のプローブを 1 フレーム約 0.1 秒ずつ（反射プローブは少なくとも 1 つ）描き、その間ウィンドウは応答し続け、進捗ウィンドウにパス数・描いたプローブ数・プログレスバーを出す（§10）。ファイルの読み込みとマテリアルの表示が終わるまで待ってから始める。最初のパスは既存の焼き込みを外し、HDR 環境の球面調和と反射だけで照らしたシーンを描く。以降のパスは 1 フレームごとに直前の焼き込みを使ったシーンを描くので、パスごとに 1 回分の照り返しが増える（bounces、既定 2）。
+シーンの lighting.gi（以前はレベルの rendering.gi）が領域（lower／upper、シーンの座標。反射プローブと Local の Adaptive Irradiance Field の範囲）、反射プローブ数、bounces、Adaptive Irradiance Field の設定（12 §3）を持つ。焼き込みは Inspector の Bake、Lighting メニューの Bake Global Illumination か `ogrethrone --bake-gi <folder> [file] [level]`。反射プローブ、続いて拡散のプローブを 1 フレーム約 0.1 秒ずつ（反射プローブは少なくとも 1 つ）描き、その間ウィンドウは応答し続け、進捗ウィンドウにパス数・描いたプローブ数・プログレスバーを出す（§10）。ファイルの読み込みとマテリアルの表示が終わるまで待ってから始める。最初のパスは既存の焼き込みを外し、HDR 環境の球面調和と反射だけで照らしたシーンを描く。以降のパスは 1 フレームごとに直前の焼き込みを使ったシーンを描くので、パスごとに 1 回分の照り返しが増える（bounces、既定 2）。
 
-焼き込み結果はプロジェクトに保存する。レベル `levels/x.level.lton` の結果は `levels/x.gi/` に置き、gi.lton（設定、焼き込みの所要時間（全パス、ファイル読み込み待ちを除く。Inspector の使用中の焼き込み名の横に出す）、各反射プローブの位置・領域・形）、reflections.oitd（全プローブのキューブ配列とミップ）と、Adaptive Irradiance Field の表（diffuse-top / nodes / cells / probes.oitd、12 §3）からなる（形式の版 2。照度場の版 1 は読まない）。レベルを開くと読み込み、描き直さない（PCC は一時停止したまま）。GI が有効で焼き込みデータがあれば、焼き込み時の設定（gi.lton に記録）のまま使う。レベルの設定が焼き込み時と違えば、Inspector に再焼き込みを促す警告を出す（使うのをやめない。設定を少し触っただけで長い焼き込みが外れていたため）。GI を無効にすると外し、有効に戻すと読み直す。
+焼き込み結果はプロジェクトに保存する。シーン `scenes/x.scene.lton` の結果は `scenes/x.gi/` に、シーンの座標で置き（13。以前はレベルの `levels/x.gi/`）、gi.lton（設定、焼き込みの所要時間（全パス、ファイル読み込み待ちを除く。Inspector の使用中の焼き込み名の横に出す）、各反射プローブの位置・領域・形）、reflections.oitd（全プローブのキューブ配列とミップ）と、Adaptive Irradiance Field の表（diffuse-top / nodes / cells / probes.oitd、12 §3）からなる（形式の版 3。照度場の版 1、レベルの焼き込みの版 2 は読まない）。レベルを開くと読み込み、描き直さない（PCC は一時停止したまま）。GI が有効で焼き込みデータがあれば、焼き込み時の設定（gi.lton に記録）のまま使う。レベルの設定が焼き込み時と違えば、Inspector に再焼き込みを促す警告を出す（使うのをやめない。設定を少し触っただけで長い焼き込みが外れていたため）。GI を無効にすると外し、有効に戻すと読み直す。
 
 GI の使用中も HDR 環境があれば環境光は AmbientSh のまま。Adaptive Irradiance Field の範囲の中はそれだけを拡散光とし（EnvFeatures_DiffuseGiFromReflectionProbe は切る）、外は球面調和へ移る（下記、照度場のときと同じ重み ifdWeight）。HDR 環境がなければ環境光を切る。マテリアルの反射マップに HDR 環境を割り当てない。割り当てると OGRE は手動 PCC として扱い、シェーダーが壊れる（toProbeLocalSpace の不一致）。空は HDR 環境のまま描く。プローブ撮影は描画キュー 0〜199 と 201〜249（屈折ガラスの 200 と PCC 補助の 250 を除く）を、エディターの影ノードで描く（media/gi/ThroneGi.compositor）。
 

@@ -2,6 +2,7 @@
 
 #include "core/Math.h"
 #include "editor/Lton.h"
+#include "editor/SceneLighting.h"
 #include "runtime/FramePipeline.h"
 #include <array>
 #include <cstdint>
@@ -424,7 +425,8 @@ protected:
 
 /// A prefab extended with scene-wide data (TDDja/05 2: the only difference).
 struct Scene : Prefab {
-    // Scene-wide data (global lighting, environment; TDDja/04 4) belongs here.
+    /// The scene's environment and baked global illumination (TDDja/13).
+    SceneLighting lighting;
 
     /// Reads `ogrethrone-scene` LTON.
     static Scene load(const std::filesystem::path& path);
