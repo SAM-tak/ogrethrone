@@ -1,4 +1,7 @@
 format = "ogrethrone-project",
-version = 1,
-name = "Amazon Lumberyard Bistro",
 mainLevel = "levels/exterior.level.lton",
+name = "Amazon Lumberyard Bistro",
+rendering = {
+    vsync = true^,
+},
+version = 1,

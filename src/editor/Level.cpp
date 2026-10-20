@@ -39,11 +39,14 @@ void Level::save(const std::filesystem::path& path) const {
         const auto gi=out.table();
         out.set(gi,"lower",out.vector(r.gi.lower.data()));
         out.set(gi,"upper",out.vector(r.gi.upper.data()));
-        for(const auto& [key,counts]:{std::pair{"reflectionProbes",&r.gi.reflectionProbes},std::pair{"fieldProbes",&r.gi.fieldProbes}}) {
-            const float values[3]={float((*counts)[0]),float((*counts)[1]),float((*counts)[2])};
-            out.set(gi,key,out.vector(values));
-        }
+        const float reflections[3]={float(r.gi.reflectionProbes[0]),float(r.gi.reflectionProbes[1]),float(r.gi.reflectionProbes[2])};
+        out.set(gi,"reflectionProbes",out.vector(reflections));
         out.set(gi,"bounces",lhat_integer(r.gi.bounces));
+        out.set(gi,"probeSpacing",lhat_real(r.gi.probeSpacing));
+        out.set(gi,"minObjectVolume",lhat_real(r.gi.minObjectVolume));
+        if(r.gi.fillEmptySpaces) out.set(gi,"fillEmptySpaces",lhat_bool(true));
+        if(r.gi.localProbeVolume) out.set(gi,"localProbeVolume",lhat_bool(true));
+        if(!r.gi.fastBakeShadows) out.set(gi,"fastBakeShadows",lhat_bool(false));
         out.set(settings,"gi",gi);
     }
     out.set(root,"rendering",settings);
@@ -100,21 +103,31 @@ Level Level::load(const std::filesystem::path& path) {
             r.gi.enabled=true;
             lton::vector(lton::field(gi,"lower"),r.gi.lower.data());
             lton::vector(lton::field(gi,"upper"),r.gi.upper.data());
-            for(const auto& [key,counts]:{std::pair{"reflectionProbes",&r.gi.reflectionProbes},std::pair{"fieldProbes",&r.gi.fieldProbes}}) {
-                float values[3];
-                lton::vector(lton::field(gi,key),values);
-                for(int i=0;i<3;++i) {
-                    if(values[i]<1 || values[i]>64 || values[i]!=float(unsigned(values[i]))) lton::invalid();
-                    (*counts)[i]=unsigned(values[i]);
-                }
+            float reflections[3];
+            lton::vector(lton::field(gi,"reflectionProbes"),reflections);
+            for(int i=0;i<3;++i) {
+                if(reflections[i]<1 || reflections[i]>16 || reflections[i]!=float(unsigned(reflections[i]))) lton::invalid();
+                r.gi.reflectionProbes[i]=unsigned(reflections[i]);
             }
             if(const auto b=lton::field(gi,"bounces"); !lhat_is_nil(b)) {
                 const auto bounces=lton::integer(b);
                 if(bounces<1 || bounces>8) lton::invalid();
                 r.gi.bounces=unsigned(bounces);
             }
-            // The irradiance field needs powers of two.
-            for(const auto n:r.gi.fieldProbes) if(n&(n-1)) lton::invalid();
+            if(const auto s=lton::field(gi,"probeSpacing"); !lhat_is_nil(s)) {
+                r.gi.probeSpacing=float(lton::number(s));
+                if(!(r.gi.probeSpacing>=.5f && r.gi.probeSpacing<=50)) lton::invalid();
+            }
+            if(const auto s=lton::field(gi,"minObjectVolume"); !lhat_is_nil(s)) {
+                r.gi.minObjectVolume=float(lton::number(s));
+                if(!(r.gi.minObjectVolume>=0 && r.gi.minObjectVolume<=1e6f)) lton::invalid();
+            }
+            for(auto [key,flag]:{std::pair{"fillEmptySpaces",&r.gi.fillEmptySpaces},std::pair{"localProbeVolume",&r.gi.localProbeVolume},
+                                        std::pair{"fastBakeShadows",&r.gi.fastBakeShadows}})
+                if(const auto f=lton::field(gi,key); !lhat_is_nil(f)) {
+                    if(!lhat_is_bool(f)) lton::invalid();
+                    *flag=lhat_as_bool(f);
+                }
             for(const float d:{r.gi.upper.x-r.gi.lower.x,r.gi.upper.y-r.gi.lower.y,r.gi.upper.z-r.gi.lower.z}) if(!(d>0)) lton::invalid();
         }
         if(r.environmentScale<0 || r.environmentTemperature<0 || r.fieldOfView<1 || r.fieldOfView>170) lton::invalid();

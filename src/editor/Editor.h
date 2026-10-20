@@ -4,6 +4,7 @@
 #include "editor/EditorPlatform.h"
 #include "editor/Expansion.h"
 #include "editor/Environment.h"
+#include "editor/AdaptiveIrradianceField.h"
 #include "editor/GlobalIllumination.h"
 #include "editor/Model.h"
 #include "editor/Tasks.h"
@@ -346,6 +347,8 @@ private:
     void menu();
     /// Reads the open level's baked global illumination on a worker thread, then uses it.
     void readGlobalIllumination();
+    /// The level's GI enabled setting as last applied: the bake is read when it turns on.
+    bool giEnabled_ = false;
     /// Shows newly placed model parts a few materials per frame, under a progress entry.
     void revealModels();
     /// Reads a model on a worker thread, then adds it to the library under @p key.
@@ -476,6 +479,31 @@ private:
     Ogre::SceneNode* gridNode_ = nullptr;
     Ogre::ManualObject* outline_ = nullptr;
     Ogre::SceneNode* outlineNode_ = nullptr;
+    /// View > GI Probes: the GI box and the bake's reflection probe areas as wire boxes, and
+    /// the Adaptive Irradiance Field's probes as crosses.
+    Ogre::ManualObject* giBoxes_ = nullptr;
+    Ogre::SceneNode* giBoxesNode_ = nullptr;
+    /// GlobalIllumination::version() and layoutVersion_ when giBoxes_ was built.
+    unsigned giBoxesVersion_ = ~0u, giBoxesLayout_ = ~0u;
+    /// Whether giBoxes_ also shows the surface points the Adaptive Irradiance Field's probes are placed around.
+    bool showSurface_ = false;
+    /// The Adaptive Irradiance Field octree for the level's GI settings and the models placed, made when
+    /// the debug display, the Inspector or a bake needs it (TDDja/12 3).
+    ProbeOctree octree_;
+    GiSettings layoutSettings_;
+    std::size_t layoutModels_ = ~std::size_t(0);
+    /// The volume octree_ covers: the GI box, or the bounds of everything drawn.
+    Vec3 layoutLower_, layoutUpper_;
+    unsigned layoutVersion_ = 0;
+    /// Whether a placement for octree_ is running on a worker thread.
+    bool placing_ = false;
+    /// Brings octree_ up to date with the level's GI settings and placed models, on a worker
+    /// thread: octree_ changes a few frames later.
+    void updateProbeLayout();
+    /// The world bounds of every drawn node, into @p lower and @p upper; false when none.
+    bool sceneBounds(Vec3& lower, Vec3& upper) const;
+    /// Where the placed models' surfaces are, in world space (ModelLibrary::surface()).
+    std::vector<SurfacePoint> sceneSurface() const;
     std::vector<RenderObject> renderObjects_;
     /// One OGRE node per view_ instance, placing its scene; the scene's roots are its children.
     std::vector<Ogre::SceneNode*> sceneRoots_;

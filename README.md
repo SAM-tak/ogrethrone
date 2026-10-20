@@ -521,16 +521,36 @@ ambient light. OGRE's IBL compute pass prefilters the cubemap's mipmaps for GGX
 roughness. Radiance above 16 (a sun in the image) is clamped; use a directional
 Light component for the sun, which the sky's sun then follows.
 
-**Lighting → Global Illumination** bakes a level's indirect light over the box
-**GI Lower**–**GI Upper**: parallax-corrected reflection probes on a grid for reflections, and a raster irradiance field (DDGI-style
-probes with depth) for diffuse light. **Bake Global Illumination** renders them from
-the level as drawn, once per **Bounces** (each pass lit by the previous one), a few
-probes per frame under a progress window (it waits for files being read), and
-saves the result in `levels/<level>.gi/` beside the level; opening the level reads
-it back without rendering it again. `ogrethrone --bake-gi <folder> [file] [level]`
-bakes from the command line, then captures like `--capture`. While a bake is in use
-it replaces the ambient light, and the environment map is drawn only as the sky.
-Changing the GI settings drops the bake until it is baked again.
+Global illumination is set in the renderer's Inspector (**Systems → Parallel → OGRE**, or
+**Lighting → Global Illumination Settings...**). A bake has parallax-corrected reflection
+probes on a grid over the probes' volume for reflections, and **Adaptive Irradiance Field** for
+diffuse light: an octree of irradiance probes that is finest (**Finest Spacing**)
+in cells holding surfaces and coarser, by halves, away from them. Neighbouring cells share
+the probes at their corners; a probe lying on the edge or face of a coarser cell is
+interpolated from it instead of rendered, so levels meet without seams. By default
+(**Probe Volume: Global**) the probes cover the bounds of everything drawn; **Local** uses the
+box **Box Lower**–**Box Upper** (editable only then; **Fit to Scene** fits it to the scene
+but its floor). Surfaces of objects smaller than **Min Object Volume** do not refine the cells, and
+**Fill Empty Spaces** also covers space far from any surface. **Fast Bake Shadows** (on by
+default) bakes the diffuse probes with the sun's shadow alone, in one 2048² map, instead of
+the viewport's cascades and local lights' shadows: about a fifth faster, with hardly any
+visible difference. The Inspector shows the cells,
+probes and cubemap renders a bake needs.
+
+**Bake** (or **Lighting → Bake Global Illumination**) renders the probes from the level as
+drawn, once per **Bounces** (each pass lit by the previous one), a few probes per frame under
+a progress window (it waits for files being read), and saves the result in
+`levels/<level>.gi/` beside the level; opening the level reads it back without rendering it
+again. `ogrethrone --bake-gi <folder> [file] [level]` bakes from the command line, then
+captures like `--capture`. Bakes made before the Adaptive Irradiance Field are not read; bake again.
+While a bake is in use it replaces the ambient light, and the environment map is drawn only
+as the sky. The bake is used while Global Illumination is enabled and its files exist, with
+the settings it was made with; after the settings change, the Inspector warns until it is
+baked again. Beyond the probes the bake fades out over a finest cell, and the environment's
+spherical harmonics light the scene (and stand in for reflections) there. **View → GI
+Probes** draws the probes' volume (white), the baked reflection probes' areas (blue) and the Adaptive Irradiance Field's probes as crosses, coloured by the finest level around them from
+yellow to red, interpolated ones in grey; **Show Surface Points** adds the surface points
+that refine the cells.
 
 Long work runs while the editor keeps drawing: opening a level reads its models, HDR
 environment and GI bake on worker threads, then shows the models a couple of
@@ -545,7 +565,7 @@ follow it; **Environment Temperature (K)** tints it the same way as a light.
 
 Reflection probes see the scene from where they stand, so under an awning or indoors
 they would reflect light that does not reach the surface. While a bake is in use, a
-probe's reflection is dimmed by the ratio of the irradiance field's light at the
+probe's reflection is dimmed by the ratio of the Adaptive Irradiance Field's light at the
 surface to the diffuse light the probe itself saw (it is never brightened).
 
 The viewport renders the scene in half float, in two passes: render queues below

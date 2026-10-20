@@ -17,6 +17,7 @@ Ogre Throne の設計に関する文書を置く。
 | [09-rendering.md](09-rendering.md) | 既定の Clustered Forward、PBS、太陽光の PSSM／PCF、検証 | 実装済み |
 | [10-navigation.md](10-navigation.md) | シーンビューのフライ、Orbit、描画面へのフォーカス | 実装済み |
 | [11-input.md](11-input.md) | OGRE のウィンドウ作成、OIS による入力デバイスの基盤 | 初期セットアップ実装済み |
+| [12-adaptive-irradiance-field.md](12-adaptive-irradiance-field.md) | 場面全体を覆う適応的な照度場（Adaptive Irradiance Field、角を共有する八分木） | 段階 2（焼き込みと参照）実装済み・検証中 |
 
 ## 記法
 

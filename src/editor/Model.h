@@ -1,5 +1,6 @@
 #pragma once
 
+#include "editor/AdaptiveIrradianceField.h"
 #include "editor/Scene.h"
 #include <OgreMesh2.h>
 #include <cstdint>
@@ -83,6 +84,12 @@ public:
         std::vector<Mesh> meshes;
         std::vector<Part> parts;
         Vec3 lower, upper;
+        /// Where the file's surfaces are, in its space: the centres of the surfaceCell-sized
+        /// cubes its triangles touch (sampled at most surfaceCell apart), each with the volume
+        /// of the largest object touching it (a connected piece of a placed mesh, as files
+        /// often merge many objects into one mesh), for placing GI probes near geometry
+        /// (TDDja/12 3).
+        std::vector<SurfacePoint> surface;
         /// Problems found while reading, logged by add().
         std::vector<std::string> messages;
     };
@@ -116,6 +123,10 @@ public:
     std::size_t hiddenTotal() const { return hiddenTotal_; }
     /// Sets the cubemap every model material reflects, or none.
     void setReflection(Ogre::TextureGpu* cubemap);
+    /// The size of the cubes Parsed::surface is made of, in metres.
+    static constexpr float surfaceCell = 0.5f;
+    /// Parsed::surface of the model added under @p key; empty when there is none.
+    const std::vector<SurfacePoint>& surface(const std::string& key) const;
 
 private:
     /// One submesh of a mesh instance of a file (so one material): its mesh and its
@@ -136,6 +147,7 @@ private:
         Vec3 lower, upper;
         std::vector<Ogre::MeshPtr> meshes;
         std::vector<Ogre::HlmsPbsDatablock*> materials;
+        std::vector<SurfacePoint> surface;
     };
 
     Ogre::Root& root_;

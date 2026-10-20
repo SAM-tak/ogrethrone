@@ -406,6 +406,80 @@ void Editor::rendererInspector() {
     float fov=rendering.fieldOfView;
     const bool fovEdited=ImGui::DragFloat("Field of View",&fov,.5f,1,170,"%.1f deg");
     track(); if(fovEdited) rendering.fieldOfView=fov;
+
+    ImGui::SeparatorText("Global illumination (baked)");
+    auto& gi=rendering.gi;
+    bool enabled=gi.enabled;
+    if(ImGui::Checkbox("Enabled",&enabled)) { checkpoint(); gi.enabled=enabled; }
+    ImGui::BeginDisabled(!gi.enabled || gi_->baking());
+    const char* volumes[]={"Global (whole scene)","Local (box)"};
+    int volume=gi.localProbeVolume?1:0;
+    if(ImGui::Combo("Probe Volume",&volume,volumes,2)) { checkpoint(); gi.localProbeVolume=volume==1; }
+    if(ImGui::IsItemHovered()) ImGui::SetTooltip("What the probes cover: the bounds of everything drawn, or the box below.");
+    // The box is only used by the Local volume.
+    ImGui::BeginDisabled(!gi.localProbeVolume);
+    auto lower=gi.lower,upper=gi.upper;
+    const bool lowerEdited=ImGui::DragFloat3("Box Lower",lower.data(),.1f); track();
+    const bool upperEdited=ImGui::DragFloat3("Box Upper",upper.data(),.1f); track();
+    if(lowerEdited || upperEdited) {
+        for(int i=0;i<3;++i) upper.data()[i]=(std::max)(upper.data()[i],lower.data()[i]+.1f);
+        gi.lower=lower; gi.upper=upper;
+    }
+    if(ImGui::Button("Fit to Scene")) {
+        // Every drawn node's bounds; the floor is left alone (it sits a little above the
+        // ground, or probes under it see the sky through the ground's back faces).
+        Vec3 low,high;
+        if(sceneBounds(low,high)) { checkpoint(); gi.lower.x=low.x; gi.lower.z=low.z; gi.upper.x=high.x; gi.upper.y=(std::max)(high.y,gi.lower.y+.1f); gi.upper.z=high.z; }
+    }
+    ImGui::EndDisabled();
+    float spacing=gi.probeSpacing;
+    // Finer than the surface points' cells (ModelLibrary::surfaceCell) places nothing better.
+    const bool spacingEdited=ImGui::DragFloat("Finest Spacing (m)",&spacing,.05f,ModelLibrary::surfaceCell,50,"%.2f"); track();
+    if(spacingEdited) gi.probeSpacing=(std::max)(spacing,ModelLibrary::surfaceCell);
+    float minVolume=gi.minObjectVolume;
+    const bool minVolumeEdited=ImGui::DragFloat("Min Object Volume (m3)",&minVolume,.01f,0,1000,"%.2f"); track();
+    if(ImGui::IsItemHovered()) ImGui::SetTooltip("Objects whose bounds hold less than this place no probes around them.");
+    if(minVolumeEdited) gi.minObjectVolume=(std::max)(minVolume,0.0f);
+    bool fill=gi.fillEmptySpaces;
+    if(ImGui::Checkbox("Fill Empty Spaces",&fill)) { checkpoint(); gi.fillEmptySpaces=fill; }
+    if(ImGui::IsItemHovered()) ImGui::SetTooltip("Also covers empty space far from any surface, with the coarsest cells.");
+    updateProbeLayout();
+    unsigned perLevel[ProbeOctree::levels]={};
+    for(const auto& cell:octree_.cells) ++perLevel[cell.level];
+    std::size_t rendered=0;
+    for(const auto& probe:octree_.probes) rendered+=probe.from<0;
+    ImGui::TextDisabled("%zu cells (L0 %u, L1 %u, L2 %u, L3 %u, L4 %u, L5 %u)%s",octree_.cells.size(),perLevel[0],perLevel[1],perLevel[2],perLevel[3],perLevel[4],perLevel[5],placing_?" (placing...)":"");
+    ImGui::TextDisabled("%zu probes: %zu rendered, %zu interpolated",octree_.probes.size(),rendered,octree_.probes.size()-rendered);
+    // Reflection probes stand on a grid over the probes' volume too.
+    const auto size=layoutUpper_-layoutLower_;
+    float reflection[3]={size.x/float(gi.reflectionProbes[0]),size.y/float(gi.reflectionProbes[1]),size.z/float(gi.reflectionProbes[2])};
+    if(ImGui::DragFloat3("Reflection Spacing (m)",reflection,.05f,.5f,200,"%.1f")) {
+        checkpoint();
+        for(int i=0;i<3;++i)
+            gi.reflectionProbes[i]=std::clamp(unsigned(std::lround((&size.x)[i]/(std::max)(reflection[i],.5f))),1u,16u);
+    }
+    const unsigned reflectionCount=gi.reflectionProbes[0]*gi.reflectionProbes[1]*gi.reflectionProbes[2];
+    // Per reflection probe: a 256x256 RGBA16F cubemap with its mipmaps.
+    const double megabytes=reflectionCount*6.0*256*256*8*4/3/(1024.0*1024);
+    ImGui::TextDisabled("%u x %u x %u reflection probes, about %.0f MB",
+                        gi.reflectionProbes[0],gi.reflectionProbes[1],gi.reflectionProbes[2],megabytes);
+    bool fastShadows=gi.fastBakeShadows;
+    if(ImGui::Checkbox("Fast Bake Shadows",&fastShadows)) { checkpoint(); gi.fastBakeShadows=fastShadows; }
+    if(ImGui::IsItemHovered()) ImGui::SetTooltip("Diffuse probes bake with the sun's shadow alone, in one 2048x2048 map,\ninstead of the viewport's cascades and local lights' shadows: faster.");
+    int bounces=int(gi.bounces);
+    if(ImGui::SliderInt("Bounces",&bounces,1,8) && unsigned(bounces)!=gi.bounces) { checkpoint(); gi.bounces=unsigned(bounces); }
+    // A bake renders a cubemap from every probe once per bounce: the reflection probes and the
+    // diffuse probes that are not interpolated (TDDja/12 4).
+    ImGui::TextDisabled("Cubemap renders per bake: %zu (x%u bounces: %u reflection + %zu diffuse)",gi.bounces*(reflectionCount+rendered),gi.bounces,reflectionCount,rendered);
+    if(ImGui::Button("Bake")) requestGlobalIlluminationBake();
+    ImGui::EndDisabled();
+    bool probes=gi_->debugVisible();
+    if(ImGui::Checkbox("Show Probes",&probes)) gi_->setDebugVisible(probes);
+    ImGui::SameLine();
+    if(ImGui::Checkbox("Show Surface Points",&showSurface_)) giBoxesLayout_=~0u;
+    if(ImGui::IsItemHovered()) ImGui::SetTooltip("With Show Probes: the surface points that place probes (red),\nand those left out by Min Object Volume (grey).");
+    ImGui::TextDisabled(gi_->active() ? "Using the bake in %s" : "No bake in use (%s)",giFolder().filename().u8string().c_str());
+    if(gi_->active() && gi_->settings()!=gi) ImGui::TextColored(ImVec4(1,.75f,.3f,1),"Settings changed since the bake: bake again to apply them.");
 }
 
 void Editor::nodeInspector(const ExpandedNode& expanded) {

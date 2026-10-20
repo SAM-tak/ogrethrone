@@ -28,6 +28,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <initializer_list>
 #include <fstream>
 #include <iterator>
 #include <thread>
@@ -42,9 +43,10 @@
 #endif
 
 namespace {
-/// Registers an HLMS implementation from the pinned OGRE shader templates.
+/// Registers an HLMS implementation from the pinned OGRE shader templates, with the pieces in
+/// @p extra (folders under THRONE_MEDIA_DIR) as further libraries.
 template <typename Hlms>
-void registerHlms(Ogre::Root& root) {
+void registerHlms(Ogre::Root& root, std::initializer_list<const char*> extra = {}) {
     Ogre::String folder;
     Ogre::StringVector libraries;
     Hlms::getDefaultPaths(folder, libraries);
@@ -53,6 +55,8 @@ void registerHlms(Ogre::Root& root) {
     Ogre::ArchiveVec libraryArchives;
     for (const auto& library : libraries)
         libraryArchives.push_back(archives.load(media + library, "FileSystem", true));
+    for (const auto* library : extra)
+        libraryArchives.push_back(archives.load(THRONE_MEDIA_DIR "/" + Ogre::String(library), "FileSystem", true));
     auto* hlms = OGRE_NEW Hlms(archives.load(media + folder, "FileSystem", true), &libraryArchives);
     // Debug builds otherwise dump every generated shader into the working directory.
     hlms->setDebugOutputPath(false, false);
@@ -146,7 +150,8 @@ int main(int argc, char** argv) {
         auto* camera = scene->createCamera("MainCamera");
         camera->setNearClipDistance(0.1f);
         registerHlms<Ogre::HlmsUnlit>(root);
-        registerHlms<Ogre::HlmsPbs>(root);
+        // The Adaptive Irradiance Field's diffuse light (TDDja/12 5).
+        registerHlms<Ogre::HlmsPbs>(root, {"gi/Pbs"});
         root.getHlmsManager()->getComputeHlms()->setDebugOutputPath(false, false);
 
         IMGUI_CHECKVERSION();

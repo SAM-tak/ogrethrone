@@ -19,6 +19,7 @@
 #include <fstream>
 #include <functional>
 #include <limits>
+#include <unordered_map>
 
 namespace throne {
 namespace {
@@ -110,6 +111,78 @@ void deriveTangents(const std::vector<Corner>& corners, const std::vector<uint32
         std::memcpy(vertex.uv, corner.uv, sizeof vertex.uv);
     }
 }
+
+/// The connected pieces of a mesh: faces sharing a vertex position (welded where the file
+/// repeats a position) are in one piece. A file often merges many objects into one mesh;
+/// its pieces stand for them.
+struct Pieces {
+    /// The piece of each face.
+    std::vector<std::uint32_t> ofFace;
+    /// Each piece's bounds, in the mesh's space.
+    std::vector<Vec3> lower, upper;
+};
+
+/// Finds the pieces of @p mesh.
+Pieces findPieces(const ufbx_mesh& mesh) {
+    // Union-find over welded positions, keyed by a hash of their bits (collisions, which would
+    // only join two pieces, are negligible).
+    std::unordered_map<std::uint64_t, std::uint32_t> welded;
+    std::vector<std::uint32_t> position(mesh.vertex_position.values.count), parent;
+    for (std::size_t i = 0; i < position.size(); ++i) {
+        const auto v = vec(mesh.vertex_position.values.data[i]);
+        std::uint32_t bits[3];
+        std::memcpy(bits, &v, sizeof bits);
+        const auto key = std::uint64_t(bits[0]) * 0x9e3779b97f4a7c15ull ^ std::uint64_t(bits[1]) * 0xc2b2ae3d27d4eb4full ^
+                         std::uint64_t(bits[2]) * 0x165667b19e3779f9ull;
+        const auto [at, added] = welded.try_emplace(key, std::uint32_t(parent.size()));
+        if (added) parent.push_back(std::uint32_t(parent.size()));
+        position[i] = at->second;
+    }
+    const auto root = [&](std::uint32_t i) {
+        while (parent[i] != i) i = parent[i] = parent[parent[i]];
+        return i;
+    };
+    const auto vertex = [&](const ufbx_face& face, std::uint32_t corner) {
+        return position[mesh.vertex_position.indices.data[face.index_begin + corner]];
+    };
+    for (const auto& face : mesh.faces)
+        for (std::uint32_t c = 1; c < face.num_indices; ++c) parent[root(vertex(face, c))] = root(vertex(face, 0));
+    Pieces out;
+    std::unordered_map<std::uint32_t, std::uint32_t> pieceOf;
+    out.ofFace.resize(mesh.faces.count);
+    for (std::size_t f = 0; f < mesh.faces.count; ++f) {
+        const auto& face = mesh.faces.data[f];
+        if (face.num_indices == 0) continue;
+        const auto [at, added] = pieceOf.try_emplace(root(vertex(face, 0)), std::uint32_t(out.lower.size()));
+        if (added) {
+            out.lower.push_back({std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max()});
+            out.upper.push_back(out.lower.back() * -1.0f);
+        }
+        out.ofFace[f] = at->second;
+        auto &lower = out.lower[at->second], &upper = out.upper[at->second];
+        for (std::uint32_t c = 0; c < face.num_indices; ++c) {
+            const auto p = vec(ufbx_get_vertex_vec3(&mesh.vertex_position, face.index_begin + c));
+            lower = {std::min(lower.x, p.x), std::min(lower.y, p.y), std::min(lower.z, p.z)};
+            upper = {std::max(upper.x, p.x), std::max(upper.y, p.y), std::max(upper.z, p.z)};
+        }
+    }
+    return out;
+}
+
+/// The volume of the bounds of the box from @p lower to @p upper placed by @p transform, each
+/// extent at least 1 cm: a flat piece (a ground, a wall) would otherwise have no volume.
+float placedVolume(const ufbx_matrix& transform, const Vec3& lower, const Vec3& upper) {
+    Vec3 low{std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max()};
+    Vec3 high = low * -1.0f;
+    for (int corner = 0; corner < 8; ++corner) {
+        const auto p = vec(ufbx_transform_position(&transform, {corner & 1 ? upper.x : lower.x, corner & 2 ? upper.y : lower.y,
+                                                                corner & 4 ? upper.z : lower.z}));
+        low = {std::min(low.x, p.x), std::min(low.y, p.y), std::min(low.z, p.z)};
+        high = {std::max(high.x, p.x), std::max(high.y, p.y), std::max(high.z, p.z)};
+    }
+    const auto extent = [](float from, float to) { return std::max(to - from, .01f); };
+    return extent(low.x, high.x) * extent(low.y, high.y) * extent(low.z, high.z);
+}
 }
 
 ModelLibrary::ModelLibrary(Ogre::Root& root, Ogre::SceneManager& scene, Ogre::HlmsPbs& pbs, Log log)
@@ -176,6 +249,12 @@ void ModelLibrary::reveal(unsigned materials) {
         item->setVisible(true);
     }
     hidden_.resize(kept);
+}
+
+const std::vector<SurfacePoint>& ModelLibrary::surface(const std::string& key) const {
+    static const std::vector<SurfacePoint> none;
+    const auto found = models_.find(key);
+    return found == models_.end() ? none : found->second.surface;
 }
 
 void ModelLibrary::remove(Placed& placed) {
@@ -308,6 +387,15 @@ ModelLibrary::Parsed ModelLibrary::parse(const std::filesystem::path& file, cons
     // Every node with a mesh places it; the bounds gather the placed boxes' corners.
     out.lower = {std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max()};
     out.upper = out.lower * -1.0f;
+    // Surface cells, packed as 21-bit signed coordinates, with the largest piece (by volume) touching each.
+    std::unordered_map<std::uint64_t, float> cells;
+    std::map<const ufbx_mesh*, Pieces> pieces;
+    std::vector<float> pieceVolume;
+    const auto touch = [&](const Vec3& p, float size) {
+        const auto c = [](float v) { return std::uint64_t(std::int64_t(std::floor(v / surfaceCell)) + (1 << 20)) & 0x1fffff; };
+        auto& largest = cells[c(p.x) | c(p.y) << 21 | c(p.z) << 42];
+        largest = std::max(largest, size);
+    };
     for (std::size_t n = 0; n < scene->nodes.count; ++n) {
         const auto* node = scene->nodes.data[n];
         const auto found = node->mesh ? meshes.find(node->mesh) : meshes.end();
@@ -320,14 +408,49 @@ ModelLibrary::Parsed ModelLibrary::parse(const std::filesystem::path& file, cons
         part.rotation[0] = float(transform.rotation.x), part.rotation[1] = float(transform.rotation.y);
         part.rotation[2] = float(transform.rotation.z), part.rotation[3] = float(transform.rotation.w);
         const auto& mesh = out.meshes[found->second];
+        Vec3 partLower{std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max()};
+        Vec3 partUpper = partLower * -1.0f;
         for (int corner = 0; corner < 8; ++corner) {
             const Vec3 local{corner & 1 ? mesh.upper.x : mesh.lower.x, corner & 2 ? mesh.upper.y : mesh.lower.y,
                              corner & 4 ? mesh.upper.z : mesh.lower.z};
             const auto world = vec(ufbx_transform_position(&node->geometry_to_world, {local.x, local.y, local.z}));
-            out.lower = {std::min(out.lower.x, world.x), std::min(out.lower.y, world.y), std::min(out.lower.z, world.z)};
-            out.upper = {std::max(out.upper.x, world.x), std::max(out.upper.y, world.y), std::max(out.upper.z, world.z)};
+            partLower = {std::min(partLower.x, world.x), std::min(partLower.y, world.y), std::min(partLower.z, world.z)};
+            partUpper = {std::max(partUpper.x, world.x), std::max(partUpper.y, world.y), std::max(partUpper.z, world.z)};
+        }
+        out.lower = {std::min(out.lower.x, partLower.x), std::min(out.lower.y, partLower.y), std::min(out.lower.z, partLower.z)};
+        out.upper = {std::max(out.upper.x, partUpper.x), std::max(out.upper.y, partUpper.y), std::max(out.upper.z, partUpper.z)};
+        // Each triangle is sampled on a barycentric grid fine enough to touch every cell it
+        // crosses, with the volume of its piece as placed.
+        const auto& source = *node->mesh;
+        triangle.resize(source.max_face_triangles * 3);
+        const auto [at, added] = pieces.try_emplace(&source);
+        if (added) at->second = findPieces(source);
+        const auto& meshPieces = at->second;
+        pieceVolume.resize(meshPieces.lower.size());
+        for (std::size_t i = 0; i < pieceVolume.size(); ++i)
+            pieceVolume[i] = placedVolume(node->geometry_to_world, meshPieces.lower[i], meshPieces.upper[i]);
+        for (std::size_t f = 0; f < source.faces.count; ++f) {
+            const auto count = ufbx_triangulate_face(triangle.data(), triangle.size(), &source, source.faces.data[f]);
+            for (std::size_t t = 0; t < count; ++t) {
+                Vec3 corners[3];
+                for (int c = 0; c < 3; ++c)
+                    corners[c] = vec(ufbx_transform_position(&node->geometry_to_world,
+                                                             ufbx_get_vertex_vec3(&source.vertex_position, triangle[t * 3 + c])));
+                const auto &a = corners[0], &b = corners[1], &c = corners[2];
+                const auto length = [](const Vec3& v) { return std::sqrt(dot(v, v)); };
+                const float edge = std::max({length(b - a), length(c - b), length(a - c)});
+                const int steps = std::max(1, int(std::ceil(edge / surfaceCell)));
+                for (int u = 0; u <= steps; ++u)
+                    for (int w = 0; u + w <= steps; ++w)
+                        touch(a + (b - a) * (float(u) / steps) + (c - a) * (float(w) / steps), pieceVolume[meshPieces.ofFace[f]]);
+            }
         }
         out.parts.push_back(part);
+    }
+    out.surface.reserve(cells.size());
+    for (const auto& [cell, size] : cells) {
+        const auto c = [&](int shift) { return (float(std::int64_t(cell >> shift & 0x1fffff) - (1 << 20)) + .5f) * surfaceCell; };
+        out.surface.push_back({{c(0), c(21), c(42)}, size});
     }
     ufbx_free_scene(scene);
     if (out.parts.empty()) {
@@ -341,6 +464,7 @@ void ModelLibrary::add(const std::string& key, const Parsed& parsed) {
     for (const auto& message : parsed.messages) log_(message);
     Model out;
     out.lower = parsed.lower, out.upper = parsed.upper;
+    out.surface = parsed.surface;
     // Names stay unique when the same file is read with other material changes.
     const auto prefix = "ThroneModel/" + std::to_string(models_.size()) + "/";
     auto& resources = Ogre::ResourceGroupManager::getSingleton();

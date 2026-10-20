@@ -27,15 +27,28 @@ struct GiSettings {
     Vec3 lower{-10, 0, -10}, upper{10, 5, 10};
     /// Parallax-corrected reflection probes along X, Y and Z.
     std::array<unsigned, 3> reflectionProbes{2, 1, 2};
-    /// Irradiance-field probes along X, Y and Z; each a power of two.
-    std::array<unsigned, 3> fieldProbes{8, 2, 8};
     /// How many times the probes are rendered, each lit by the previous rendering:
     /// one bounce of light off the scene per rendering.
     unsigned bounces = 2;
-    /// Equality, to tell when a bake no longer matches its settings.
+    /// The finest spacing of the Adaptive Irradiance Field (TDDja/12), the diffuse light's probes, in metres.
+    float probeSpacing = 1;
+    /// Objects of smaller volume than this (cubic metres, of their bounds) do not place Adaptive
+    /// Probes around them (Unity's Min Renderer Volume Size).
+    float minObjectVolume = .1f;
+    /// Whether the Adaptive Irradiance Field also covers empty space far from any surface, with the coarsest cells.
+    bool fillEmptySpaces = false;
+    /// Whether the Adaptive Irradiance Field covers the box above (Unity's Local mode) instead of the bounds
+    /// of everything drawn (Global mode, the default).
+    bool localProbeVolume = false;
+    /// Whether diffuse probes bake with the sun's shadow alone, in one coarser map, instead of
+    /// the viewport's cascades and local lights' shadows: faster, slightly less exact.
+    bool fastBakeShadows = true;
+    /// Equality of every field; a bake records them all (GlobalIllumination's gi.lton).
     bool operator==(const GiSettings& other) const {
         return enabled == other.enabled && lower == other.lower && upper == other.upper &&
-               reflectionProbes == other.reflectionProbes && fieldProbes == other.fieldProbes && bounces == other.bounces;
+               reflectionProbes == other.reflectionProbes && bounces == other.bounces && probeSpacing == other.probeSpacing &&
+               minObjectVolume == other.minObjectVolume && fillEmptySpaces == other.fillEmptySpaces &&
+               localProbeVolume == other.localProbeVolume && fastBakeShadows == other.fastBakeShadows;
     }
     /// Negation of equality.
     bool operator!=(const GiSettings& other) const { return !(*this == other); }

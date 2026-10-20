@@ -41,6 +41,47 @@ abstract target ThroneGi/CubemapFace
 	}
 }
 
+// ThroneGi/CubemapFace with the sun's shadow alone, in one 2048² map (ThroneGi/FastShadows):
+// diffuse probes bake faster (GiSettings::fastBakeShadows, TDDja/12 4).
+abstract target ThroneGi/CubemapFaceFast
+{
+	pass render_scene
+	{
+		load
+		{
+			all				clear
+			clear_colour	0 0 0 1
+		}
+		store
+		{
+			depth			store
+			stencil			dont_care
+		}
+		overlays			off
+		camera_cubemap_reorient true
+		rq_first	0
+		rq_last		199
+		shadows ThroneGi/FastShadows recalculate
+	}
+	pass render_scene
+	{
+		load
+		{
+			all		load
+		}
+		store
+		{
+			depth			store
+			stencil			dont_care
+		}
+		overlays			off
+		camera_cubemap_reorient true
+		rq_first	201
+		rq_last		249
+		shadows ThroneGi/FastShadows reuse
+	}
+}
+
 abstract target ThroneGi/PccDepthCompress
 {
 	pass render_quad
@@ -104,30 +145,11 @@ workspace ThroneGi/ProbeWorkspace
 	connect_external 1 ThroneGi/ProbeNode 1
 }
 
-abstract target ThroneGi/DepthToCubemap
-{
-	pass render_quad
-	{
-		load
-		{
-			all		dont_care
-		}
-		store
-		{
-			depth	dont_care
-			stencil	dont_care
-		}
-		material		Ogre/Copy/4xFP32
-		input			0 depthTexture
-		camera_cubemap_reorient true
-	}
-}
-
-// One irradiance-field probe: colour and linear depth, which IrradianceField integrates.
-compositor_node ThroneGi/FieldNode
+// One Adaptive Irradiance Field probe: its colour, which GlobalIllumination reads back and projects to
+// spherical harmonics (TDDja/12 4).
+compositor_node ThroneGi/AdaptiveNode
 {
 	in 0 cubemap
-	in 1 cubemap_depth
 
 	texture depthTexture	target_width target_height PFG_D32_FLOAT
 
@@ -138,21 +160,40 @@ compositor_node ThroneGi/FieldNode
 	}
 
 	target cubemap_customRtv	+X : ThroneGi/CubemapFace { }
-	target cubemap_depth		+X : ThroneGi/DepthToCubemap { }
 	target cubemap_customRtv	-X : ThroneGi/CubemapFace { }
-	target cubemap_depth		-X : ThroneGi/DepthToCubemap { }
 	target cubemap_customRtv	+Y : ThroneGi/CubemapFace { }
-	target cubemap_depth		+Y : ThroneGi/DepthToCubemap { }
 	target cubemap_customRtv	-Y : ThroneGi/CubemapFace { }
-	target cubemap_depth		-Y : ThroneGi/DepthToCubemap { }
 	target cubemap_customRtv	+Z : ThroneGi/CubemapFace { }
-	target cubemap_depth		+Z : ThroneGi/DepthToCubemap { }
 	target cubemap_customRtv	-Z : ThroneGi/CubemapFace { }
-	target cubemap_depth		-Z : ThroneGi/DepthToCubemap { }
 }
 
-workspace ThroneGi/FieldWorkspace
+workspace ThroneGi/AdaptiveWorkspace
 {
-	connect_external 0 ThroneGi/FieldNode 0
-	connect_external 1 ThroneGi/FieldNode 1
+	connect_external 0 ThroneGi/AdaptiveNode 0
+}
+
+// ThroneGi/AdaptiveNode with ThroneGi/CubemapFaceFast.
+compositor_node ThroneGi/AdaptiveFastNode
+{
+	in 0 cubemap
+
+	texture depthTexture	target_width target_height PFG_D32_FLOAT
+
+	rtv cubemap_customRtv
+	{
+		colour	cubemap
+		depth	depthTexture
+	}
+
+	target cubemap_customRtv	+X : ThroneGi/CubemapFaceFast { }
+	target cubemap_customRtv	-X : ThroneGi/CubemapFaceFast { }
+	target cubemap_customRtv	+Y : ThroneGi/CubemapFaceFast { }
+	target cubemap_customRtv	-Y : ThroneGi/CubemapFaceFast { }
+	target cubemap_customRtv	+Z : ThroneGi/CubemapFaceFast { }
+	target cubemap_customRtv	-Z : ThroneGi/CubemapFaceFast { }
+}
+
+workspace ThroneGi/AdaptiveFastWorkspace
+{
+	connect_external 0 ThroneGi/AdaptiveFastNode 0
 }
