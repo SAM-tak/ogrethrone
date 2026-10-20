@@ -271,6 +271,8 @@ private:
     void syncTransforms(const LevelExpansion* snapshot = nullptr);
     /// Applies persisted lighting settings, including the Forward+ method.
     void syncLighting(const LevelExpansion& shown);
+    /// Moves the sky OGRE made into the queue after opaque geometry.
+    void drawSkyAfterOpaque();
     /// Loads one project texture with a project-qualified cache key; masks share an R8 pool.
     Ogre::TextureGpu* projectTexture(const std::string& path, int kind, bool mask = false);
     /// Replaces the mipmaps of an environment cubemap with GGX-prefiltered radiance.

@@ -38,6 +38,7 @@
 #include <OgreImage2.h>
 #include <OgreLogManager.h>
 #include <OgreManualObject2.h>
+#include <OgreRectangle2D2.h>
 #include <OgreRay.h>
 #include <OgreRenderSystem.h>
 #include <Vao/OgreVaoManager.h>
@@ -70,6 +71,8 @@ constexpr const char* viewportWorkspaceName = "ThroneEditor/Viewport";
 constexpr const char* windowWorkspaceName = "ThroneEditor/Window";
 constexpr const char* lineMaterial = "ThroneEditor/Lines";
 constexpr std::size_t historyLimit = 100, logLimit = 200;
+/// Opaque geometry is in queue 10 (OGRE's default), particles in 15, blended surfaces in 200.
+constexpr Ogre::uint8 skyRenderQueue = 11;
 
 /// ImGui's dark style with its blue accents turned to OGRE's green (#81d742).
 /// Green looks brighter than blue at the same value, so the accents are dimmed.
@@ -405,6 +408,7 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
     preset.skyPower = 0.5f;
     sky_->setPreset(preset);
     sky_->setSky(&scene_, true);
+    drawSkyAfterOpaque();
     models_ = std::make_unique<ModelLibrary>(root, scene, pbs_, [this](const std::string& line) { log(line); });
     gi_ = std::make_unique<GlobalIllumination>(root, scene, pbs_, [this](const std::string& line) { log(line); });
     createShadowNode(root);
@@ -955,6 +959,19 @@ void Editor::setSkyboxEnabled(bool enabled) {
     auto* cubemap = environment_ ? environment_->cubemap : nullptr;
     sky_->setSky(&scene_, enabled && !cubemap);
     scene_.setSky(enabled && cubemap, Ogre::SceneManager::SkyCubemap, cubemap);
+    drawSkyAfterOpaque();
+}
+
+void Editor::drawSkyAfterOpaque() {
+    // OGRE puts both skies in render queue 212, after the blended queue (200), so the sky
+    // painted over transparent surfaces and was missing from what refraction samples.
+    // Draw it right after opaque geometry (queue 10) and before particles (15) instead.
+    // SceneManager::setSky makes a new rectangle each time it is enabled.
+    auto* root = scene_.getRootSceneNode(Ogre::SCENE_STATIC);
+    for (size_t i = 0; i < root->numAttachedObjects(); ++i)
+        if (auto* object = root->getAttachedObject(i);
+            object->getRenderQueueGroup() == 212u && dynamic_cast<Ogre::Rectangle2D*>(object))
+            object->setRenderQueueGroup(skyRenderQueue);
 }
 
 void Editor::captureViewport(const std::filesystem::path& path) {
