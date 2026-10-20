@@ -624,8 +624,8 @@ surface to the diffuse light the probe itself saw (it is never brightened).
 
 The viewport first draws lit opaque geometry (render queue 10) in a depth prepass, which
 also writes a G-buffer of view-space normals, sun shadow/roughness and motion vectors
-(each pixel's change in UV since the previous frame, from the camera's motion; objects are
-taken as unmoved for now, and the sky is left at zero) for screen-space effects. It then renders the scene in half float: queue 10 again, reusing the prepass
+(each pixel's change in UV since the previous frame, from the camera's and each object's
+motion; skinned meshes and the sky, left at zero, are not covered) for screen-space effects. It then renders the scene in half float: queue 10 again, reusing the prepass
 (its depth read-only, normal maps and sun shadows not sampled again), then the sky (11),
 unlit lines and emitters (12), particles (15) and absorbing volumes (99); then, after
 copying that image, queue 200 and above, where refractive materials sample the first image

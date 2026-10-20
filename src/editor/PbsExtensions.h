@@ -1,12 +1,16 @@
 #pragma once
 
 #include <OgreHlmsListener.h>
+#include <OgreHlmsPbs.h>
 #include <OgreMatrix4.h>
+#include <cstdint>
 #include <map>
+#include <unordered_map>
 #include <vector>
 
 namespace Ogre {
 class Camera;
+class ReadOnlyBufferPacked;
 }
 
 namespace throne {
@@ -46,8 +50,8 @@ private:
 
 /// Writes screen-space motion vectors from the depth prepass (TDDja/09): sets custom_motion_vectors
 /// and hands the vertex shader the camera's view-projection of the previous frame, so the
-/// prepass's third target holds, per pixel, the change in UV since then. Objects are taken as
-/// unmoved; only the camera's motion is measured.
+/// prepass's third target holds, per pixel, the change in UV since then. ThronePbs adds each
+/// object's world matrix of the previous frame.
 class MotionVectors final : public Ogre::HlmsListener {
 public:
     void preparePassHash(const Ogre::CompositorShadowNode* shadowNode, bool casterPass, bool dualParaboloid,
@@ -60,5 +64,44 @@ public:
 private:
     /// Each camera's view-projection in its last prepass.
     std::map<const Ogre::Camera*, Ogre::Matrix4> previous_;
+};
+
+/// HlmsPbs with each object's world matrix of the previous frame, for the motion vectors: in
+/// depth prepasses it writes it per draw into a read-only buffer at slot 1 (prevWorldBuf), a
+/// slot it reserves in every pass. An object drawn for the first time, or not drawn in the
+/// previous frame, is taken as unmoved. Skinned and posed meshes are not handled.
+class ThronePbs final : public Ogre::HlmsPbs {
+public:
+    ThronePbs(Ogre::Archive* dataFolder, Ogre::ArchiveVec* libraryFolders);
+
+    Ogre::HlmsCache preparePassHash(const Ogre::CompositorShadowNode* shadowNode, bool casterPass, bool dualParaboloid,
+                                    Ogre::SceneManager* sceneManager) override;
+    Ogre::uint32 fillBuffersForV2(const Ogre::HlmsCache* cache, const Ogre::QueuedRenderable& queuedRenderable,
+                                  bool casterPass, Ogre::uint32 lastCacheHash, Ogre::CommandBuffer* commandBuffer) override;
+    void setupRootLayout(Ogre::RootLayout& rootLayout, size_t tid) override;
+    void preCommandBufferExecution(Ogre::CommandBuffer* commandBuffer) override;
+    void frameEnded() override;
+    void _changeRenderSystem(Ogre::RenderSystem* newRs) override;
+
+private:
+    /// An object's world matrix in the last two prepass frames it was drawn in.
+    struct Motion {
+        Ogre::Matrix4 previous, current;
+        std::uint64_t frame = 0;
+    };
+    /// Unmaps the buffer being written, keeping it for the frame.
+    void unmap();
+    /// Binds the buffer being written, if any.
+    void bind(Ogre::CommandBuffer* commandBuffer) const;
+
+    std::unordered_map<const Ogre::MovableObject*, Motion> motion_;
+    /// Counts depth prepasses; one per frame.
+    std::uint64_t frame_ = 0;
+    bool motionPass_ = false;
+    /// One buffer per HlmsPbs const buffer: drawId restarts with each.
+    std::vector<Ogre::ReadOnlyBufferPacked*> buffers_;
+    Ogre::ReadOnlyBufferPacked* current_ = nullptr;
+    const Ogre::ConstBufferPacked* currentConstBuffer_ = nullptr;
+    float* mapped_ = nullptr;
 };
 }

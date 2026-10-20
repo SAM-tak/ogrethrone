@@ -151,7 +151,7 @@ int main(int argc, char** argv) {
         camera->setNearClipDistance(0.1f);
         registerHlms<Ogre::HlmsUnlit>(root);
         // The Adaptive Irradiance Field's diffuse light (TDDja/12 5).
-        registerHlms<Ogre::HlmsPbs>(root, {"gi/Pbs", "pbs"});
+        registerHlms<throne::ThronePbs>(root, {"gi/Pbs", "pbs"});
         root.getHlmsManager()->getComputeHlms()->setDebugOutputPath(false, false);
 
         IMGUI_CHECKVERSION();

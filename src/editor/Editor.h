@@ -6,7 +6,7 @@
 #include "editor/Environment.h"
 #include "editor/AdaptiveIrradianceField.h"
 #include "editor/GlobalIllumination.h"
-#include "editor/PbsListeners.h"
+#include "editor/PbsExtensions.h"
 #include "editor/Model.h"
 #include "editor/Tasks.h"
 #include "editor/PrimitiveGeometry.h"

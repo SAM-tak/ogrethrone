@@ -1,7 +1,7 @@
 #pragma once
 
 #include "editor/AdaptiveIrradianceField.h"
-#include "editor/PbsListeners.h"
+#include "editor/PbsExtensions.h"
 #include "editor/SceneLighting.h"
 #include <OgreMatrix4.h>
 #include <array>
