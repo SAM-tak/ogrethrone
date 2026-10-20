@@ -1,6 +1,7 @@
 // The Scene, Systems and Inspector panels and the drill-down breadcrumb of the Editor
 // (TDDja/05 6, 06 6).
 #include "editor/Editor.h"
+#include "editor/OgreConversions.h"
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <algorithm>
@@ -104,7 +105,8 @@ void Editor::breadcrumb() {
 }
 
 void Editor::scenePanel() {
-    if (ImGui::Begin("Scene")) {
+    // Named after what it shows: the level's scenes, or the hierarchy of a scene or prefab.
+    if (ImGui::Begin(content() ? "Scene###Hierarchy" : "Level###Hierarchy")) {
         ImGui::BeginDisabled(runtime_ != nullptr);
         if (!content()) {
             if (ImGui::Button("Add Scene")) addScene();
@@ -127,6 +129,14 @@ void Editor::scenePanel() {
         ImGui::InputText("##PrefabPath", newPrefabPath_, sizeof newPrefabPath_);
         ImGui::EndDisabled();
         ImGui::Separator();
+        // The level itself heads its scenes; selecting it shows its properties.
+        if (!content()) {
+            const auto name = std::filesystem::u8path(levelPath_).filename().u8string();
+            auto flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+            if (selected_.kind == Selection::Kind::Level) flags |= ImGuiTreeNodeFlags_Selected;
+            ImGui::TreeNodeEx("##level", flags, "%s [Level]", name.c_str());
+            if (ImGui::IsItemClicked()) selected_ = {Selection::Kind::Level};
+        }
         if (view_.instances.empty()) ImGui::TextDisabled("No scenes. Add one above.");
         std::optional<std::uint32_t> removed;
         for (std::size_t i = 0; i < view_.instances.size(); ++i) {
@@ -377,6 +387,7 @@ void Editor::inspector() {
         else if (const auto* node = selectedNode()) nodeInspector(*node);
         else if (const auto* system = selectedSystem()) systemInspector(*system);
         else if (auto* placed = selectedScene()) sceneInspector(*placed);
+        else if (selected_.kind==Selection::Kind::Level && !content()) levelInspector();
         else ImGui::TextDisabled("Nothing selected");
         ImGui::EndDisabled();
     }
@@ -403,9 +414,6 @@ void Editor::rendererInspector() {
     float exposure=rendering.exposure;
     const bool exposureEdited=ImGui::DragFloat("Exposure (EV)",&exposure,.05f,-16,16);
     track(); if(exposureEdited) rendering.exposure=exposure;
-    float fov=rendering.fieldOfView;
-    const bool fovEdited=ImGui::DragFloat("Field of View",&fov,.5f,1,170,"%.1f deg");
-    track(); if(fovEdited) rendering.fieldOfView=fov;
 
     ImGui::SeparatorText("Global illumination (baked)");
     auto& gi=rendering.gi;
@@ -638,6 +646,17 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         edited|=texturePath("Diffuse Map",c.diffuseMap); edited|=texturePath("Normal Map",c.normalMap);
         edited|=texturePath("Roughness Map",c.roughnessMap); edited|=texturePath("Specular Map",c.specularMap);
         edited|=texturePath("Reflection Cubemap",c.reflectionMap); return edited;
+    });
+    component("Camera",value.camera,&SceneNode::camera,&NodeOverride::camera,[&](auto& c) {
+        bool edited=scalar("Field of View (deg)",c.fieldOfView,1,170);
+        edited|=scalar("Near Clip",c.nearClip,.001f,1.0e6f);
+        edited|=scalar("Far Clip",c.farClip,.001f,1.0e7f);
+        c.farClip=(std::max)(c.farClip,c.nearClip*1.001f);
+        // The view and the camera, either way; the camera looks along the node's -Z.
+        if(ImGui::Button("Align View to Camera")) alignViewToCamera(std::size_t(selected_.instance),std::size_t(&expanded-view_.instances[std::size_t(selected_.instance)].expansion.nodes.data()),c);
+        ImGui::SameLine();
+        if(ImGui::Button("Align Camera to View")) alignCameraToView();
+        return edited;
     });
     component("Light",value.light,&SceneNode::light,&NodeOverride::light,[&](auto& c) {
         int type=static_cast<int>(c.type);
@@ -880,6 +899,7 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
             addPrimitive("Capsule Primitive",PrimitiveKind::Capsule); addPrimitive("Plane Primitive",PrimitiveKind::Plane);
             if(!own->particles && ImGui::Selectable("Particle System")) checkpoint(),own->particles.emplace();
             if(!own->model && ImGui::Selectable("Model")) checkpoint(),own->model.emplace();
+            if(!own->camera && ImGui::Selectable("Camera")) checkpoint(),own->camera.emplace();
             if(!own->material && ImGui::Selectable("PBS Material")) checkpoint(),own->material.emplace();
             if(!own->light && ImGui::Selectable("Light")) checkpoint(),own->light.emplace();
             if(!own->boxCollider && ImGui::Selectable("Box Collider")) checkpoint(),own->boxCollider.emplace();
@@ -898,6 +918,34 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         if (!target.addedTo && ImGui::Button("Duplicate")) duplicate();
         if (!target.addedTo) ImGui::SameLine();
         if (ImGui::Button("Delete")) erase();
+    }
+}
+
+void Editor::levelInspector() {
+    ImGui::TextUnformatted(std::filesystem::u8path(levelPath_).filename().u8string().c_str());
+    // The view's camera, edited here as by navigating; it is not saved with the level.
+    ImGui::SeparatorText("Scene View Camera (not saved)");
+    const Ogre::Vector3 offset(std::cos(pitch_) * std::sin(yaw_), std::sin(pitch_), std::cos(pitch_) * std::cos(yaw_));
+    auto position = fromOgre(target_ + offset * distance_);
+    if (ImGui::DragFloat3("Position", position.data(), .05f, -1.0e6f, 1.0e6f, "%.3f")) {
+        target_ = toOgre(position) - offset * distance_;
+        updateCamera();
+    }
+    // As a Transform's rotation: about X (looking down is negative), then Y; no roll.
+    float rotation[2] = {-Ogre::Radian(pitch_).valueDegrees(), Ogre::Radian(yaw_).valueDegrees()};
+    if (ImGui::DragFloat2("Rotation X / Y", rotation, .5f, -1.0e6f, 1.0e6f, "%.1f deg")) {
+        const auto at = target_ + offset * distance_;
+        pitch_ = std::clamp(-Ogre::Degree(rotation[0]).valueRadians(), -1.5f, 1.5f);
+        yaw_ = Ogre::Degree(rotation[1]).valueRadians();
+        const Ogre::Vector3 turned(std::cos(pitch_) * std::sin(yaw_), std::sin(pitch_), std::cos(pitch_) * std::cos(yaw_));
+        target_ = at - turned * distance_;
+        updateCamera();
+    }
+    if (ImGui::DragFloat("Field of View", &viewFieldOfView_, .5f, 1, 170, "%.1f deg", ImGuiSliderFlags_AlwaysClamp)) updateCamera();
+    if (ImGui::DragFloat("Near Clip", &viewNear_, .01f, .001f, 1.0e6f, "%.3f", ImGuiSliderFlags_AlwaysClamp) |
+        ImGui::DragFloat("Far Clip", &viewFar_, 1, .01f, 1.0e7f, "%.1f", ImGuiSliderFlags_AlwaysClamp)) {
+        viewFar_ = (std::max)(viewFar_, viewNear_ * 1.001f);
+        updateCamera();
     }
 }
 

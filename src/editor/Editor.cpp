@@ -303,6 +303,10 @@ void dockSpace() {
         if (!ImGui::FindWindowSettingsByID(ImHashStr("Console")))
             if (const auto* browser = ImGui::FindWindowSettingsByID(ImHashStr("Browser")); browser && browser->DockId)
                 ImGui::DockBuilderDockWindow("Console", browser->DockId);
+        // The hierarchy panel was "Scene" before it took the name of what it shows.
+        if (!ImGui::FindWindowSettingsByID(ImHashStr("###Hierarchy")))
+            if (const auto* scene = ImGui::FindWindowSettingsByID(ImHashStr("Scene")); scene && scene->DockId)
+                ImGui::DockBuilderDockWindow("###Hierarchy", scene->DockId);
         return;
     }
     ImGui::DockBuilderRemoveNode(id);
@@ -314,7 +318,7 @@ void dockSpace() {
     const ImGuiID bottom = ImGui::DockBuilderSplitNode(centre, ImGuiDir_Down, 0.27f, nullptr, &centre);
     ImGuiID systems = 0;
     const ImGuiID scene = ImGui::DockBuilderSplitNode(left, ImGuiDir_Up, 0.55f, nullptr, &systems);
-    ImGui::DockBuilderDockWindow("Scene", scene);
+    ImGui::DockBuilderDockWindow("###Hierarchy", scene);
     ImGui::DockBuilderDockWindow("Systems", systems);
     ImGui::DockBuilderDockWindow("Inspector", right);
     ImGui::DockBuilderDockWindow("Browser", bottom);
@@ -1426,7 +1430,6 @@ void Editor::syncLighting() {
         environment_=it!=environments_.end() && it->second ? &*it->second : nullptr;
         setSkyboxEnabled(skyboxEnabled_);
     }
-    camera_.setFOVy(Ogre::Degree(r.fieldOfView));
     auto params=tonemap_->getTechnique(0)->getPass(0)->getFragmentProgramParameters();
     params->setNamedConstant("exposure",std::exp2(r.exposure));
     params->setNamedConstant("filmic",r.toneMapping?1.0f:0.0f);
@@ -1900,6 +1903,7 @@ namespace {
 void assign(NodeOverride& into, const NodeOverride& from) {
     if (from.particles) into.particles = from.particles;
     if (from.model) into.model = from.model;
+    if (from.camera) into.camera = from.camera;
     if (from.material) into.material = from.material;
     if (from.light) into.light = from.light;
     if (from.sphere) into.sphere = from.sphere;
@@ -2367,7 +2371,6 @@ bool Editor::open() {
         giEnabled_=r.gi.enabled;
         if(giEnabled_) readGlobalIllumination();
         showGrid_=r.grid;
-        if(r.openingCamera) { selected_={}; target_=toOgre(r.target); yaw_=r.yaw; pitch_=r.pitch; distance_=r.distance; updateCamera(); }
         log(std::string("Opened ") + levelPath_);
         return true;
     } catch (const std::exception& error) {
@@ -2499,8 +2502,6 @@ void Editor::menu() {
         if(ImGui::MenuItem("Filmic Tone Mapping",nullptr,&filmic)) { checkpoint(); r.toneMapping=filmic; }
         float exposure=r.exposure;
         if(ImGui::DragFloat("Exposure (EV)",&exposure,.05f,-16,16)) { checkpoint(); r.exposure=exposure; }
-        float fieldOfView=r.fieldOfView;
-        if(ImGui::DragFloat("Field of View",&fieldOfView,.5f,1,170,"%.1f deg")) { checkpoint(); r.fieldOfView=fieldOfView; }
         ImGui::EndDisabled();
         ImGui::EndMenu();
     }
@@ -2891,10 +2892,78 @@ void Editor::updateCamera() {
                                std::cos(pitch_) * std::cos(yaw_));
     camera_.setPosition(target_ + offset * distance_);
     camera_.lookAt(target_);
+    camera_.setFOVy(Ogre::Degree(viewFieldOfView_));
+    camera_.setNearClipDistance(viewNear_);
+    camera_.setFarClipDistance(viewFar_);
     camera_.setAspectRatio(static_cast<Ogre::Real>(viewportWidth_) / viewportHeight_);
     camera_.setProjectionType(orthographic_ ? Ogre::PT_ORTHOGRAPHIC : Ogre::PT_PERSPECTIVE);
     if (orthographic_)
         camera_.setOrthoWindowHeight(2 * distance_ * std::tan(camera_.getFOVy().valueRadians() / 2));
+}
+
+void Editor::alignViewToCamera(std::size_t instance, std::size_t index, const CameraComponent& camera) {
+    if (instance >= sceneNodes_.size() || index >= sceneNodes_[instance].size()) return;
+    auto* node = sceneNodes_[instance][index];
+    // The camera looks along the node's -Z; the view keeps its distance to what it orbits.
+    const auto position = node->_getDerivedPositionUpdated();
+    const auto forward = node->_getDerivedOrientationUpdated() * Ogre::Vector3::NEGATIVE_UNIT_Z;
+    pitch_ = std::clamp(std::asin(std::clamp(-forward.y, -1.0f, 1.0f)), -1.5f, 1.5f);
+    yaw_ = std::atan2(-forward.x, -forward.z);
+    const Ogre::Vector3 offset(std::cos(pitch_) * std::sin(yaw_), std::sin(pitch_), std::cos(pitch_) * std::cos(yaw_));
+    target_ = position - offset * distance_;
+    viewFieldOfView_ = camera.fieldOfView;
+    viewNear_ = camera.nearClip;
+    viewFar_ = camera.farClip;
+    updateCamera();
+}
+
+void Editor::alignCameraToView() {
+    const auto* expanded = selectedNode();
+    if (!expanded || !expanded->node.camera || selected_.instance < 0 ||
+        std::size_t(selected_.instance) >= sceneNodes_.size())
+        return;
+    const auto& created = sceneNodes_[std::size_t(selected_.instance)];
+    std::size_t index = 0;
+    while (index < created.size() && view_.instances[std::size_t(selected_.instance)].expansion.nodes[index].path != selected_.path)
+        ++index;
+    if (index == created.size()) return;
+    // The view in world space, into the node's parent's space, keeping the node's scale.
+    auto* node = created[index];
+    Ogre::Matrix4 world;
+    world.makeTransform(camera_.getPosition(), node->_getDerivedScaleUpdated(), camera_.getOrientation());
+    const auto local = node->getParentSceneNode()->_getFullTransformUpdated().inverseAffine() * world;
+    Ogre::Vector3 position, scale;
+    Ogre::Quaternion rotation;
+    local.decomposition(position, scale, rotation);
+    Ogre::Matrix3 axes;
+    rotation.ToRotationMatrix(axes);
+    Ogre::Radian z, y, x;
+    axes.ToEulerAnglesZYX(z, y, x);
+    checkpoint();
+    auto value = expanded->node;
+    auto& transform = value.transform ? *value.transform : value.transform.emplace();
+    transform.position = fromOgre(position);
+    transform.rotation = {x.valueDegrees(), y.valueDegrees(), z.valueDegrees()};
+    writeNode(value, 2 | 4);
+    CameraComponent camera = *expanded->node.camera;
+    camera.fieldOfView = viewFieldOfView_;
+    camera.nearClip = viewNear_;
+    camera.farClip = viewFar_;
+    const auto target = targetOf(selected_.instance, selected_.path);
+    if (target.node && target.node->camera) target.node->camera = camera;
+    else if (target.overrides) target.overrides->node(target.relative).camera = camera;
+}
+
+bool Editor::viewFromFirstCamera() {
+    for (std::size_t i = 0; i < view_.instances.size(); ++i)
+        for (std::size_t k = 0; k < view_.instances[i].expansion.nodes.size(); ++k)
+            if (const auto& camera = view_.instances[i].expansion.nodes[k].node.camera) {
+                // As the camera sees it: nothing selected, so no outline or gizmo either.
+                selected_ = {};
+                alignViewToCamera(i, k, *camera);
+                return true;
+            }
+    return false;
 }
 
 void Editor::focusSelection() {

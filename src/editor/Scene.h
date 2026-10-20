@@ -178,6 +178,22 @@ struct ParticleSystemComponent {
     bool operator!=(const ParticleSystemComponent& other) const { return !(*this==other); }
 };
 
+/// A viewpoint (TDDja/07): the node's position and orientation, looking along its local -Z
+/// with +Y up, through a perspective projection. The editor's view can be set from it, or
+/// written into it.
+struct CameraComponent {
+    /// Vertical field of view, in degrees.
+    float fieldOfView = 45;
+    /// Near and far clip distances, in metres.
+    float nearClip = .1f, farClip = 1000;
+    /// Equality of every field.
+    bool operator==(const CameraComponent& other) const {
+        return fieldOfView == other.fieldOfView && nearClip == other.nearClip && farClip == other.farClip;
+    }
+    /// Negation of equality.
+    bool operator!=(const CameraComponent& other) const { return !(*this == other); }
+};
+
 /// Material and local offset shared by collision shapes. Density determines mass.
 struct Collider {
     Vec3 centre;
@@ -220,6 +236,7 @@ struct NodeOverride {
     std::optional<LightComponent> light;
     std::optional<ParticleSystemComponent> particles;
     std::optional<ModelComponent> model;
+    std::optional<CameraComponent> camera;
     std::optional<BoxCollider> boxCollider;
     std::optional<SphereCollider> sphereCollider;
     std::optional<CapsuleCollider> capsuleCollider;
@@ -309,6 +326,7 @@ struct SceneNode {
     std::optional<LightComponent> light;
     std::optional<ParticleSystemComponent> particles;
     std::optional<ModelComponent> model;
+    std::optional<CameraComponent> camera;
     std::optional<BoxCollider> boxCollider;
     std::optional<SphereCollider> sphereCollider;
     std::optional<CapsuleCollider> capsuleCollider;
@@ -327,6 +345,7 @@ struct SceneNode {
 inline void applyExtraComponents(SceneNode& node, const NodeOverride& layer) {
     if (node.particles && layer.particles) node.particles = layer.particles;
     if (node.model && layer.model) node.model = layer.model;
+    if (node.camera && layer.camera) node.camera = layer.camera;
     if (node.material && layer.material) node.material = layer.material;
     if (node.light && layer.light) node.light = layer.light;
     if (node.sphere && layer.sphere) node.sphere = layer.sphere;

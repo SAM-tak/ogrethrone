@@ -1,0 +1,12 @@
+format = "ogrethrone-scene",
+version = 2,
+systems = {},
+nodes = {
+    {
+        id = 1, name = "View", parent = 0,
+        components = {
+            transform = {position = {29.0987, 294.6067, 688.6819}, rotation = {-8.5944, 5.7296, 0}, scale = {1, 1, 1}},
+            camera = {fieldOfView = 45, nearClip = 0.1, farClip = 1000},
+        },
+    },
+},

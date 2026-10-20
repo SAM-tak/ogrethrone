@@ -59,7 +59,7 @@ struct GiSettings {
     bool operator!=(const GiSettings& other) const { return !(*this == other); }
 };
 
-/// Persisted level lighting and the initial editor camera for authored showcases.
+/// Persisted level lighting.
 struct RenderingSettings {
     bool defaultSun = true, sky = true, grid = true, clustered = true, debugClusters = false;
     /// Filmic (ACES) tone mapping of the HDR scene instead of clamping it; exposure is in stops.
@@ -75,12 +75,6 @@ struct RenderingSettings {
     float environmentScale = 1, environmentTemperature = 0;
     /// Baked global illumination; the bake lives in the `<level>.gi` folder beside the level.
     GiSettings gi;
-    /// Optional opening view: orbit target, radians and distance.
-    bool openingCamera = false;
-    Vec3 target{0,.5f,0};
-    float yaw = .65f, pitch = .45f, distance = 9;
-    /// Vertical field of view of the viewport camera, in degrees.
-    float fieldOfView = 45;
 };
 
 /// The game-side data of one level (TDDja/04, 05, 06): the scene instances it

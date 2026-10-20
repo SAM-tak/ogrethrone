@@ -15,9 +15,11 @@ out/build/windows-clang-ninja/bin/Release/ogrethrone.exe samples/bistro
 ```
 
 The project opens `levels/exterior.level.lton`; click a file in **Browser > Levels**
-to switch. Each level uses filmic tone mapping. `exterior` and `interior` open at their
-file's camera. Five levels are seen from ORCA's preview renders, framed by eye (the
-renders' cameras are not published):
+to switch. Each level uses filmic tone mapping. Each level places a scene of its own,
+`scenes/<level>-view.scene.lton`, holding one Camera node, **View**: select it and press
+**Align View to Camera** to see the level as framed (`--capture` does so itself).
+`exterior` and `interior` are framed at their file's camera. Five levels are seen from
+ORCA's preview renders, framed by eye (the renders' cameras are not published):
 
 - `plaza`: the corner of Le Petit Coin with the scooter (exterior preview 1).
 - `terrace`: the table under the awning with the bottle and ashtray (exterior preview 2).

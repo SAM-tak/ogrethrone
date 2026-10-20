@@ -248,6 +248,8 @@ int main(int argc, char** argv) {
                 root.getRenderSystem()->getTextureGpuManager()->waitForStreamingCompletion();
                 if (bakeRun) editor.requestGlobalIlluminationBake();
                 finish();
+                // The level's first Camera node gives the view, as authored for the capture.
+                editor.viewFromFirstCamera();
                 for (int i = 0; i < 4; ++i) editor.frame(1.0f / 60);
                 editor.captureViewport(std::filesystem::u8path(argc > 3 ? argv[3] : "out/capture.ppm"));
             }

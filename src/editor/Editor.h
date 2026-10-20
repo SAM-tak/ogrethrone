@@ -115,6 +115,10 @@ public:
     void captureViewport(const std::filesystem::path& path);
     /// Opens a project-relative level; returns false if loading fails or Play is active.
     bool openLevel(const std::string& path);
+    /// Sets the view to the first node with a Camera component, in scene-instance and
+    /// hierarchy order, and clears the selection (no outline or gizmo in the picture);
+    /// returns false when the level has none.
+    bool viewFromFirstCamera();
     /// Selects the viewport's local-light culling algorithm.
     void setForwardClustered(bool enabled) { doc_.world.level.rendering.clustered=enabled; }
     /// Shows the Forward+ light-density debug overlay.
@@ -198,7 +202,7 @@ private:
     };
     /// What the inspector shows: a node of view_, a system, or a scene instance of the level.
     struct Selection {
-        enum class Kind { None, Node, System, Scene, EngineSystem } kind = Kind::None;
+        enum class Kind { None, Node, System, Scene, EngineSystem, Level } kind = Kind::None;
         /// Index into view_.instances; -1 for a system of the level itself.
         int instance = -1;
         /// The node's path; for a system, the prefab instance it came from.
@@ -389,6 +393,14 @@ private:
     void nodeInspector(const ExpandedNode& node);
     /// Draws a scene instance's scene and transform.
     void sceneInspector(SceneInstance& instance);
+    /// Draws the open level's properties: the view's camera, which is not saved.
+    void levelInspector();
+    /// Sets the view to node @p index of view instance @p instance and its Camera component:
+    /// its position, its direction (without roll) and its projection.
+    void alignViewToCamera(std::size_t instance, std::size_t index, const CameraComponent& camera);
+    /// Writes the view into the selected node: its Transform's position and rotation (scale
+    /// kept) and its Camera component's projection; one undo step.
+    void alignCameraToView();
     /// Lists the nodes and systems @p overrides removes, named from @p expansion
     /// where the overrides' instance is at @p prefix, each with a Restore button.
     void removedList(Overrides& overrides, const Expansion& expansion, const NodePath& prefix);
@@ -570,6 +582,9 @@ private:
     char newPrefabPath_[256] = "prefabs/new.prefab.lton";
     Ogre::Vector3 target_{0, 0.5f, 0};
     float yaw_ = 0.65f, pitch_ = 0.45f, distance_ = 9.0f;
+    /// The view's projection: vertical field of view in degrees, and clip distances. Not saved;
+    /// a Camera node keeps a view (alignViewToCamera(), alignCameraToView()).
+    float viewFieldOfView_ = 45, viewNear_ = .1f, viewFar_ = 10000;
     /// Base fly speed in scene units per second, adjusted by the wheel during flight.
     float flySpeed_ = 5.0f;
     unsigned viewportWidth_ = 0, viewportHeight_ = 0;

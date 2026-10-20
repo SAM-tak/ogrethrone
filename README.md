@@ -115,10 +115,20 @@ effect-free data):
   under which all of the scene's nodes lie. A level holds no nodes, no prefab
   instances and no overrides of its own: editing a scene's content at the Level
   step writes to that scene's file, so every instance of it shows the change.
+- A **Camera** component keeps a viewpoint: the node's position and orientation (it
+  looks along its local -Z, +Y up), with a field of view and near/far clip distances.
+  Its Inspector has **Align View to Camera** (the scene view takes its position,
+  direction and projection; the view has no roll) and **Align Camera to View** (the
+  node's Transform and the component take the view's; one undo step). Levels keep no
+  view of their own; `--capture` looks through the level's first Camera node.
 
 Levels, scenes and prefabs are named after their files (`main.scene.lton` shows
 as `main [Scene]`; a scene placed twice adds its instance ID). The editor drills
-down: at the Level step the Scene panel lists the scene instances; selecting one shows its transform in the Inspector and the gizmo,
+down: at the Level step the hierarchy panel is named **Level** and lists, under a row for
+the level itself, the scene instances (inside a scene or prefab it is named **Scene**).
+Selecting the level's row shows its Inspector: the scene view's camera (position, rotation
+about X then Y, field of view and clip distances), edited there as by navigating; it is not
+saved. Selecting a scene instance shows its transform in the Inspector and the gizmo,
 and double-clicking one (or a file in the Browser's Scenes tab) edits that
 scene, and double-clicking an instance node (or a file in the Prefabs tab) edits
 that prefab. The breadcrumb over the viewport returns to an outer step. Nodes and
@@ -288,8 +298,8 @@ rendering (project) → VSync** is a separate project-wide setting, saved in
 `project.throne.lton` as `rendering = { vsync = true^ }`. It supports Save and Undo
 and never overrides editor Play's checkbox. Standalone game execution is not yet
 implemented; this setting records its presentation preference. The same Inspector
-also exposes the current level's Forward Clustered mode, tone mapping, exposure
-and field of view. Existing Lighting menu controls remain available.
+also exposes the current level's Forward Clustered mode, tone mapping and exposure.
+Existing Lighting menu controls remain available.
 Box3D and Animator are selectable too; their Inspectors currently show only the
 system name, reserving the same place for future settings.
 
@@ -575,8 +585,7 @@ The viewport renders the scene in half float, in two passes: render queues below
 200, then (after copying that image) queue 200 and above, where refractive materials
 sample the first image and its depth. It then exposes the result.
 **Lighting → Filmic Tone Mapping** maps it through the ACES filmic curve instead
-of clamping, **Exposure (EV)** scales it in stops and **Field of View** sets the
-camera's vertical angle; all are saved with the level. Tone mapping writes
+of clamping and **Exposure (EV)** scales it in stops; both are saved with the level. Tone mapping writes
 sRGB-encoded colours; the later targets, the viewport texture and the window are
 not sRGB, so ImGui shows the viewport as rendered.
 
@@ -589,12 +598,13 @@ and lookup textures bundled with OGRE rather than copying them.
 
 [`samples/bistro`](samples/bistro) reproduces the Amazon Lumberyard Bistro (exterior,
 interior and the wine-glass interior) from NVIDIA ORCA (CC BY 4.0), with a level for
-each of ORCA's five preview views. The asset is downloaded separately; see the
+each of ORCA's five preview views, each seen through a Camera node. The asset is downloaded separately; see the
 sample's [README](samples/bistro/README.md).
 
 `ogrethrone --capture <folder> [file] [level]` opens a project and the given
-project-relative level (else its main level), waits for its textures, saves the
-viewport as a PPM image of the colours shown (default `out/capture.ppm`) and exits. OGRE
+project-relative level (else its main level), waits for its textures, looks through the
+level's first Camera node (with nothing selected), saves the viewport as a PPM image of
+the colours shown (default `out/capture.ppm`) and exits. OGRE
 assertions are written to standard error instead of a dialog.
 
 ## Physics playground

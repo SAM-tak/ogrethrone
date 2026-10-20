@@ -123,8 +123,10 @@ void showcaseSmoke(Editor& editor, Ogre::Window& window, Ogre::SceneManager& sce
     for(const char* name:{"forward3d","pbs-materials","area-lights"}) {
         const bool forward=std::string(name)=="forward3d",area=std::string(name)=="area-lights";
         require(editor.openLevel(std::string("levels/")+name+".level.lton"),"Showcase level failed to open");
+        require(editor.viewFromFirstCamera(),"Showcase view camera missing");
         settle();
-        require(editor.frameTimings().nodes==(forward?212u:84u),"Showcase nodes were lost while opening");
+        // The showcase's nodes and the View camera node.
+        require(editor.frameTimings().nodes==(forward?213u:85u),"Showcase nodes were lost while opening");
         require(editor.frameTimings().bodies==0,"A showcase unexpectedly created physics bodies");
         require(lightCount(Ogre::Light::LT_DIRECTIONAL)==1,"Showcase has duplicate or missing sunlight");
         require(lightCount(Ogre::Light::LT_POINT)==(forward?128u:0u),"Point lights did not survive level switching");
@@ -134,7 +136,7 @@ void showcaseSmoke(Editor& editor, Ogre::Window& window, Ogre::SceneManager& sce
         const auto before=capture(name);
         require(before.size()>10000,"Showcase capture is empty");
         if(forward) {
-            require(camera.getPosition().length()>100,"Opening camera did not frame the large Forward3D scene");
+            require(camera.getPosition().length()>100,"The view camera did not frame the large Forward3D scene");
             editor.setClusterDebug(true); settle();
             require(before!=capture("forward3d-clusters"),"Cluster debug did not change the image");
             editor.setClusterDebug(false); editor.setForwardClustered(false); settle();
@@ -158,10 +160,11 @@ void showcaseSmoke(Editor& editor, Ogre::Window& window, Ogre::SceneManager& sce
         require(same(before,capture(std::string(name)+"-stopped")),"Stop did not restore the authored showcase");
     }
     require(editor.openLevel("levels/particlefx2.level.lton"),"ParticleFX2 level failed to open");
+    require(editor.viewFromFirstCamera(),"ParticleFX2 view camera missing");
     editor.setShadowsEnabled(true);
     settle();
     for(int i=0;i<150;++i) frame();
-    require(editor.frameTimings().nodes==10 && editor.frameTimings().particleSystems==5 && editor.frameTimings().particles>100,
+    require(editor.frameTimings().nodes==11 && editor.frameTimings().particleSystems==5 && editor.frameTimings().particles>100,
             "ParticleFX2 preview did not emit all five systems");
     auto* smoke=Ogre::Root::getSingleton().getParticleSystemManager2()->getParticleSystemDef("Particle/SmokeUnlit");
     require(smoke->getNumAffectors()==3,"Smoke inheritance lost a growth, rotation or colour affector");

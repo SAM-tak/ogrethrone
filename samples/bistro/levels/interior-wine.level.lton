@@ -18,11 +18,9 @@ rendering = {
     clustered = true^,
     debugClusters = false^,
     defaultSun = false^,
-    distance = 20.000999450683594,
     environmentScale = 1.0,
     environmentTemperature = 0.0,
     exposure = -2.9000000953674316,
-    fieldOfView = 50.0,
     gi = {
         bounces = 2,
         lower = {
@@ -55,16 +53,8 @@ rendering = {
     grid = false^,
     maxDistance = 40.0,
     minDistance = 0.10000000149011612,
-    openingCamera = true^,
-    pitch = 0.13449999690055847,
     sky = true^,
-    target = {
-        21.425,
-        0.019,
-        -7.358,
-    },
     toneMapping = true^,
-    yaw = -1.0848000049591064,
 },
 scenes = {
     {
@@ -86,6 +76,7 @@ scenes = {
         },
         scene = "scenes/interior-wine.scene.lton",
     },
+    {id = 2, scene = "scenes/interior-wine-view.scene.lton"},
 },
 serialExecution = false^,
 stages = {

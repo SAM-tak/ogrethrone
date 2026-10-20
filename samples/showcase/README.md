@@ -23,8 +23,8 @@ The project opens **Area Lights**. Click a file in **Browser > Levels** to switc
   methods aim to produce the same lighting; their difference is culling cost.
 - `particlefx2.level.lton`: the purple fountain, rising aureola rings, PBS smoke,
   rotating Unlit smoke and PBS sphere particles. A marble platform and marker
-  reproduce the original ten-second motion. The opening view frames the larger
-  particle layout; fly closer to inspect individual effects.
+  reproduce the original ten-second motion. The level's View camera frames the
+  larger particle layout; fly closer to inspect individual effects.
 
 F5 starts/stops the rotation and particle-platform behaviours. Pause suspends or
 resumes Play. These editor shortcuts replace the standalone samples' function-key controls.

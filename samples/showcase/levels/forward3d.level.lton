@@ -1,5 +1,5 @@
 format = "ogrethrone-level",
 version = 3,
-scenes = {{id = 1, scene = "scenes/forward3d.scene.lton"}},
+scenes = {{id = 1, scene = "scenes/forward3d.scene.lton"}, {id = 2, scene = "scenes/forward3d-view.scene.lton"}},
 systems = {},
-rendering = {defaultSun = false^, grid = false^, sky = false^, clustered = true^, ambientUpper = {0.0225, 0.0375, 0.0525}, ambientLower = {0.02925, 0.0219375, 0.014625}, ambientDirection = {1, 1.34641, 1}, minDistance = 5, maxDistance = 500, openingCamera = true^, target = {0, 0, 0}, yaw = 0.2, pitch = 0.29, distance = 110},
+rendering = {defaultSun = false^, grid = false^, sky = false^, clustered = true^, ambientUpper = {0.0225, 0.0375, 0.0525}, ambientLower = {0.02925, 0.0219375, 0.014625}, ambientDirection = {1, 1.34641, 1}, minDistance = 5, maxDistance = 500},
