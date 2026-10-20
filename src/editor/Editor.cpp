@@ -71,8 +71,10 @@ constexpr const char* viewportWorkspaceName = "ThroneEditor/Viewport";
 constexpr const char* windowWorkspaceName = "ThroneEditor/Window";
 constexpr const char* lineMaterial = "ThroneEditor/Lines";
 constexpr std::size_t historyLimit = 100, logLimit = 200;
-/// Opaque geometry is in queue 10 (OGRE's default), particles in 15, blended surfaces in 200.
-constexpr Ogre::uint8 skyRenderQueue = 11;
+/// Lit opaque geometry is in queue 10 (OGRE's default), the only queue the depth prepass draws;
+/// then the sky (11), unlit lines and emitters (12, which HlmsUnlit cannot draw in a prepass),
+/// particles (15), absorbing volumes (99) and blended surfaces (200).
+constexpr Ogre::uint8 opaqueRenderQueue = 10, skyRenderQueue = 11, unlitRenderQueue = 12;
 
 /// ImGui's dark style with its blue accents turned to OGRE's green (#81d742).
 /// Green looks brighter than blue at the same value, so the accents are dimmed.
@@ -414,14 +416,27 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
     createShadowNode(root);
     tonemap_ = Ogre::MaterialManager::getSingleton().getByName("Throne/Tonemap", skyGroup);
     {
-        // The scene renders in half float: render queues below 200 into Opaque, which is
-        // copied to Hdr; refractive glass (queue 200 and up) then samples Opaque and its
-        // depth while drawing into Hdr. Bloom is combined before tone mapping, then
-        // SMAA filters the LDR scene before ImGui presents it (the UI stays sharp).
+        // A depth prepass draws lit opaque geometry (queue 10) into Depth and a G-buffer of
+        // view-space normals and sun shadow/roughness. The scene then renders in half float:
+        // queue 10 into Opaque reusing the prepass (depth read-only), then the other queues
+        // below 200. Opaque is copied to Hdr; refractive glass (queue 200 and up) samples
+        // Opaque and its depth while drawing into Hdr. Bloom is combined before tone mapping,
+        // then SMAA filters the LDR scene before ImGui presents it (the UI stays sharp).
         auto* node = compositor->addNodeDefinition("ThroneEditor/ViewportNode");
         node->addTextureSourceName("Viewport", 0, Ogre::TextureDefinitionBase::TEXTURE_INPUT);
-        node->setNumLocalTextureDefinitions(9);
+        node->setNumLocalTextureDefinitions(11);
         node->addTextureDefinition("Depth")->format = Ogre::PFG_D32_FLOAT;
+        node->addTextureDefinition("GBufferNormals")->format = Ogre::PFG_R10G10B10A2_UNORM;
+        node->addTextureDefinition("GBufferShadowRoughness")->format = Ogre::PFG_RG16_UNORM;
+        {
+            auto* view = node->addRenderTextureView("GBuffer");
+            for (const auto* name : {"GBufferNormals", "GBufferShadowRoughness"}) {
+                Ogre::RenderTargetViewEntry attachment;
+                attachment.textureName = name;
+                view->colourAttachments.push_back(attachment);
+            }
+            view->depthAttachment.textureName = "Depth";
+        }
         for (const auto* name : {"Opaque", "Hdr"}) {
             node->addTextureDefinition(name)->format = Ogre::PFG_RGBA16_FLOAT;
             auto* view = node->addRenderTextureView(name);
@@ -441,13 +456,37 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
             texture->format = Ogre::String(name) == "SmaaEdges" ? Ogre::PFG_RG8_UNORM : Ogre::PFG_RGBA8_UNORM;
             texture->depthBufferId = Ogre::DepthBuffer::POOL_NO_DEPTH;
         }
-        node->setNumTargetPass(9);
-        auto* opaque = static_cast<Ogre::CompositorPassSceneDef*>(node->addTargetPass("Opaque")->addPass(Ogre::PASS_SCENE));
+        node->setNumTargetPass(10);
+        auto* prepass = static_cast<Ogre::CompositorPassSceneDef*>(node->addTargetPass("GBuffer")->addPass(Ogre::PASS_SCENE));
+        prepass->mShadowNode = "ThroneEditor/SunShadows";
+        prepass->mPrePassMode = Ogre::PrePassCreate;
+        // mLastRQ is exclusive.
+        prepass->mLastRQ = opaqueRenderQueue + 1;
+        prepass->setAllLoadActions(Ogre::LoadAction::Clear);
+        prepass->setAllClearColours(Ogre::ColourValue(0.5f, 0.5f, 1.0f, 1.0f));
+        prepass->mStoreActionStencil = Ogre::StoreAction::DontCare;
+        auto* opaqueTarget = node->addTargetPass("Opaque");
+        auto* opaque = static_cast<Ogre::CompositorPassSceneDef*>(opaqueTarget->addPass(Ogre::PASS_SCENE));
         opaque->mShadowNode = "ThroneEditor/SunShadows";
+        opaque->mShadowNodeRecalculation = Ogre::SHADOW_NODE_REUSE;
         opaque->setAllClearColours(Ogre::ColourValue(0.11f, 0.12f, 0.14f));
-        opaque->setAllLoadActions(Ogre::LoadAction::Clear);
+        opaque->setAllLoadActions(Ogre::LoadAction::Load);
+        opaque->mLoadActionColour[0] = Ogre::LoadAction::Clear;
         opaque->mStoreActionStencil = Ogre::StoreAction::DontCare;
-        opaque->mLastRQ = 199;
+        opaque->mLastRQ = opaqueRenderQueue + 1;
+        Ogre::IdStringVec gbuffer;
+        gbuffer.push_back("GBufferNormals");
+        gbuffer.push_back("GBufferShadowRoughness");
+        // HlmsPbs reserves a texture slot for the prepass depth; leaving it unnamed shifts the
+        // later textures (the BRDF lookup with them), so the read-only depth is bound there too.
+        opaque->setUseDepthPrePass(gbuffer, "Depth", Ogre::IdString());
+        auto* rest = static_cast<Ogre::CompositorPassSceneDef*>(opaqueTarget->addPass(Ogre::PASS_SCENE));
+        rest->mShadowNode = "ThroneEditor/SunShadows";
+        rest->mShadowNodeRecalculation = Ogre::SHADOW_NODE_REUSE;
+        rest->setAllLoadActions(Ogre::LoadAction::Load);
+        rest->mStoreActionStencil = Ogre::StoreAction::DontCare;
+        rest->mFirstRQ = opaqueRenderQueue + 1;
+        rest->mLastRQ = 200;
         auto* hdr = node->addTargetPass("Hdr");
         static_cast<Ogre::CompositorPassDepthCopyDef*>(hdr->addPass(Ogre::PASS_DEPTHCOPY))->setDepthTextureCopy("Opaque", "Hdr");
         auto* refractive = static_cast<Ogre::CompositorPassSceneDef*>(hdr->addPass(Ogre::PASS_SCENE));
@@ -531,14 +570,17 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
     createMaterial(unlit_, lineMaterial)->setColour(Ogre::ColourValue::White);
     grid_ = scene.createManualObject();
     grid_->setCastShadows(false);
+    grid_->setRenderQueueGroup(unlitRenderQueue);
     addLines(*grid_, gridLines(), Ogre::ColourValue(0.35f, 0.37f, 0.40f));
     gridNode_ = attach(scene, grid_);
     outline_ = scene.createManualObject();
     outline_->setCastShadows(false);
+    outline_->setRenderQueueGroup(unlitRenderQueue);
     addLines(*outline_, cubeEdges(), Ogre::ColourValue(1.0f, 0.75f, 0.2f));
     outlineNode_ = attach(scene, outline_);
     giBoxes_ = scene.createManualObject();
     giBoxes_->setCastShadows(false);
+    giBoxes_->setRenderQueueGroup(unlitRenderQueue);
     giBoxesNode_ = attach(scene, giBoxes_);
     camera.setAutoAspectRatio(false);
     rebuildScene();
@@ -1661,6 +1703,7 @@ void Editor::syncTransforms(const LevelExpansion* snapshot) {
                 render.emitterMaterial->setTextureSwizzle(0,Ogre::HlmsUnlitDatablock::R_MASK,
                     Ogre::HlmsUnlitDatablock::R_MASK,Ogre::HlmsUnlitDatablock::R_MASK,Ogre::HlmsUnlitDatablock::R_MASK);
                 render.emitter=scene_.createManualObject(); render.emitter->setCastShadows(false);
+                render.emitter->setRenderQueueGroup(unlitRenderQueue);
                 render.emitterNode=render.lightNode->createChildSceneNode(); render.emitterNode->attachObject(render.emitter);
             }
             if(render.emitter) {

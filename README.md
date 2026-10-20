@@ -622,9 +622,13 @@ they would reflect light that does not reach the surface. While a bake is in use
 probe's reflection is dimmed by the ratio of the Adaptive Irradiance Field's light at the
 surface to the diffuse light the probe itself saw (it is never brightened).
 
-The viewport renders the scene in half float, in two passes: render queues below
-200, then (after copying that image) queue 200 and above, where refractive materials
-sample the first image and its depth. It then exposes the result.
+The viewport first draws lit opaque geometry (render queue 10) in a depth prepass, which
+also writes a G-buffer of view-space normals and sun shadow/roughness for screen-space
+effects. It then renders the scene in half float: queue 10 again, reusing the prepass
+(its depth read-only, normal maps and sun shadows not sampled again), then the sky (11),
+unlit lines and emitters (12), particles (15) and absorbing volumes (99); then, after
+copying that image, queue 200 and above, where refractive materials sample the first image
+and its depth. It then exposes the result.
 **Filmic Tone Mapping** maps it through the ACES filmic curve instead
 of clamping and **Exposure (EV)** scales it in stops; both are the scene's. Tone mapping writes
 sRGB-encoded colours; the later targets, the viewport texture and the window are

@@ -112,7 +112,9 @@ Vulkan の `--smoke-physics` は Forward Clustered が選択されているこ�
 
 ［補足］シーンの lighting（以前はレベルの rendering。13）は environment（プロジェクト相対の正距円筒 HDR）と environmentScale を持つ。CPU で 512² のキューブマップ（2×2 スーパーサンプル）と 9 係数の球面調和へ変換する。ミップは OGRE の IblSpecular 計算パス（Compute/Algorithms/IBL）で GGX 粗さ別に事前フィルタする。キューブマップは空と、自前の反射マップを持たない全 PBS マテリアルの反射に、球面調和は AmbientSh の拡散環境光に使う。放射輝度は 16（environmentScale を掛ける前）で打ち切り、HDR 内の太陽は Light Component の平行光源に任せる。空の太陽は既定の太陽か、最初の平行光源 Component の向きに追従する。
 
-［補足］ビューポートはシーンを RGBA16F に 2 パスで描く。描画キュー 0〜199 を Opaque へ（深度は共有の D32 テクスチャ）、それを Hdr へ複製し、キュー 200 以上を Opaque と深度を屈折元として Hdr へ描く（影ノードは再利用）。その後クアッドパス（media/postprocess/Tonemap）で露出（EV）を掛けて表示先へ書く。レベルの toneMapping が真なら ACES フィルミック曲線（Narkowicz の近似）、偽なら従来どおりクランプする。既定は偽・EV 0 で、既存レベルの見た目は変わらない。
+［補足］ビューポートは、まずライティングする不透明体（描画キュー 10）を深度プリパスで描き、深度と G-buffer（ビュー空間法線 RGB10A2、太陽の影と粗さ RG16）を書く。影ノードはここで計算する。次にシーンを RGBA16F に描く。キュー 10 はプリパスを使って Opaque へ描き（深度は読み取り専用、法線マップと太陽の影は G-buffer から読む）、続けてキュー 11〜199（空 11、Unlit の線とエミッター 12、パーティクル 15、吸収体 99）を通常どおり描く。HlmsUnlit はプリパスに対応しないので、Unlit の物体はキュー 12 に置く。Opaque を Hdr へ複製し、キュー 200 以上を Opaque と深度を屈折元として Hdr へ描く（影ノードは再利用）。
+
+［補足］OGRE の注意点 2 つ。(1) 非 MSAA の use_prepass でも HlmsPbs はプリパス深度用のテクスチャスロットを空けるので、深度テクスチャ名を渡さないと後続のテクスチャ（BRDF の LUT など）が 1 つずれ、環境光が消える。(2) use_prepass では LoadGeomNormalData が省かれ、点光源・スポットライトの影の法線オフセットが未初期化の geomNormal を使っていた。フォークのテンプレートで常に読むよう直した。CompositorPassSceneDef の mLastRQ は排他的（その番号を含まない）。その後クアッドパス（media/postprocess/Tonemap）で露出（EV）を掛けて表示先へ書く。レベルの toneMapping が真なら ACES フィルミック曲線（Narkowicz の近似）、偽なら従来どおりクランプする。既定は偽・EV 0 で、既存レベルの見た目は変わらない。
 
 ［補足］トーンマップは sRGB 符号化した値を書き、以降の SMAA の中間・ビューポートテクスチャは RGBA8_UNORM（sRGB でない）。ウィンドウ（Vulkan スワップチェーン）は gamma 指定なしで UNORM なので、ImGui はビューポートの値をそのまま写す。以前はビューポートテクスチャが RGBA8_UNORM_SRGB で、ImGui のサンプリングで線形へ戻され、その値が UNORM のウィンドウに書かれていた（画面が本来より暗くガンマも違う）。--capture も Image2::getColourAt（sRGB を線形へ戻す）で同じ暗い値を書いていたため、画面とキャプチャは一致したまま誤っていた。キャプチャはバイトをそのまま書く。この修正で Bistro の露出を全て見直した（内装 −1.5 → −2.9 EV など）。
 
