@@ -7,7 +7,7 @@
 imgui.ini
 
 samples/bistro/Bistro_v5_2/
-samples/bistro/levels/*.gi/
+samples/**/*.gi/
 
 .VSCodeCounter/
 CLAUDE.md

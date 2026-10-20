@@ -1,18 +1,71 @@
 format = "ogrethrone-scene",
+lighting = {
+    ambientDirection = {
+        0.0,
+        1.0,
+        0.0,
+    },
+    ambientLower = {
+        0.06,
+        0.07,
+        0.09,
+    },
+    ambientUpper = {
+        0.22,
+        0.25,
+        0.3,
+    },
+    defaultSun = true^,
+    environmentScale = 1.0,
+    environmentTemperature = 0.0,
+    exposure = 0.0,
+    sky = true^,
+    toneMapping = false^,
+},
 nodes = {
     {
         components = {
-            box = {colour = {0.32, 0.62, 0.82}},
-            transform = {position = {0.0, 0.5, 0.0}, rotation = {0.0, 0.0, 0.0}, scale = {1.0, 1.0, 1.0}},
             behaviour = {
                 {
+                    data = {
+                        degreesPerSecond = 45.0,
+                    },
+                    id = 106142132532862976,
                     script = "scripts/spin.lh",
-                    data = { degreesPerSecond = 45 }
                 },
                 {
+                    data = {
+                        duration = 0.4,
+                        height = 0.5,
+                        interval = 1.5,
+                    },
+                    id = 106142132532862977,
                     script = "scripts/pop.lh",
-                    data = { interval = 1.5, height = 0.5, duration = 0.4 }
-                }
+                },
+            },
+            box = {
+                colour = {
+                    0.32,
+                    0.62,
+                    0.82,
+                },
+            },
+            transform = {
+                position = {
+                    0.0,
+                    0.5,
+                    0.0,
+                },
+                rotation = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
             },
         },
         id = 105248190270967808,
@@ -21,9 +74,39 @@ nodes = {
     },
     {
         components = {
-            behaviour = {{script = "scripts/spin.lh", data = {degreesPerSecond = 45}}},
-            box = {colour = {0.86, 0.53, 0.25}},
-            transform = {position = {2.0, 0.75, -1.0}, rotation = {0.0, 0.0, 0.0}, scale = {1.0, 1.5, 1.0}},
+            behaviour = {
+                {
+                    data = {
+                        degreesPerSecond = 45.0,
+                    },
+                    id = 106142132532862978,
+                    script = "scripts/spin.lh",
+                },
+            },
+            box = {
+                colour = {
+                    0.86,
+                    0.53,
+                    0.25,
+                },
+            },
+            transform = {
+                position = {
+                    2.0,
+                    0.75,
+                    -1.0,
+                },
+                rotation = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                scale = {
+                    1.0,
+                    1.5,
+                    1.0,
+                },
+            },
         },
         id = 105248190270967809,
         name = "Cube 2",
@@ -31,31 +114,119 @@ nodes = {
     },
     {
         components = {
-            transform = {position = {-3.0, 0.0, 1.0}, rotation = {0.0, 0.0, 0.0}, scale = {1.0, 1.0, 1.0}},
+            transform = {
+                position = {
+                    -3.0,
+                    0.0,
+                    1.0,
+                },
+                rotation = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
         },
         id = 105248190270967810,
         name = "Rotor Post",
         overrides = {
             nodes = {
                 {
-                    box = {colour = {0.45, 0.75, 0.35}},
-                    path = {105248190270967813},
+                    box = {
+                        colour = {
+                            0.45,
+                            0.75,
+                            0.35,
+                        },
+                    },
+                    path = {
+                        105248190270967813,
+                    },
                 },
             },
-            systems = {},
+            systems = {
+            },
         },
         parent = 0,
         prefab = "prefabs/rotor-post.prefab.lton",
     },
     {
         components = {
-            transform = {position = {-3.0, 0.0, -2.0}, rotation = {0.0, 0.0, 0.0}, scale = {1.0, 1.0, 1.0}},
+            transform = {
+                position = {
+                    -3.0,
+                    0.0,
+                    -2.0,
+                },
+                rotation = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
         },
         id = 105248190270967811,
         name = "Fast Rotor Post",
         parent = 0,
         prefab = "prefabs/fast-rotor-post.prefab.lton",
     },
+    {
+        components = {
+            plane = {
+                colour = {
+                    0.35,
+                    0.45,
+                    0.35,
+                },
+                depth = 10.0,
+                width = 10.0,
+            },
+            planeCollider = {
+                centre = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                density = 1.0,
+                depth = 10.0,
+                friction = 0.6000000238418579,
+                restitution = 0.20000000298023224,
+                sensor = false^,
+                width = 10.0,
+            },
+            transform = {
+                position = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                rotation = {
+                    0.0,
+                    -0.0,
+                    0.0,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
+        },
+        id = 106142192565936129,
+        name = "Plane",
+        parent = 0,
+    },
 },
-systems = {},
+systems = {
+},
 version = 2,

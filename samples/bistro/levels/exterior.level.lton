@@ -1,5 +1,11 @@
 format = "ogrethrone-level",
-rendering = {clustered = true^, debugClusters = false^, grid = false^, maxDistance = 250.0, minDistance = 0.10000000149011612},
+rendering = {
+    clustered = true^,
+    debugClusters = false^,
+    grid = false^,
+    maxDistance = 250.0,
+    minDistance = 0.10000000149011612,
+},
 scenes = {
     {
         id = 1,
@@ -20,7 +26,25 @@ scenes = {
         },
         scene = "scenes/exterior.scene.lton",
     },
-    {id = 2, scene = "scenes/exterior-view.scene.lton"},
+    {
+        id = 2,
+        position = {
+            0.0,
+            0.0,
+            0.0,
+        },
+        rotation = {
+            0.0,
+            0.0,
+            0.0,
+        },
+        scale = {
+            1.0,
+            1.0,
+            1.0,
+        },
+        scene = "scenes/exterior-view.scene.lton",
+    },
 },
 serialExecution = false^,
 stages = {

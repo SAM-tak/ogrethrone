@@ -1,5 +1,33 @@
 format = "ogrethrone-level",
-systems = {},
+rendering = {
+    clustered = true^,
+    debugClusters = false^,
+    grid = true^,
+    maxDistance = 100.0,
+    minDistance = 0.10000000149011612,
+},
+scenes = {
+    {
+        id = 1,
+        position = {
+            0.0,
+            0.0,
+            0.0,
+        },
+        rotation = {
+            0.0,
+            0.0,
+            0.0,
+        },
+        scale = {
+            1.0,
+            1.0,
+            1.0,
+        },
+        scene = "scenes/main.scene.lton",
+    },
+},
+serialExecution = false^,
 stages = {
     "FetchInput",
     "UpdateBehaviourSystem",
@@ -8,8 +36,6 @@ stages = {
     "Box3DStep",
     "EndOfFrameBehaviourSystem",
 },
-serialExecution = false^,
-scenes = {
-    {id = 1, scene = "scenes/main.scene.lton"},
+systems = {
 },
 version = 3,

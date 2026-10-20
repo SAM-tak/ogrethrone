@@ -1,4 +1,7 @@
 format = "ogrethrone-project",
 mainLevel = "levels/main.level.lton",
 name = "Basic Sample",
+rendering = {
+    vsync = true^,
+},
 version = 1,

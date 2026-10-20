@@ -1,4 +1,57 @@
 format = "ogrethrone-scene",
+lighting = {
+    ambientDirection = {
+        0.0,
+        1.0,
+        0.0,
+    },
+    ambientLower = {
+        0.45,
+        0.4,
+        0.32,
+    },
+    ambientUpper = {
+        0.9,
+        1.05,
+        1.25,
+    },
+    defaultSun = false^,
+    environment = "Bistro_v5_2/san_giuseppe_bridge_4k.hdr",
+    environmentScale = 28.0,
+    environmentTemperature = 5000.0,
+    exposure = -2.5999999046325684,
+    gi = {
+        bounces = 2,
+        lower = {
+            -62.458244,
+            0.5,
+            -87.93698,
+        },
+        minObjectVolume = 0.30000001192092896,
+        probeOffset = {
+            0.0,
+            1.0,
+            0.0,
+        },
+        probeSpacing = {
+            6.0,
+            6.0,
+            6.0,
+        },
+        reflectionProbes = {
+            4.0,
+            1.0,
+            4.0,
+        },
+        upper = {
+            111.301956,
+            43.532352,
+            96.481476,
+        },
+    },
+    sky = true^,
+    toneMapping = true^,
+},
 nodes = {
     {
         components = {
@@ -82,4 +135,3 @@ nodes = {
 systems = {
 },
 version = 2,
-lighting = {ambientDirection = {0.0, 1.0, 0.0}, ambientLower = {0.45, 0.4, 0.32}, ambientUpper = {0.9, 1.05, 1.25}, defaultSun = false^, environment = "Bistro_v5_2/san_giuseppe_bridge_4k.hdr", environmentScale = 28.0, environmentTemperature = 5000.0, exposure = -2.5999999046325684, gi = {bounces = 2, lower = {-62.458244, 0.5, -87.93698}, minObjectVolume = 0.30000001192092896, probeOffset = {0.0, 1.0, 0.0}, probeSpacing = {6.0, 6.0, 6.0}, reflectionProbes = {4.0, 1.0, 4.0}, upper = {111.301956, 43.532352, 96.481476}}, sky = true^, toneMapping = true^},
