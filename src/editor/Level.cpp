@@ -42,7 +42,8 @@ void Level::save(const std::filesystem::path& path) const {
         const float reflections[3]={float(r.gi.reflectionProbes[0]),float(r.gi.reflectionProbes[1]),float(r.gi.reflectionProbes[2])};
         out.set(gi,"reflectionProbes",out.vector(reflections));
         out.set(gi,"bounces",lhat_integer(r.gi.bounces));
-        out.set(gi,"probeSpacing",lhat_real(r.gi.probeSpacing));
+        out.set(gi,"probeSpacing",out.vector(r.gi.probeSpacing.data()));
+        out.set(gi,"probeOffset",out.vector(r.gi.probeOffset.data()));
         out.set(gi,"minObjectVolume",lhat_real(r.gi.minObjectVolume));
         if(r.gi.fillEmptySpaces) out.set(gi,"fillEmptySpaces",lhat_bool(true));
         if(r.gi.localProbeVolume) out.set(gi,"localProbeVolume",lhat_bool(true));
@@ -114,10 +115,12 @@ Level Level::load(const std::filesystem::path& path) {
                 if(bounces<1 || bounces>8) lton::invalid();
                 r.gi.bounces=unsigned(bounces);
             }
+            // One number (the same spacing along every axis) or one per axis.
             if(const auto s=lton::field(gi,"probeSpacing"); !lhat_is_nil(s)) {
-                r.gi.probeSpacing=float(lton::number(s));
-                if(!(r.gi.probeSpacing>=.5f && r.gi.probeSpacing<=50)) lton::invalid();
+                lton::vectorOrNumber(s,r.gi.probeSpacing.data());
+                for(const float v:{r.gi.probeSpacing.x,r.gi.probeSpacing.y,r.gi.probeSpacing.z}) if(!(v>=.5f && v<=50)) lton::invalid();
             }
+            if(const auto o=lton::field(gi,"probeOffset"); !lhat_is_nil(o)) lton::vector(o,r.gi.probeOffset.data());
             if(const auto s=lton::field(gi,"minObjectVolume"); !lhat_is_nil(s)) {
                 r.gi.minObjectVolume=float(lton::number(s));
                 if(!(r.gi.minObjectVolume>=0 && r.gi.minObjectVolume<=1e6f)) lton::invalid();

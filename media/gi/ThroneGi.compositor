@@ -41,7 +41,7 @@ abstract target ThroneGi/CubemapFace
 	}
 }
 
-// ThroneGi/CubemapFace with the sun's shadow alone, in one 2048² map (ThroneGi/FastShadows):
+// ThroneGi/CubemapFace with one 2048² map for the sun instead of three cascades (ThroneGi/FastShadows):
 // diffuse probes bake faster (GiSettings::fastBakeShadows, TDDja/12 4).
 abstract target ThroneGi/CubemapFaceFast
 {

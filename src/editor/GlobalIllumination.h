@@ -57,14 +57,13 @@ public:
     bool baking() const;
     /// The share of the current bake's probes already done, from 0 to 1.
     float bakeProgress() const;
-    /// Writes the bake into @p folder, creating it.
-    void save(const std::filesystem::path& folder) const;
+    /// Writes the bake into @p folder, creating it, with the @p seconds it took (all passes).
+    void save(const std::filesystem::path& folder, double seconds);
 
     /// The diffuse light of a bake: the octree's tables, as ProbeOctree describes them, packed
     /// into images the shader reads (TDDja/12 3), and where the octree lies.
     struct Diffuse {
-        Vec3 lower;
-        float spacing = 1;
+        Vec3 lower, spacing{1, 1, 1};
         std::array<std::uint32_t, 3> top{};
         /// The top cells' entries (3D), the nodes, the leaves' corners and the probes (2D).
         std::shared_ptr<Ogre::Image2> topNodes, nodes, cells, probes;
@@ -76,6 +75,8 @@ public:
             Vec3 camera, areaCentre, areaHalfSize, innerRegion, shapeCentre, shapeHalfSize;
         };
         GiSettings settings;
+        /// How long the bake took, in seconds; 0 when it was not recorded.
+        double seconds = 0;
         std::vector<Probe> probes;
         std::shared_ptr<Ogre::Image2> reflections;
         Diffuse diffuse;
@@ -95,6 +96,8 @@ public:
     bool active() const { return reflections_ != nullptr; }
     /// The settings of the bake in use.
     const GiSettings& settings() const { return settings_; }
+    /// How long the bake in use took, in seconds; 0 when not known.
+    double bakeSeconds() const { return bakeSeconds_; }
     /// Turns the debug display (View > GI Probes) on or off; the caller draws it.
     void setDebugVisible(bool visible) { debug_ = visible; }
     /// Whether the debug display is on.
@@ -121,6 +124,7 @@ private:
     Ogre::HlmsPbs& pbs_;
     Log log_;
     GiSettings settings_;
+    double bakeSeconds_ = 0;
     std::unique_ptr<Ogre::ParallaxCorrectedCubemapAuto> reflections_;
     Diffuse diffuse_;
     std::array<Ogre::TextureGpu*, 4> diffuseTextures_{};

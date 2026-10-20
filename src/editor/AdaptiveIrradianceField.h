@@ -14,7 +14,7 @@ struct SurfacePoint {
 
 /// Adaptive Irradiance Field (TDDja/12): an octree of cells over a volume, split where surfaces are. Each
 /// leaf interpolates the probes at its eight corners, which neighbouring leaves share.
-/// Coordinates are whole numbers of finest cells (spacing) from lower.
+/// Coordinates are whole numbers of finest cells (spacing, per axis) from lower.
 struct ProbeOctree {
     /// The levels, L0 (cells spacing wide) to L5 (top cells, 32 times as wide).
     static constexpr unsigned levels = 6;
@@ -29,18 +29,22 @@ struct ProbeOctree {
         unsigned level = 0;
         std::array<std::uint32_t, 8> corners{};
     };
-    /// A probe: where it is, the finest level of the leaves around it, and the leaf whose
-    /// corners it is interpolated from when it lies inside a coarser leaf's edge or face
-    /// (a hanging point, not rendered); -1 for a probe that is rendered.
+    /// A probe: where it is, the finest level of the leaves around it, whether it is a corner of
+    /// a leaf holding a surface, and the leaf whose corners it is interpolated from when it lies
+    /// inside a coarser leaf's edge or face (a hanging point, not rendered); -1 for a probe that
+    /// is rendered.
     struct Probe {
         std::array<std::uint32_t, 3> at{};
         unsigned level = 0;
+        bool surface = false;
         std::int32_t from = -1;
     };
 
-    /// The box the octree was built over; its top cells may reach past upper.
+    /// The box the octree was built over, its lower corner moved down onto the probes' grid;
+    /// its top cells may reach past upper.
     Vec3 lower, upper;
-    float spacing = 1;
+    /// A finest cell's size along each axis.
+    Vec3 spacing{1, 1, 1};
     /// Top cells along each axis.
     std::array<std::uint32_t, 3> top{};
     /// Per top cell (x fastest): its node entry, or none.
@@ -61,12 +65,12 @@ struct ProbeOctree {
 };
 
 namespace AdaptiveIrradianceField {
-/// Builds the octree over the box from @p lower to @p upper, with finest cells @p spacing wide:
-/// cells holding a @p surface point split, down to L0. Points on objects of smaller volume than
+/// Builds the octree over the box from @p lower to @p upper, with finest cells @p spacing large
+/// (per axis) on a grid through @p offset: cells holding a @p surface point split, down to L0. Points on objects of smaller volume than
 /// @p minObjectVolume are left out (as Unity's Min Renderer Volume Size). Top cells with no
 /// point are left out unless @p fillEmptySpaces.
-ProbeOctree build(const Vec3& lower, const Vec3& upper, float spacing, float minObjectVolume, bool fillEmptySpaces,
-                  const std::vector<SurfacePoint>& surface);
+ProbeOctree build(const Vec3& lower, const Vec3& upper, const Vec3& spacing, const Vec3& offset, float minObjectVolume,
+                  bool fillEmptySpaces, const std::vector<SurfacePoint>& surface);
 }
 
 template <class Value>

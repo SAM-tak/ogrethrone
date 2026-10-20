@@ -87,6 +87,8 @@ double number(LhatValue value);
 LhatInteger integer(LhatValue value);
 /// Reads a three-element positional table of finite numbers within +-1e6.
 void vector(LhatValue value, float* values);
+/// Reads a vector as vector() does, or a single number for all three components.
+void vectorOrNumber(LhatValue value, float* values);
 /// Returns a project-relative path: a string of at most 255 bytes that is
 /// relative, has no `..` and no NUL. Throws Invalid otherwise.
 std::string relativePath(LhatValue value);

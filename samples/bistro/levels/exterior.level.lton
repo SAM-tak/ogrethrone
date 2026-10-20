@@ -32,7 +32,16 @@ rendering = {
             -87.93698,
         },
         minObjectVolume = 0.30000001192092896,
-        probeSpacing = 6.0,
+        probeOffset = {
+            0.0,
+            1.0,
+            0.0,
+        },
+        probeSpacing = {
+            6.0,
+            6.0,
+            6.0,
+        },
         reflectionProbes = {
             4.0,
             1.0,

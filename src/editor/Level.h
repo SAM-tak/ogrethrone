@@ -30,8 +30,12 @@ struct GiSettings {
     /// How many times the probes are rendered, each lit by the previous rendering:
     /// one bounce of light off the scene per rendering.
     unsigned bounces = 2;
-    /// The finest spacing of the Adaptive Irradiance Field (TDDja/12), the diffuse light's probes, in metres.
-    float probeSpacing = 1;
+    /// The finest spacing of the Adaptive Irradiance Field (TDDja/12), the diffuse light's probes,
+    /// in metres along X, Y and Z.
+    Vec3 probeSpacing{1, 1, 1};
+    /// Where the probes' grid lies: probes are at this offset plus whole multiples of the
+    /// spacing, in metres along X, Y and Z (layers at the floor, say).
+    Vec3 probeOffset{0, 0, 0};
     /// Objects of smaller volume than this (cubic metres, of their bounds) do not place Adaptive
     /// Probes around them (Unity's Min Renderer Volume Size).
     float minObjectVolume = .1f;
@@ -40,13 +44,14 @@ struct GiSettings {
     /// Whether the Adaptive Irradiance Field covers the box above (Unity's Local mode) instead of the bounds
     /// of everything drawn (Global mode, the default).
     bool localProbeVolume = false;
-    /// Whether diffuse probes bake with the sun's shadow alone, in one coarser map, instead of
-    /// the viewport's cascades and local lights' shadows: faster, slightly less exact.
+    /// Whether diffuse probes bake with one coarser map for the sun's shadow instead of the
+    /// viewport's cascades (local lights keep theirs): faster, slightly less exact.
     bool fastBakeShadows = true;
     /// Equality of every field; a bake records them all (GlobalIllumination's gi.lton).
     bool operator==(const GiSettings& other) const {
         return enabled == other.enabled && lower == other.lower && upper == other.upper &&
                reflectionProbes == other.reflectionProbes && bounces == other.bounces && probeSpacing == other.probeSpacing &&
+               probeOffset == other.probeOffset &&
                minObjectVolume == other.minObjectVolume && fillEmptySpaces == other.fillEmptySpaces &&
                localProbeVolume == other.localProbeVolume && fastBakeShadows == other.fastBakeShadows;
     }

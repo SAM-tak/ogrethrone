@@ -160,6 +160,13 @@ void vector(LhatValue value, float* values) {
     }
 }
 
+void vectorOrNumber(LhatValue value, float* values) {
+    if (!lhat_is_number(value)) return vector(value, values);
+    const double n = number(value);
+    if (!std::isfinite(n) || std::abs(n) > 1.0e6) invalid();
+    values[0] = values[1] = values[2] = static_cast<float>(n);
+}
+
 std::string relativePath(LhatValue value) {
     const std::string text(string(value));
     const auto path = std::filesystem::u8path(text).lexically_normal();

@@ -1,5 +1,125 @@
 format = "ogrethrone-level",
+rendering = {
+    ambientDirection = {
+        0.0,
+        1.0,
+        0.0,
+    },
+    ambientLower = {
+        0.45,
+        0.4,
+        0.32,
+    },
+    ambientUpper = {
+        0.9,
+        1.05,
+        1.25,
+    },
+    clustered = true^,
+    debugClusters = false^,
+    defaultSun = false^,
+    distance = 19.62700080871582,
+    environment = "Bistro_v5_2/san_giuseppe_bridge_4k.hdr",
+    environmentScale = 28.0,
+    environmentTemperature = 5000.0,
+    exposure = -2.700000047683716,
+    fieldOfView = 44.0,
+    gi = {
+        bounces = 2,
+        lower = {
+            -62.0,
+            0.5,
+            -88.0,
+        },
+        minObjectVolume = 0.10000000149011612,
+        probeOffset = {
+            0.0,
+            -2.0,
+            0.0,
+        },
+        probeSpacing = {
+            4.0,
+            3.0,
+            4.0,
+        },
+        reflectionProbes = {
+            4.0,
+            1.0,
+            4.0,
+        },
+        upper = {
+            111.0,
+            12.0,
+            96.0,
+        },
+    },
+    grid = false^,
+    maxDistance = 250.0,
+    minDistance = 0.10000000149011612,
+    openingCamera = true^,
+    pitch = 0.10419999808073044,
+    sky = true^,
+    target = {
+        -6.797,
+        0.509,
+        0.255,
+    },
+    toneMapping = true^,
+    yaw = 1.0362000465393066,
+},
+scenes = {
+    {
+        id = 1,
+        position = {
+            0.0,
+            0.0,
+            0.0,
+        },
+        rotation = {
+            0.0,
+            0.0,
+            0.0,
+        },
+        scale = {
+            1.0,
+            1.0,
+            1.0,
+        },
+        scene = "scenes/exterior.scene.lton",
+    },
+},
+serialExecution = false^,
+stages = {
+    {
+        name = "FetchInput",
+    },
+    {
+        name = "ApplyPhysics",
+    },
+    {
+        name = "UpdateBehaviourSystem",
+    },
+    {
+        name = "LateUpdateBehaviourSystem",
+    },
+    {
+        name = "SyncRender",
+    },
+    {
+        name = "Parallel",
+        parallel = {
+            "OGRE",
+            "Box3D",
+            "Animator",
+        },
+    },
+    {
+        name = "SyncSimulation",
+    },
+    {
+        name = "EndOfFrameBehaviourSystem",
+    },
+},
+systems = {
+},
 version = 3,
-scenes = {{id = 1, scene = "scenes/exterior.scene.lton"}},
-systems = {},
-rendering = {defaultSun = false^, toneMapping = true^, exposure = -2.7, grid = false^, sky = true^, clustered = true^, ambientUpper = {0.9, 1.05, 1.25}, ambientLower = {0.45, 0.4, 0.32}, ambientDirection = {0, 1, 0}, gi = {lower = {-62, 0.5, -88}, upper = {111, 12, 96}, reflectionProbes = {4, 1, 4}, fieldProbes = {64, 4, 64}}, minDistance = 0.1, maxDistance = 250, environment = "Bistro_v5_2/san_giuseppe_bridge_4k.hdr", environmentScale = 28, environmentTemperature = 5000, fieldOfView = 44, openingCamera = true^, target = {-6.797, 0.509, 0.255}, yaw = 1.0362, pitch = 0.1042, distance = 19.627},

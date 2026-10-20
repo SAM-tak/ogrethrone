@@ -100,38 +100,40 @@ Ogre::HlmsPbs& pbsHlms(Ogre::Root& root) {
 
 /// Creates a depth atlas with three cascades for one directional light and four
 /// 1024² maps for the nearest shadow-casting point or spot lights; and, for baking
-/// diffuse probes quickly (GiSettings::fastBakeShadows), one 2048² map for the sun alone.
+/// diffuse probes quickly (GiSettings::fastBakeShadows), the same with one 2048² map
+/// for the sun instead of its cascades. Every shadow-casting light type needs a map: one
+/// left without would make PBS read a shadow atlas nothing has drawn into.
 void createShadowNode(Ogre::Root& root) {
-    Ogre::ShadowNodeHelper::ShadowParam sun{};
-    sun.technique=Ogre::SHADOWMAP_PSSM;
-    sun.numPssmSplits=3;
-    sun.addLightType(Ogre::Light::LT_DIRECTIONAL);
-    sun.resolution[0]=Ogre::ShadowNodeHelper::Resolution(2048,2048);
-    sun.resolution[1]=sun.resolution[2]=Ogre::ShadowNodeHelper::Resolution(1024,1024);
-    sun.atlasStart[0]=Ogre::ShadowNodeHelper::Resolution(0,0);
-    sun.atlasStart[1]=Ogre::ShadowNodeHelper::Resolution(0,2048);
-    sun.atlasStart[2]=Ogre::ShadowNodeHelper::Resolution(1024,2048);
-    Ogre::ShadowNodeHelper::ShadowParamVec maps;
-    maps.push_back(sun);
-    for(Ogre::uint32 i=0;i<4;++i) {
-        Ogre::ShadowNodeHelper::ShadowParam local{};
-        local.technique=Ogre::SHADOWMAP_FOCUSED;
-        local.addLightType(Ogre::Light::LT_POINT);
-        local.addLightType(Ogre::Light::LT_SPOTLIGHT);
-        local.resolution[0]=Ogre::ShadowNodeHelper::Resolution(1024,1024);
-        local.atlasStart[0]=Ogre::ShadowNodeHelper::Resolution(i*1024,3072);
-        maps.push_back(local);
-    }
-    Ogre::ShadowNodeHelper::createShadowNodeWithSettings(root.getCompositorManager2(),
-        root.getRenderSystem()->getCapabilities(),"ThroneEditor/SunShadows",maps,false,
-        1024,0.7f,1.0f,0.125f,0.2f,2);
-    Ogre::ShadowNodeHelper::ShadowParam fast{};
-    fast.technique=Ogre::SHADOWMAP_FOCUSED;
-    fast.addLightType(Ogre::Light::LT_DIRECTIONAL);
-    fast.resolution[0]=Ogre::ShadowNodeHelper::Resolution(2048,2048);
-    fast.atlasStart[0]=Ogre::ShadowNodeHelper::Resolution(0,0);
-    Ogre::ShadowNodeHelper::createShadowNodeWithSettings(root.getCompositorManager2(),
-        root.getRenderSystem()->getCapabilities(),"ThroneGi/FastShadows",{fast},false);
+    const auto create=[&](const char* name,Ogre::ShadowNodeHelper::ShadowParam sun,Ogre::uint32 localsAt) {
+        Ogre::ShadowNodeHelper::ShadowParamVec maps;
+        sun.addLightType(Ogre::Light::LT_DIRECTIONAL);
+        maps.push_back(sun);
+        for(Ogre::uint32 i=0;i<4;++i) {
+            Ogre::ShadowNodeHelper::ShadowParam local{};
+            local.technique=Ogre::SHADOWMAP_FOCUSED;
+            local.addLightType(Ogre::Light::LT_POINT);
+            local.addLightType(Ogre::Light::LT_SPOTLIGHT);
+            local.resolution[0]=Ogre::ShadowNodeHelper::Resolution(1024,1024);
+            local.atlasStart[0]=Ogre::ShadowNodeHelper::Resolution(i*1024,localsAt);
+            maps.push_back(local);
+        }
+        Ogre::ShadowNodeHelper::createShadowNodeWithSettings(root.getCompositorManager2(),
+            root.getRenderSystem()->getCapabilities(),name,maps,false,1024,0.7f,1.0f,0.125f,0.2f,2);
+    };
+    Ogre::ShadowNodeHelper::ShadowParam cascades{};
+    cascades.technique=Ogre::SHADOWMAP_PSSM;
+    cascades.numPssmSplits=3;
+    cascades.resolution[0]=Ogre::ShadowNodeHelper::Resolution(2048,2048);
+    cascades.resolution[1]=cascades.resolution[2]=Ogre::ShadowNodeHelper::Resolution(1024,1024);
+    cascades.atlasStart[0]=Ogre::ShadowNodeHelper::Resolution(0,0);
+    cascades.atlasStart[1]=Ogre::ShadowNodeHelper::Resolution(0,2048);
+    cascades.atlasStart[2]=Ogre::ShadowNodeHelper::Resolution(1024,2048);
+    create("ThroneEditor/SunShadows",cascades,3072);
+    Ogre::ShadowNodeHelper::ShadowParam single{};
+    single.technique=Ogre::SHADOWMAP_FOCUSED;
+    single.resolution[0]=Ogre::ShadowNodeHelper::Resolution(2048,2048);
+    single.atlasStart[0]=Ogre::ShadowNodeHelper::Resolution(0,0);
+    create("ThroneGi/FastShadows",single,2048);
 }
 
 /// The colour of a black body at @p kelvin, scaled so 6500 K is white (Tanner Helland's
@@ -1244,7 +1246,7 @@ Ogre::TextureGpu* Editor::environmentReflection() const {
 void Editor::requestGlobalIlluminationBake() {
     if(baking_) return;
     baking_=true;
-    struct Bake { unsigned passes, left; bool dropped=false; };
+    struct Bake { unsigned passes, left; bool dropped=false; std::chrono::steady_clock::time_point start{}; };
     const unsigned passes=doc_.world.level.rendering.gi.bounces;
     auto bake=std::make_shared<Bake>(Bake{passes,passes});
     tasks_.add("Baking global illumination",[this,bake] {
@@ -1260,6 +1262,8 @@ void Editor::requestGlobalIlluminationBake() {
             // The diffuse probes are those placed for the settings and scene as they are.
             updateProbeLayout();
             if(placing_ || layoutSettings_!=doc_.world.level.rendering.gi) return false;
+            // The time recorded runs from the first pass's start, after files are read.
+            if(bake->left==bake->passes) bake->start=std::chrono::steady_clock::now();
             gi_->beginBake(doc_.world.level.rendering.gi,camera_,octree_);
             return false;
         }
@@ -1268,7 +1272,7 @@ void Editor::requestGlobalIlluminationBake() {
         // Probes render for about a tenth of a second each frame.
         gi_->continueBake(std::chrono::milliseconds(100));
         if(gi_->baking() || --bake->left) return false;
-        gi_->save(giFolder());
+        gi_->save(giFolder(),std::chrono::duration<double>(std::chrono::steady_clock::now()-bake->start).count());
         log("Global illumination saved into "+giFolder().u8string());
         baking_=false;
         return true;
@@ -1354,7 +1358,8 @@ void Editor::updateProbeLayout() {
     placing_ = true;
     tasks_.background<ProbeOctree>("Placing GI probes",
         [gi, lower, upper, surface = sceneSurface()] {
-            return AdaptiveIrradianceField::build(lower, upper, gi.probeSpacing, gi.minObjectVolume, gi.fillEmptySpaces, surface);
+            return AdaptiveIrradianceField::build(lower, upper, gi.probeSpacing, gi.probeOffset, gi.minObjectVolume,
+                                                  gi.fillEmptySpaces, surface);
         },
         [this](ProbeOctree& result) {
             octree_ = std::move(result);

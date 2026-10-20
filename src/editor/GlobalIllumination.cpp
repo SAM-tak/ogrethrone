@@ -146,7 +146,8 @@ void writeSettings(lton::Writer& out, LhatValue table, const GiSettings& s) {
     const float reflections[3] = {float(s.reflectionProbes[0]), float(s.reflectionProbes[1]), float(s.reflectionProbes[2])};
     out.set(table, "reflectionProbes", out.vector(reflections));
     out.set(table, "bounces", lhat_integer(s.bounces));
-    out.set(table, "probeSpacing", lhat_real(s.probeSpacing));
+    out.set(table, "probeSpacing", out.vector(s.probeSpacing.data()));
+    out.set(table, "probeOffset", out.vector(s.probeOffset.data()));
     out.set(table, "minObjectVolume", lhat_real(s.minObjectVolume));
     out.set(table, "fillEmptySpaces", lhat_bool(s.fillEmptySpaces));
     out.set(table, "localProbeVolume", lhat_bool(s.localProbeVolume));
@@ -161,7 +162,8 @@ GiSettings readSettings(const LhatTable& table) {
     lton::vector(lton::field(table, "reflectionProbes"), reflections);
     for (int i = 0; i < 3; ++i) s.reflectionProbes[i] = unsigned(reflections[i]);
     s.bounces = unsigned(lton::integer(lton::field(table, "bounces")));
-    s.probeSpacing = float(lton::number(lton::field(table, "probeSpacing")));
+    lton::vectorOrNumber(lton::field(table, "probeSpacing"), s.probeSpacing.data());
+    if (const auto offset = lton::field(table, "probeOffset"); !lhat_is_nil(offset)) lton::vector(offset, s.probeOffset.data());
     s.minObjectVolume = float(lton::number(lton::field(table, "minObjectVolume")));
     s.fillEmptySpaces = lhat_as_bool(lton::field(table, "fillEmptySpaces"));
     s.localProbeVolume = lhat_as_bool(lton::field(table, "localProbeVolume"));
@@ -179,8 +181,7 @@ class GlobalIllumination::Listener final : public Ogre::HlmsListener {
 public:
     /// The textures to bind (none while there is no diffuse light) and where the octree lies.
     std::array<Ogre::TextureGpu*, 4> textures{};
-    Vec3 lower;
-    float spacing = 1;
+    Vec3 lower, spacing{1, 1, 1};
     std::array<std::uint32_t, 3> top{};
 
     explicit Listener(Ogre::HlmsManager& manager) : manager_(manager) {
@@ -215,7 +216,8 @@ public:
         // View space to finest cells from lower, then view to world directions (TDDja/12 5).
         const auto* camera = sceneManager->getCamerasInProgress().renderingCamera;
         const auto viewToWorld = camera->getVrViewMatrix(0).inverseAffine();
-        Ogre::Matrix4 toGrid = Ogre::Matrix4::getScale(Ogre::Vector3(1 / spacing)) * Ogre::Matrix4::getTrans(-toOgre(lower)) *
+        Ogre::Matrix4 toGrid = Ogre::Matrix4::getScale(Ogre::Vector3(1 / spacing.x, 1 / spacing.y, 1 / spacing.z)) *
+                               Ogre::Matrix4::getTrans(-toOgre(lower)) *
                                viewToWorld;
         for (int row = 0; row < 3; ++row)
             for (int column = 0; column < 4; ++column) *out++ = float(toGrid[row][column]);
@@ -374,6 +376,7 @@ void GlobalIllumination::clear() {
     reflections_.reset();
     destroyDiffuseTextures();
     diffuse_ = {};
+    bakeSeconds_ = 0;
     ++version_;
 }
 
@@ -436,9 +439,9 @@ void GlobalIllumination::beginBake(const GiSettings& settings, Ogre::Camera& cam
         if (octree.probes[i].from < 0) pending_.toRender.push_back(i);
     pending_.values.resize(octree.probes.size());
     // Probes see twice across the octree.
-    const auto extent = Vec3{float(octree.top[0]), float(octree.top[1]), float(octree.top[2])} *
-                        (octree.spacing * float(ProbeOctree::topCells));
-    pending_.renderer = std::make_unique<ProbeRenderer>(root_, scene_, std::max(1.0f, 2 * std::sqrt(extent.x * extent.x + extent.y * extent.y + extent.z * extent.z)),
+    const Vec3 extent{float(octree.top[0]) * octree.spacing.x, float(octree.top[1]) * octree.spacing.y,
+                      float(octree.top[2]) * octree.spacing.z};
+    pending_.renderer = std::make_unique<ProbeRenderer>(root_, scene_, std::max(1.0f, 2 * float(ProbeOctree::topCells) * std::sqrt(extent.x * extent.x + extent.y * extent.y + extent.z * extent.z)),
                                                         settings.fastBakeShadows);
     pending_.octree = std::move(octree);
 }
@@ -528,8 +531,9 @@ std::string GlobalIllumination::bakeStatus() const {
         : "diffuse probes " + std::to_string(pending_.collected) + " of " + std::to_string(pending_.toRender.size());
 }
 
-void GlobalIllumination::save(const std::filesystem::path& folder) const {
+void GlobalIllumination::save(const std::filesystem::path& folder, double seconds) {
     if (!active()) return;
+    bakeSeconds_ = seconds;
     std::filesystem::create_directories(folder);
     lton::Writer out;
     const auto root = out.table();
@@ -538,6 +542,7 @@ void GlobalIllumination::save(const std::filesystem::path& folder) const {
     const auto settings = out.table();
     writeSettings(out, settings, settings_);
     out.set(root, "settings", settings);
+    out.set(root, "seconds", lhat_real(seconds));
     const auto probes = out.table();
     for (const auto* probe : reflections_->getProbes()) {
         const auto item = out.table();
@@ -553,7 +558,7 @@ void GlobalIllumination::save(const std::filesystem::path& folder) const {
     out.set(root, "reflectionProbes", probes);
     const auto diffuse = out.table();
     out.set(diffuse, "lower", out.vector(diffuse_.lower.data()));
-    out.set(diffuse, "spacing", lhat_real(diffuse_.spacing));
+    out.set(diffuse, "spacing", out.vector(diffuse_.spacing.data()));
     const float top[3] = {float(diffuse_.top[0]), float(diffuse_.top[1]), float(diffuse_.top[2])};
     out.set(diffuse, "top", out.vector(top));
     out.set(root, "diffuse", diffuse);
@@ -581,7 +586,7 @@ GlobalIllumination::Stored GlobalIllumination::read(const std::filesystem::path&
         }
         const auto& diffuse = lton::table(lton::field(document.root(), "diffuse"));
         lton::vector(lton::field(diffuse, "lower"), stored.diffuse.lower.data());
-        stored.diffuse.spacing = float(lton::number(lton::field(diffuse, "spacing")));
+        lton::vectorOrNumber(lton::field(diffuse, "spacing"), stored.diffuse.spacing.data());
         float top[3];
         lton::vector(lton::field(diffuse, "top"), top);
         for (int i = 0; i < 3; ++i) stored.diffuse.top[std::size_t(i)] = std::uint32_t(top[i]);
@@ -591,6 +596,8 @@ GlobalIllumination::Stored GlobalIllumination::read(const std::filesystem::path&
         stored.diffuse.probes = readTexture(folder / "diffuse-probes.oitd");
         stored.reflections = readTexture(folder / "reflections.oitd");
         stored.settings = readSettings(lton::table(lton::field(document.root(), "settings")));
+        if (const auto seconds = lton::field(document.root(), "seconds"); !lhat_is_nil(seconds))
+            stored.seconds = lton::number(seconds);
     } catch (const std::exception& error) {
         stored = {};
         stored.message = "Could not read baked global illumination (bake it again): " + std::string(error.what());
@@ -616,6 +623,7 @@ bool GlobalIllumination::use(const Stored& stored) {
         reflections->mPaused = true;
         uploadTexture(*stored.reflections, *reflections->getBindTexture());
         use(stored.settings, std::move(reflections), stored.diffuse);
+        bakeSeconds_ = stored.seconds;
     } catch (const std::exception& error) {
         log_("Could not use baked global illumination: " + std::string(error.what()));
         return false;

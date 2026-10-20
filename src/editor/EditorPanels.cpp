@@ -432,10 +432,16 @@ void Editor::rendererInspector() {
         if(sceneBounds(low,high)) { checkpoint(); gi.lower.x=low.x; gi.lower.z=low.z; gi.upper.x=high.x; gi.upper.y=(std::max)(high.y,gi.lower.y+.1f); gi.upper.z=high.z; }
     }
     ImGui::EndDisabled();
-    float spacing=gi.probeSpacing;
+    auto spacing=gi.probeSpacing;
     // Finer than the surface points' cells (ModelLibrary::surfaceCell) places nothing better.
-    const bool spacingEdited=ImGui::DragFloat("Finest Spacing (m)",&spacing,.05f,ModelLibrary::surfaceCell,50,"%.2f"); track();
-    if(spacingEdited) gi.probeSpacing=(std::max)(spacing,ModelLibrary::surfaceCell);
+    const bool spacingEdited=ImGui::DragFloat3("Finest Spacing (m)",spacing.data(),.05f,ModelLibrary::surfaceCell,50,"%.2f"); track();
+    if(ImGui::IsItemHovered()) ImGui::SetTooltip("The finest distance between probes along X, Y and Z.");
+    if(spacingEdited)
+        for(int i=0;i<3;++i) gi.probeSpacing.data()[i]=std::clamp(spacing.data()[i],ModelLibrary::surfaceCell,50.0f);
+    auto offset=gi.probeOffset;
+    const bool offsetEdited=ImGui::DragFloat3("Probe Offset (m)",offset.data(),.05f,-1000,1000,"%.2f"); track();
+    if(ImGui::IsItemHovered()) ImGui::SetTooltip("Probes lie at this offset plus whole multiples of the spacing\n(Y: the height of the lowest layers, such as the floor).");
+    if(offsetEdited) gi.probeOffset=offset;
     float minVolume=gi.minObjectVolume;
     const bool minVolumeEdited=ImGui::DragFloat("Min Object Volume (m3)",&minVolume,.01f,0,1000,"%.2f"); track();
     if(ImGui::IsItemHovered()) ImGui::SetTooltip("Objects whose bounds hold less than this place no probes around them.");
@@ -465,7 +471,7 @@ void Editor::rendererInspector() {
                         gi.reflectionProbes[0],gi.reflectionProbes[1],gi.reflectionProbes[2],megabytes);
     bool fastShadows=gi.fastBakeShadows;
     if(ImGui::Checkbox("Fast Bake Shadows",&fastShadows)) { checkpoint(); gi.fastBakeShadows=fastShadows; }
-    if(ImGui::IsItemHovered()) ImGui::SetTooltip("Diffuse probes bake with the sun's shadow alone, in one 2048x2048 map,\ninstead of the viewport's cascades and local lights' shadows: faster.");
+    if(ImGui::IsItemHovered()) ImGui::SetTooltip("Diffuse probes bake with one 2048x2048 map for the sun's shadow\ninstead of the viewport's three cascades: faster.");
     int bounces=int(gi.bounces);
     if(ImGui::SliderInt("Bounces",&bounces,1,8) && unsigned(bounces)!=gi.bounces) { checkpoint(); gi.bounces=unsigned(bounces); }
     // A bake renders a cubemap from every probe once per bounce: the reflection probes and the
@@ -478,7 +484,12 @@ void Editor::rendererInspector() {
     ImGui::SameLine();
     if(ImGui::Checkbox("Show Surface Points",&showSurface_)) giBoxesLayout_=~0u;
     if(ImGui::IsItemHovered()) ImGui::SetTooltip("With Show Probes: the surface points that place probes (red),\nand those left out by Min Object Volume (grey).");
-    ImGui::TextDisabled(gi_->active() ? "Using the bake in %s" : "No bake in use (%s)",giFolder().filename().u8string().c_str());
+    if(!gi_->active()) ImGui::TextDisabled("No bake in use (%s)",giFolder().filename().u8string().c_str());
+    else if(const auto seconds=gi_->bakeSeconds(); seconds>0) {
+        const auto whole=long(std::lround(seconds));
+        ImGui::TextDisabled(whole>=60 ? "Using the bake in %s (baked in %ld min %02ld s)" : "Using the bake in %s (baked in %ld s)",
+                            giFolder().filename().u8string().c_str(),whole>=60 ? whole/60 : whole,whole%60);
+    } else ImGui::TextDisabled("Using the bake in %s",giFolder().filename().u8string().c_str());
     if(gi_->active() && gi_->settings()!=gi) ImGui::TextColored(ImVec4(1,.75f,.3f,1),"Settings changed since the bake: bake again to apply them.");
 }
 

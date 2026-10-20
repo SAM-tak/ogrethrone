@@ -524,24 +524,27 @@ Light component for the sun, which the sky's sun then follows.
 Global illumination is set in the renderer's Inspector (**Systems → Parallel → OGRE**, or
 **Lighting → Global Illumination Settings...**). A bake has parallax-corrected reflection
 probes on a grid over the probes' volume for reflections, and **Adaptive Irradiance Field** for
-diffuse light: an octree of irradiance probes that is finest (**Finest Spacing**)
-in cells holding surfaces and coarser, by halves, away from them. Neighbouring cells share
-the probes at their corners; a probe lying on the edge or face of a coarser cell is
-interpolated from it instead of rendered, so levels meet without seams. By default
+diffuse light: an octree of irradiance probes that is finest (**Finest Spacing**, along X, Y
+and Z) in cells holding surfaces and coarser, by halves, away from them. The probes lie on a
+grid through **Probe Offset** (with a Y offset of 0 and a Y spacing of 2 m, layers sit on the
+ground and 2 m above it). Neighbouring cells share the probes at their corners; a probe lying
+on the edge or face of a coarser cell is interpolated from it instead of rendered, so levels
+meet without seams, except for the corners of cells holding a surface, which are always
+rendered. By default
 (**Probe Volume: Global**) the probes cover the bounds of everything drawn; **Local** uses the
 box **Box Lower**–**Box Upper** (editable only then; **Fit to Scene** fits it to the scene
 but its floor). Surfaces of objects smaller than **Min Object Volume** do not refine the cells, and
 **Fill Empty Spaces** also covers space far from any surface. **Fast Bake Shadows** (on by
-default) bakes the diffuse probes with the sun's shadow alone, in one 2048² map, instead of
-the viewport's cascades and local lights' shadows: about a fifth faster, with hardly any
+default) bakes the diffuse probes with one 2048² map for the sun instead of the viewport's
+three cascades (local lights keep their shadows): about a fifth faster, with hardly any
 visible difference. The Inspector shows the cells,
 probes and cubemap renders a bake needs.
 
 **Bake** (or **Lighting → Bake Global Illumination**) renders the probes from the level as
 drawn, once per **Bounces** (each pass lit by the previous one), a few probes per frame under
 a progress window (it waits for files being read), and saves the result in
-`levels/<level>.gi/` beside the level; opening the level reads it back without rendering it
-again. `ogrethrone --bake-gi <folder> [file] [level]` bakes from the command line, then
+`levels/<level>.gi/` beside the level, with the time it took (shown in the Inspector beside
+the bake's name); opening the level reads it back without rendering it again. `ogrethrone --bake-gi <folder> [file] [level]` bakes from the command line, then
 captures like `--capture`. Bakes made before the Adaptive Irradiance Field are not read; bake again.
 While a bake is in use it replaces the ambient light, and the environment map is drawn only
 as the sky. The bake is used while Global Illumination is enabled and its files exist, with
