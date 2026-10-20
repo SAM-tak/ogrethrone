@@ -6,6 +6,7 @@
 #include "editor/Environment.h"
 #include "editor/AdaptiveIrradianceField.h"
 #include "editor/GlobalIllumination.h"
+#include "editor/PbsListeners.h"
 #include "editor/Model.h"
 #include "editor/Tasks.h"
 #include "editor/PrimitiveGeometry.h"
@@ -487,6 +488,9 @@ private:
     const Environment* environment_ = nullptr;
     /// The viewport's exposure and tone-mapping pass material.
     Ogre::MaterialPtr tonemap_;
+    /// The HlmsPbs listener: motion vectors, then the global illumination's.
+    HlmsListenerChain pbsListeners_;
+    MotionVectors motionVectors_;
     /// The level's baked global illumination, and whether a bake runs.
     std::unique_ptr<GlobalIllumination> gi_;
     bool baking_ = false, revealing_ = false;

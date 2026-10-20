@@ -3,7 +3,7 @@
 // HlmsListener, which sets custom_diffuse_gi, the texture slots and the pass buffer data.
 @property( !hlms_shadowcaster && custom_diffuse_gi )
 
-@piece( custom_passBuffer )
+@piece( aifPassBuffer )
 	// View space to finest cells from the volume's lower corner, as three rows.
 	vec4 aifViewToGrid[3];
 	// View space to world space directions, as three rows.

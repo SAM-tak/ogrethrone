@@ -1,6 +1,7 @@
 // Workspaces that render the level from a point into a cubemap, for baking global
 // illumination (TDDja/09 9). Both draw render queues below 200 (refractive glass
-// needs the viewport's refraction pass) and then the sky, with the editor's shadows.
+// needs the viewport's refraction pass; the editor draws the sky in queue 11), then
+// queues above 200, with the editor's shadows.
 
 abstract target ThroneGi/CubemapFace
 {

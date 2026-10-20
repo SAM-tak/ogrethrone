@@ -387,15 +387,16 @@ private:
     std::vector<std::pair<Vec3, float>> texels_;
 };
 
-GlobalIllumination::GlobalIllumination(Ogre::Root& root, Ogre::SceneManager& scene, Ogre::HlmsPbs& pbs, Log log)
-    : root_(root), scene_(scene), pbs_(pbs), log_(std::move(log)),
+GlobalIllumination::GlobalIllumination(Ogre::Root& root, Ogre::SceneManager& scene, Ogre::HlmsPbs& pbs,
+                                       HlmsListenerChain& listeners, Log log)
+    : root_(root), scene_(scene), pbs_(pbs), listeners_(listeners), log_(std::move(log)),
       listener_(std::make_unique<Listener>(*root.getHlmsManager())) {
-    pbs_.setListener(listener_.get());
+    listeners_.add(listener_.get());
 }
 
 GlobalIllumination::~GlobalIllumination() {
     clear();
-    pbs_.setListener(nullptr);
+    listeners_.remove(listener_.get());
 }
 
 bool GlobalIllumination::baking() const { return pending_.reflections != nullptr; }

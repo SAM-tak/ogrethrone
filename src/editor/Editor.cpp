@@ -412,25 +412,29 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
     sky_->setSky(&scene_, true);
     drawSkyAfterOpaque();
     models_ = std::make_unique<ModelLibrary>(root, scene, pbs_, [this](const std::string& line) { log(line); });
-    gi_ = std::make_unique<GlobalIllumination>(root, scene, pbs_, [this](const std::string& line) { log(line); });
+    pbsListeners_.add(&motionVectors_);
+    pbs_.setListener(&pbsListeners_);
+    gi_ = std::make_unique<GlobalIllumination>(root, scene, pbs_, pbsListeners_, [this](const std::string& line) { log(line); });
     createShadowNode(root);
     tonemap_ = Ogre::MaterialManager::getSingleton().getByName("Throne/Tonemap", skyGroup);
     {
         // A depth prepass draws lit opaque geometry (queue 10) into Depth and a G-buffer of
-        // view-space normals and sun shadow/roughness. The scene then renders in half float:
+        // view-space normals, sun shadow/roughness and motion vectors (MotionVectors, the
+        // change in UV since the previous frame). The scene then renders in half float:
         // queue 10 into Opaque reusing the prepass (depth read-only), then the other queues
         // below 200. Opaque is copied to Hdr; refractive glass (queue 200 and up) samples
         // Opaque and its depth while drawing into Hdr. Bloom is combined before tone mapping,
         // then SMAA filters the LDR scene before ImGui presents it (the UI stays sharp).
         auto* node = compositor->addNodeDefinition("ThroneEditor/ViewportNode");
         node->addTextureSourceName("Viewport", 0, Ogre::TextureDefinitionBase::TEXTURE_INPUT);
-        node->setNumLocalTextureDefinitions(11);
+        node->setNumLocalTextureDefinitions(12);
         node->addTextureDefinition("Depth")->format = Ogre::PFG_D32_FLOAT;
         node->addTextureDefinition("GBufferNormals")->format = Ogre::PFG_R10G10B10A2_UNORM;
         node->addTextureDefinition("GBufferShadowRoughness")->format = Ogre::PFG_RG16_UNORM;
+        node->addTextureDefinition("GBufferMotion")->format = Ogre::PFG_RG16_FLOAT;
         {
             auto* view = node->addRenderTextureView("GBuffer");
-            for (const auto* name : {"GBufferNormals", "GBufferShadowRoughness"}) {
+            for (const auto* name : {"GBufferNormals", "GBufferShadowRoughness", "GBufferMotion"}) {
                 Ogre::RenderTargetViewEntry attachment;
                 attachment.textureName = name;
                 view->colourAttachments.push_back(attachment);
@@ -464,6 +468,9 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
         prepass->mLastRQ = opaqueRenderQueue + 1;
         prepass->setAllLoadActions(Ogre::LoadAction::Clear);
         prepass->setAllClearColours(Ogre::ColourValue(0.5f, 0.5f, 1.0f, 1.0f));
+        // Where nothing is drawn (the sky), motion comes from the camera alone; its users
+        // reproject the depth for it.
+        prepass->mClearColour[2] = Ogre::ColourValue(0, 0, 0, 0);
         prepass->mStoreActionStencil = Ogre::StoreAction::DontCare;
         auto* opaqueTarget = node->addTargetPass("Opaque");
         auto* opaque = static_cast<Ogre::CompositorPassSceneDef*>(opaqueTarget->addPass(Ogre::PASS_SCENE));
@@ -833,6 +840,7 @@ Editor::~Editor() {
     destroyWorkspaces();
     // Baked probes use workspaces and compute jobs from the resource group destroyed below.
     gi_.reset();
+    pbs_.setListener(nullptr);
     // The cubemap sky's material belongs to the resource group destroyed below.
     scene_.setSky(false, Ogre::SceneManager::SkyCubemap, nullptr);
     tonemap_.reset();

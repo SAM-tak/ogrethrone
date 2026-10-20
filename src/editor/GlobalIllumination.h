@@ -1,6 +1,7 @@
 #pragma once
 
 #include "editor/AdaptiveIrradianceField.h"
+#include "editor/PbsListeners.h"
 #include "editor/SceneLighting.h"
 #include <OgreMatrix4.h>
 #include <array>
@@ -36,8 +37,10 @@ public:
     using Log = std::function<void(const std::string&)>;
 
     /// @param scene Must outlive this object; its workspaces and probes are created there.
-    /// Installs the HlmsListener through which @p pbs reads the diffuse light.
-    GlobalIllumination(Ogre::Root& root, Ogre::SceneManager& scene, Ogre::HlmsPbs& pbs, Log log);
+    /// @param listeners Must outlive this object; the HlmsListener through which @p pbs reads the
+    ///        diffuse light joins them, last, as it binds the last extra pass textures.
+    GlobalIllumination(Ogre::Root& root, Ogre::SceneManager& scene, Ogre::HlmsPbs& pbs,
+                       HlmsListenerChain& listeners, Log log);
     /// Unbinds and destroys the bake and any bake in progress, and removes the listener.
     ~GlobalIllumination();
     GlobalIllumination(const GlobalIllumination&) = delete;
@@ -129,6 +132,7 @@ private:
     Ogre::Root& root_;
     Ogre::SceneManager& scene_;
     Ogre::HlmsPbs& pbs_;
+    HlmsListenerChain& listeners_;
     Log log_;
     GiSettings settings_;
     double bakeSeconds_ = 0;
