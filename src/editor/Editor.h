@@ -20,6 +20,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <tuple>
@@ -576,6 +577,8 @@ private:
     std::vector<std::tuple<std::size_t, NodePath, std::size_t>> viewShape_;
     /// Non-null while playing.
     std::unique_ptr<ScriptRuntime> runtime_;
+    /// The level's RenderEvent attachments while playing, run on *renderSnapshot_.
+    std::unique_ptr<ScriptRuntime> renderEvents_;
     bool paused_ = false;
     /// What the console runs on while not playing: an empty world, and a runtime on it.
     World consoleWorld_;
@@ -620,5 +623,8 @@ private:
     char levelPath_[512] = "";
     std::string fileError_;
     std::vector<std::string> messages_;
+    /// Simulation and render event scripts may log at the same time; the console reads
+    /// messages_ only between frames.
+    std::mutex messagesMutex_;
 };
 }

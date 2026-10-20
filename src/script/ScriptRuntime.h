@@ -50,6 +50,9 @@ enum class PlayScope {
     /// The whole game: main.lh as well. main.lh is a script; with await^ at its top
     /// level it is a coroutine, resumed once per frame before the systems.
     Game,
+    /// The level's RenderEvent attachments, run on the render thread by renderEvent()
+    /// against the render snapshot, which they can only read.
+    RenderEvents,
 };
 
 /// Runs a world's L^ node Behaviours, direct system attachments.
@@ -87,6 +90,11 @@ public:
     /// before its scripts run. The simulation column, scripts included, runs on a worker
     /// thread unless the level is serial; the render column stays on this thread.
     FrameTimes update(float deltaSeconds, const std::function<void(const std::string&)>& engine);
+    /// Runs a RenderEvents runtime's PreRenderEventSystem or PostRenderEventSystem
+    /// (`prerender`/`postrender`), giving @p deltaSeconds as dt; other stages do nothing.
+    /// Attachment changes are reconciled before PreRenderEventSystem.
+    /// @throws ScriptError on a run-time failure or a stage over budget.
+    void renderEvent(const std::string& stage, float deltaSeconds);
     /// Effective simulation column, including direct systems declared in scenes or prefabs.
     static std::vector<std::string> schedule(const World& world, const LevelExpansion& expanded);
     /// True once main.lh has run to its end (Game scope only).
@@ -110,7 +118,7 @@ public:
     /// Returns the host API scripts can use (the `throne` module and `std.math`) as
     /// the JSON the L^ language server reads from `lhat-host.json`.
     static std::string hostApi();
-    /// Returns editable fields of Behaviour, in name order.
+    /// Returns editable fields of @p symbol (Behaviour, or RenderEvent), in name order.
     /// Editable fields require @export.
     /// @throws ScriptError when the script is missing, rejected or publishes no Behaviour.
     static std::vector<FieldInfo> fields(const std::filesystem::path& root, const std::string& script,

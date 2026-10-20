@@ -739,9 +739,13 @@ void Editor::play() {
         physics_->setSerial(doc_.world.level.serialExecution);
         physics_->load(view_);
         renderSnapshot_ = view_;
+        renderEvents_ = std::make_unique<ScriptRuntime>(
+            doc_.world, *renderSnapshot_, project_->root, [this](const std::string& line) { log(line); },
+            PlayScope::RenderEvents);
         clearParticles();
         log("Play");
     } catch (const std::exception& error) {
+        renderEvents_.reset();
         runtime_.reset();
         physics_.reset();
         log(std::string("Play refused:\n") + error.what());
@@ -751,6 +755,7 @@ void Editor::play() {
 void Editor::stop() {
     paused_ = false;
     if (consoleMore_ == runtime_.get()) consoleMore_ = nullptr;
+    renderEvents_.reset();
     runtime_.reset();
     physics_.reset();
     renderSnapshot_.reset();
@@ -769,6 +774,7 @@ Editor::~Editor() {
     shutdownLog.logMessage("Shutdown: releasing script runtimes");
     consoleMore_=nullptr;
     consoleIdle_.reset();
+    renderEvents_.reset();
     runtime_.reset();
     shutdownLog.logMessage("Shutdown: releasing physics world and workers");
     physics_.reset();
@@ -861,6 +867,8 @@ bool Editor::frame(float deltaSeconds, const std::function<void()>& input) {
         } else if (stage == "SyncSimulation") {
             if (runtime_) renderSnapshot_ = view_;
             measured.snapshotMs = milliseconds(start, Clock::now());
+        } else if (stage == renderStages[0] || stage == renderStages[2]) {
+            if (renderEvents_) renderEvents_->renderEvent(stage, deltaSeconds);
         } else if (stage == "OGRE") {
             if(viewportVisible_) {
                 syncTransforms(runtime_ && renderSnapshot_ ? &*renderSnapshot_ : nullptr);
@@ -1969,6 +1977,7 @@ void assign(NodeOverride& into, const NodeOverride& from) {
     if (from.scale) into.scale = from.scale;
     if (from.colour) into.colour = from.colour;
     if (from.behaviour) into.behaviour = from.behaviour;
+    if (from.renderEvent) into.renderEvent = from.renderEvent;
 }
 
 /// Writes the properties @p from sets into @p into's components, where it has them.
@@ -1976,6 +1985,7 @@ void assign(SceneNode& into, const NodeOverride& from) {
     applyExtraComponents(into, from);
     if (from.name) into.name = *from.name;
     if (from.behaviour) into.behaviour = *from.behaviour;
+    if (from.renderEvent) into.renderEvent = *from.renderEvent;
     if (auto& transform = into.transform) {
         if (from.position) transform->position = *from.position;
         if (from.rotation) transform->rotation = *from.rotation;
@@ -2134,10 +2144,12 @@ void Editor::unpack(int instance, NodeId id) {
     for (std::size_t k = 0; k < inside.size(); ++k) {
         auto base = expansion.nodes[inside[k]].path;
         if (!base.empty() && !expansion.nodes[inside[k]].root) base.pop_back();
-        for (auto& attachment : plain[k].behaviour) refs(attachment.data, 0, base);
+        for (auto* list : {&plain[k].behaviour, &plain[k].renderEvent})
+            for (auto& attachment : *list) refs(attachment.data, 0, base);
     }
     for (auto& each : edited->nodes) {
-        for (auto& attachment : each.behaviour) refs(attachment.data, 0, {});
+        for (auto* list : {&each.behaviour, &each.renderEvent})
+            for (auto& attachment : *list) refs(attachment.data, 0, {});
     }
     // The instance's systems become the file's, by the instance they came from and their ID.
     std::map<std::pair<std::size_t, std::uint32_t>, std::uint32_t> systemIds;
@@ -2281,7 +2293,8 @@ void Editor::duplicate() {
                 if (auto* ref = std::get_if<NodeRef>(&value); ref && !ref->scene && ref->node == original)
                     ref->node = added.id;
         };
-        for (auto& attachment : added.behaviour) remap(attachment);
+        for (auto* list : {&added.behaviour, &added.renderEvent})
+            for (auto& attachment : *list) remap(attachment);
         // Systems that refer to the node come along, referring to the copy instead
         // (the file's own, and at the level the level's naming this scene instance).
         const auto copySystems = [&](SystemSet& owner, std::uint32_t scene) {
@@ -3092,6 +3105,7 @@ void Editor::destroyWorkspaces() {
 }
 
 void Editor::log(const std::string& message) {
+    std::lock_guard<std::mutex> lock(messagesMutex_);
     messages_.push_back(message);
     if (messages_.size() > logLimit) messages_.erase(messages_.begin());
     Ogre::LogManager::getSingleton().logMessage("Editor: " + message);

@@ -295,6 +295,8 @@ void Editor::systemsPanel() {
             if (name == "OGRE") ImGui::SetTooltip("Rendering settings");
             if (name == "SyncSimulation") ImGui::SetTooltip("Copies the simulation's scene to the render snapshot");
             if (name == "SyncRender") ImGui::SetTooltip("Joins rendering and simulation; the frame ends");
+            if (name == renderStages[0]) ImGui::SetTooltip("Runs RenderEvent.prerender on the render snapshot");
+            if (name == renderStages[2]) ImGui::SetTooltip("Runs RenderEvent.postrender on the render snapshot");
         };
         const auto stageRow = [&](std::size_t index) {
             const auto& stage = stages[index];
@@ -795,16 +797,17 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         if(value.planeCollider && c.type==BodyType::Dynamic) ImGui::TextWrapped("PlaneCollider requires Static or Kinematic motion.");
         return edited;
     });
-    const auto editAttachment = [&](Behaviour& behaviour) {
+    const auto editAttachment = [&](Behaviour& behaviour, const char* symbol) {
         bool changed = false;
             char buffer[512];
             fill(buffer, behaviour.script);
             changed |= ImGui::InputText("Script", buffer, sizeof buffer);
             behaviour.script = buffer;
             track();
-            const auto& cached = fieldsOf(behaviour.script, "Behaviour");
-            {
-                changed|=ImGui::Checkbox("Enabled",&behaviour.enabled); track();
+            const auto& cached = fieldsOf(behaviour.script, symbol);
+            changed|=ImGui::Checkbox("Enabled",&behaviour.enabled); track();
+            // RenderEvent attachments have no priority overrides.
+            if (std::string_view(symbol) == "Behaviour") {
                 const auto priority=[&](const char* label,std::optional<double>& value,double inherited) {
                     ImGui::PushID(label);
                     bool overridden=value.has_value();
@@ -884,19 +887,21 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
             }
         return changed;
     };
-    // Behaviour uses the same component section as the other built-in components.
+    // Behaviour and RenderEvent use the same component section as the other built-in components.
     // Work on a copy so edits never invalidate the expansion being displayed.
-    if (!value.behaviour.empty() || (layer && layer->behaviour)) {
-        componentSection("Behaviour",true,layer && layer->behaviour.has_value(),[&] {
+    const auto attachmentSection = [&](const char* title, const char* symbol, std::vector<Behaviour> SceneNode::*list,
+                                       std::optional<std::vector<Behaviour>> NodeOverride::*replaced) {
+        if ((value.*list).empty() && !(layer && layer->*replaced)) return;
+        componentSection(title,true,layer && (layer->*replaced).has_value(),[&] {
             ImGui::Indent();
-            auto attachments = value.behaviour;
+            auto attachments = value.*list;
             bool attachmentsChanged = false;
             for (std::size_t k = 0; k < attachments.size(); ++k) {
                 auto& behaviour = attachments[k];
                 ImGui::PushID(static_cast<int>(k));
                 bool keep = true;
-                if (ImGui::CollapsingHeader((behaviour.script + "###nodeBehaviour").c_str(), &keep, open))
-                    attachmentsChanged |= editAttachment(behaviour);
+                if (ImGui::CollapsingHeader((behaviour.script + "###attachment").c_str(), &keep, open))
+                    attachmentsChanged |= editAttachment(behaviour, symbol);
                 if (!keep) {
                     checkpoint();
                     attachments.erase(attachments.begin() + static_cast<std::ptrdiff_t>(k));
@@ -913,14 +918,16 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
             }
             ImGui::Unindent();
             if (attachmentsChanged) {
-                if (own) own->behaviour = std::move(attachments);
-                else if (target.overrides) target.overrides->node(target.relative).behaviour = std::move(attachments);
+                if (own) own->*list = std::move(attachments);
+                else if (target.overrides) target.overrides->node(target.relative).*replaced = std::move(attachments);
             }
         },[&] {
-            if (own) own->behaviour.clear();
-            else if (target.overrides) target.overrides->node(target.relative).behaviour = std::vector<Behaviour>{};
-        },[&] { layer->behaviour.reset(); });
-    }
+            if (own) (own->*list).clear();
+            else if (target.overrides) target.overrides->node(target.relative).*replaced = std::vector<Behaviour>{};
+        },[&] { (layer->*replaced).reset(); });
+    };
+    attachmentSection("Behaviour", "Behaviour", &SceneNode::behaviour, &NodeOverride::behaviour);
+    attachmentSection("Render Event", "RenderEvent", &SceneNode::renderEvent, &NodeOverride::renderEvent);
     // The system fields that refer to this node; clicking one selects its system.
     const auto& nodes = view_.instances[selected_.instance].expansion.nodes;
     if (const auto found = references_.find({static_cast<std::size_t>(selected_.instance), &expanded - nodes.data()});
@@ -960,6 +967,11 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
             checkpoint();
             if (own) own->behaviour.push_back({});
             else target.overrides->node(target.relative).behaviour = std::vector<Behaviour>(1);
+        }
+        if (value.renderEvent.empty() && ImGui::Selectable("Render Event")) {
+            checkpoint();
+            if (own) own->renderEvent.push_back({});
+            else target.overrides->node(target.relative).renderEvent = std::vector<Behaviour>(1);
         }
         if (own) {
             if (!own->transform && ImGui::Selectable("Transform")) checkpoint(), own->transform.emplace();

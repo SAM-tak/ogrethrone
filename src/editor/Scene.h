@@ -46,6 +46,7 @@ struct NodeRef {
 using FieldValue = std::variant<double, bool, std::string, NodeRef>;
 
 /// One object-oriented script attachment: a script reference and its instance data.
+/// Also one RenderEvent attachment, whose script publishes `RenderEvent` instead.
 struct Behaviour {
     /// Project-relative path of a module^ publishing `Behaviour = def^{ ... }`.
     std::string script;
@@ -244,8 +245,8 @@ struct NodeOverride {
     std::optional<PlaneCollider> planeCollider;
     std::optional<RigidBody> rigidBody;
 
-    /// Replacement attachment list, including field edits, additions and removals.
-    std::optional<std::vector<Behaviour>> behaviour;
+    /// Replacement attachment lists, including field edits, additions and removals.
+    std::optional<std::vector<Behaviour>> behaviour, renderEvent;
 };
 
 /// Field values an instance gives one behaviour of a system in its prefab.
@@ -336,6 +337,9 @@ struct SceneNode {
 
     /// The Behaviour component: independent script/data instances, in attachment order.
     std::vector<Behaviour> behaviour;
+    /// The RenderEvent component: script instances run on the render thread before and
+    /// after OGRE draws, reading the render snapshot only.
+    std::vector<Behaviour> renderEvent;
     /// Project-relative path of the prefab this node instantiates; empty for a plain node.
     std::string prefab;
     /// What this instance changes in the prefab.

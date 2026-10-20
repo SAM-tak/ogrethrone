@@ -43,6 +43,7 @@ References findReferences(const LevelExpansion& view, const Level* level) {
                             expanded.node.name + " > " + attachment.script + " > " + name});
             };
             for (std::size_t k = 0; k < expanded.node.behaviour.size(); ++k) fields(expanded.node.behaviour[k], k);
+            for (const auto& attachment : expanded.node.renderEvent) fields(attachment, 0);
         }
     }
     // A level system names the scene instance of every node it refers to.

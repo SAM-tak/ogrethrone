@@ -340,6 +340,7 @@ SceneNode readNode(const LhatTable& entry) {
     if (const auto components = lton::field(entry, "components"); !lhat_is_nil(components)) {
         const auto& table = lton::table(components);
         node.behaviour=readBehaviourList(lton::field(table,"behaviour"));
+        node.renderEvent=readBehaviourList(lton::field(table,"renderEvent"));
         readExtraComponents(table, node);
         if (const auto value = lton::field(table, "transform"); !lhat_is_nil(value)) {
             const auto& transform = lton::table(value);
@@ -388,6 +389,7 @@ LhatValue writeNode(lton::Writer& out, const SceneNode& node) {
         out.set(components, "box", box);
     }
     if (!node.behaviour.empty()) out.set(components,"behaviour",writeBehaviourList(out,node.behaviour));
+    if (!node.renderEvent.empty()) out.set(components,"renderEvent",writeBehaviourList(out,node.renderEvent));
     writeExtraComponents(out, components, node);
     out.set(entry, "components", components);
     if (!node.prefab.empty()) {
@@ -447,6 +449,7 @@ LhatValue writeOverrides(lton::Writer& out, const Overrides& overrides) {
         }
         writeExtraComponents(out, item, entry);
         if (entry.behaviour) out.set(item, "behaviour", writeBehaviourList(out, *entry.behaviour));
+        if (entry.renderEvent) out.set(item, "renderEvent", writeBehaviourList(out, *entry.renderEvent));
         out.push(nodes, item);
     }
     out.set(root, "nodes", nodes);
@@ -511,6 +514,8 @@ Overrides readOverrides(LhatValue value) {
                 readOptional(lton::table(box), "colour", entry.colour);
             if (const auto value = lton::field(item, "behaviour"); !lhat_is_nil(value))
                 entry.behaviour = readBehaviourList(value);
+            if (const auto value = lton::field(item, "renderEvent"); !lhat_is_nil(value))
+                entry.renderEvent = readBehaviourList(value);
             if (!lhat_is_nil(lton::field(item, "scripts"))) lton::invalid();
             overrides.nodes.push_back(std::move(entry));
         }

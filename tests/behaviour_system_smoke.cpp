@@ -268,6 +268,46 @@ nodes={ {id=1,name="Obsolete",parent=0,behaviours={{script="data.lh"}}} },
         try { throne::Scene::load(root/"obsolete.scene.lton"); }
         catch(const throne::lton::Invalid&) { rejected=true; }
         require(rejected,"The abolished node-level behaviours format was silently accepted");
+
+        // RenderEvent attachments read the render snapshot before and after drawing, and cannot write it.
+        write(root,"event.lh",R"(module^ test.event
+import^ throne
+public^let^ RenderEvent=def^{
+ self^{ @export label="seen" },
+ prerender=p^self^,node:throne.SceneNode,dt:number^ {
+  let^ t=node.transform()
+  if^ t!=nil^ { print(self^.label, t.position().x) }
+ },
+ postrender=p^self^,node:throne.SceneNode,dt:number^ {
+  let^ t=node.transform()
+  if^ t!=nil^ { t.setPosition(throne.vec3(9,9,9)) }
+ },
+}
+)");
+        write(root,"event.scene.lton",R"(format="ogrethrone-scene",version=2,
+nodes={ {id=1,name="Event",parent=0,components={
+ transform={position={2,0,0},rotation={0,0,0},scale={1,1,1}},
+ renderEvent={ {script="event.lh",data={label="at"}} },
+}} },
+)");
+        Session event;
+        event.world.scenes["scene.lton"]=throne::Scene::load(root/"event.scene.lton");
+        event.world.scenes["scene.lton"].save(root/"event-again.scene.lton");
+        event.world.scenes["scene.lton"]=throne::Scene::load(root/"event-again.scene.lton");
+        require(event.world.scenes["scene.lton"].nodes[0].renderEvent.size()==1,"components.renderEvent did not round-trip");
+        require(throne::ScriptRuntime::fields(root,"event.lh","RenderEvent").size()==1,"RenderEvent field reflection failed");
+        event.open(root);
+        event.frame();
+        require(event.log.empty(),"The simulation column ran a RenderEvent");
+        throne::ScriptRuntime render(event.world,event.expanded,root,[&](const std::string& text) { event.log.push_back(text); },
+                                     throne::PlayScope::RenderEvents);
+        render.renderEvent(throne::renderStages[0],.5f);
+        require(event.log.size()==1 && event.log[0].rfind("at 2",0)==0,"prerender did not read its node: "+(event.log.empty()?std::string():event.log[0]));
+        bool refused=false;
+        try { render.renderEvent(throne::renderStages[2],.5f); }
+        catch(const throne::ScriptError& e) { refused=std::string(e.what()).find("read-only")!=std::string::npos; }
+        require(refused && event.expanded.instances[0].expansion.nodes[0].node.transform->position.x==2,
+                "postrender changed the render snapshot");
         std::filesystem::remove_all(root);
         std::puts("BehaviourSystem smoke passed: method queries, priority inheritance, stable ordering, frame-boundary edits, coroutine phases and attachment lifecycle");
         return 0;

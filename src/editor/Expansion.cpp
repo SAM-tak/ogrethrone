@@ -127,6 +127,7 @@ void apply(Expansion& out, const NodePath& prefix, const Overrides& overrides, s
         applyExtraComponents(node, entry);
         if (entry.name) node.name = *entry.name;
         if (entry.behaviour) node.behaviour = *entry.behaviour;
+        if (entry.renderEvent) node.renderEvent = *entry.renderEvent;
         if (auto& transform = node.transform) {
             if (entry.position) transform->position = *entry.position;
             if (entry.rotation) transform->rotation = *entry.rotation;

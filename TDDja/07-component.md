@@ -146,7 +146,9 @@ System は、実行の段の並びになる。レベル全体で 1 本の並び�
   - SyncSimulation はシミュレーションのシーンを描画用の写しへコピーする。SyncRender は描画とシミュレーションの合流点で、フレームの終わり。
   - 遅延ありでは、描画が前フレームの写しを描く間に、シミュレーションが今のフレームを計算する。スクリプトと物理の変更は 1 フレーム後に描かれる。遅延なしでは同じフレームで描かれ、並行には走らない。
   - L^ の VM は一度に 1 スレッドだけで動く。シミュレーションの列のスレッドか、フレームの間（SyncRender から次の SyncSimulation まで、エディター UI とコンソール）のメインスレッド。
-  - PreRenderEventSystem／PostRenderEventSystem は、描画スレッドで動く RenderEventComponent（Behaviour とは別の Component）を実行する予定の段。今は実行するものがない。
+  - PreRenderEventSystem／PostRenderEventSystem は、描画スレッドで RenderEvent Component（Behaviour とは別の Component）の `prerender`／`postrender` を実行する。遅延ありではスクリプトがシミュレーションのスレッドの L^ マシンに属するため、描画スレッドでは直接実行できない。そこで別の Component とし、別の L^ マシンで描画用の写しに対して動かす。
+
+［補足］RenderEvent は `components.renderEvent` に Behaviour と同じ形の一覧で保存し、スクリプトは `RenderEvent = def^{ ... }` を公開する。描画用の写しは読み取り専用で、setter と `spawnBox` は panic する。`dt` はそのフレームの経過時間。priority の上書きは持たない。Pause 中は実行しない。Behaviour と状態は共有しない。
 
 BehaviourSystem の `order_by` は、そのコンテキストで解決済みの有限実数 priority の昇順とする。同値はシーンインスタンス順、ノード階層順、付加順で決める。
 

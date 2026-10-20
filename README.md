@@ -418,8 +418,18 @@ frame later; with it, they appear in the same frame and nothing overlaps. Script
 the editor UI never run at the same time, and OGRE stays on the main thread.
 Box3DStep advances Box3D by one fixed step with a bounded native task pool, taking the
 scene's edits as input and writing poses back, so the next stage already sees them.
-Animation currently has no animation components to process; the render event stages
-have no script components yet.
+Animation currently has no animation components to process.
+
+A **Render Event** component (`components.renderEvent`, same list shape as `behaviour`)
+holds scripts that run on the render thread: PreRenderEventSystem calls their
+`prerender(node, dt)` before OGRE draws and PostRenderEventSystem their
+`postrender(node, dt)` after it, with the frame's elapsed time as `dt`. A script
+publishes `RenderEvent = def^{ ... }` instead of `Behaviour`; exported fields, prefab
+overrides and the Inspector work as for Behaviour, without priority overrides. These
+scripts run on a separate L^ machine against the render snapshot (with frame delay,
+the previous frame's scene), so they can read nodes and components but not change
+them: setters and `spawnBox` panic. They do not run while paused, and their state is
+not shared with Behaviour instances.
 
 A Behaviour script attached directly to a system receives the system in its
 optional callbacks. It can iterate

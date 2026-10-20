@@ -24,6 +24,30 @@ constexpr const char* lifecyclePath = "@throne/behaviour-lifecycle.lh";
 /// Loop turns one frame may take before it is treated as an endless loop.
 constexpr std::int64_t frameBudget = 10'000'000;
 
+/// What one script column runs: the definition its scripts publish, the node list holding
+/// its attachments, and its phase stages with the method each queries (unused ones null).
+struct Column {
+    const char* symbol;
+    std::vector<Behaviour> SceneNode::* list;
+    std::array<const char*,3> stages, methods;
+    /// Returns the phase index of @p stage, or -1 for another stage.
+    int phase(const std::string& stage) const {
+        for (int i = 0; i < 3; ++i) if (stages[i] && stage == stages[i]) return i;
+        return -1;
+    }
+};
+/// Node Behaviours and script Systems, on the simulation column's thread.
+constexpr Column simulationColumn{"Behaviour", &SceneNode::behaviour, behaviourSystems, behaviourMethods};
+/// RenderEvent attachments, on the render thread before and after OGRE draws.
+constexpr Column renderColumn{"RenderEvent", &SceneNode::renderEvent,
+                              {renderStages[0], renderStages[2], nullptr}, {"prerender", "postrender", nullptr}};
+/// Returns the column whose scripts publish @p symbol.
+const Column& columnOf(const std::string& symbol) {
+    if (symbol == simulationColumn.symbol) return simulationColumn;
+    if (symbol == renderColumn.symbol) return renderColumn;
+    throw ScriptError("Expected a Behaviour or RenderEvent script");
+}
+
 using Machine = std::unique_ptr<LhatMachine, decltype(&lhat_machine_dispose)>;
 using Program = std::unique_ptr<LhatProgram, decltype(&lhat_program_free)>;
 
@@ -71,7 +95,7 @@ struct Pending {
 
 double number(LhatValue value);
 /// Reads finite script defaults before applying attachment field overrides.
-BehaviourDefaults priorityDefaults(const LhatTable* table) {
+BehaviourDefaults priorityDefaults(const LhatTable* table, const Column& column) {
     BehaviourDefaults defaults;
     const auto read=[&](const std::string& key)->std::optional<double> {
         const auto value=lhat_table_get_bytes(table,key.data(),key.size());
@@ -81,7 +105,7 @@ BehaviourDefaults priorityDefaults(const LhatTable* table) {
         return number(value);
     };
     defaults.priority=read("priority").value_or(0);
-    for(int i=0;i<3;++i) defaults.phasePriorities[i]=read(std::string(behaviourMethods[i])+"Priority");
+    for(int i=0;i<3;++i) if(column.methods[i]) defaults.phasePriorities[i]=read(std::string(column.methods[i])+"Priority");
     return defaults;
 }
 
@@ -171,8 +195,12 @@ struct ScriptRuntime::State {
     std::vector<std::unique_ptr<Instance>> instances;
     /// Systems in run order; a throne.System handle is an index into this.
     std::vector<const System*> systems;
-    /// The simulation column; script Systems and BehaviourSystems wait on these.
+    /// The stages this runtime's scripts run and wait on: the simulation column, or the
+    /// two render event stages.
     std::vector<std::string> stages;
+    const Column* column = &simulationColumn;
+    /// Render event scripts read the render snapshot; host setters panic.
+    bool readOnly = false;
     std::vector<System> stageSystems;
     std::vector<LhatValue> systemHandles;
     std::map<std::string,const LhatUnit*> units;
@@ -239,6 +267,15 @@ struct ScriptRuntime::State {
     void cancel(Instance& instance);
     /// Executes or resumes matching methods in this system's context.
     void execute(Instance& instance,int phase,LhatValue dt);
+    /// Runs @p stage's query, if it is one of this runtime's stages.
+    void runStage(const std::string& stage, LhatValue dt);
+
+    /// Whether host setters may change the scene; otherwise panics.
+    bool writable(LhatMachine* running) {
+        if (!readOnly) return true;
+        lhat_machine_panic_text(running, "the scene is read-only in render events");
+        return false;
+    }
 
     /// Returns a handle of @p tag holding @p bits.
     LhatValue handle(LhatMachine* on, const LhatHostDataTag* tag, std::uintptr_t bits) {
@@ -417,6 +454,7 @@ THRONE_HOST(nodeName, {
 })
 /// SceneNode.spawnBox(size): appends a dynamic box child to the Play expansion only.
 THRONE_HOST(nodeSpawnBox, {
+    if (!s.writable(machine)) return;
     const auto* parent = s.target(machine, arguments[0]);
     if (!parent) return;
     const auto size = vec3(s, arguments[1]);
@@ -513,6 +551,7 @@ THRONE_HOST(transformGet, {
 /// Writes vector property @p Which of a Transform, keeping scale above zero.
 template <int Which>
 THRONE_HOST(transformSet, {
+    if (!s.writable(machine)) return;
     if (auto* transform = s.component(machine, arguments[0], s.transform, &SceneNode::transform))
         finite(machine, vec3(s, arguments[1]), Which == 2 ? 0.001f : -1.0e6f, 1.0e6f, property(*transform, Which));
 })
@@ -522,6 +561,7 @@ THRONE_HOST(boxColour, {
 })
 /// BoxPrimitive.setColour(v), each component kept in [0, 1].
 THRONE_HOST(boxSetColour, {
+    if (!s.writable(machine)) return;
     if (auto* box = s.component(machine, arguments[0], s.box, &SceneNode::box))
         finite(machine, vec3(s, arguments[1]), 0.0f, 1.0f, box->colour.data());
 })
@@ -535,6 +575,7 @@ THRONE_HOST(componentVector, {
 /// Writes a finite vector property of a typed built-in component.
 template <typename T, auto Member>
 THRONE_HOST(componentSetVector, {
+    if (!s.writable(machine)) return;
     if (auto* c=s.component(machine,arguments[0],s.componentTags.at(ComponentBinding<T>::name),ComponentBinding<T>::member))
         finite(machine,vec3(s,arguments[1]),-1.0e6f,1.0e6f,(c->*Member).data());
 })
@@ -554,6 +595,7 @@ THRONE_HOST(primitiveColourGet, {
 /// Writes a primitive's colour, keeping channels in [0,1].
 template <typename T>
 THRONE_HOST(primitiveColourSet, {
+    if (!s.writable(machine)) return;
     if (auto* c=s.component(machine,arguments[0],s.componentTags.at(ComponentBinding<T>::name),ComponentBinding<T>::member))
         finite(machine,vec3(s,arguments[1]),0,1,c->colour.data());
 })
@@ -578,7 +620,7 @@ THRONE_HOST(findSystem, {
     *count = 1;
     const auto name = text(arguments[0]);
     for (const auto& stage : s.stages) {
-        if (stage != name || (isEngineStage(stage) && behaviourPhase(stage) < 0)) continue;
+        if (stage != name || (isEngineStage(stage) && s.column->phase(stage) < 0)) continue;
         for (std::size_t i = 0; i < s.systems.size(); ++i)
             if (s.systems[i]->name == name) {
                 answers[0] = s.handle(machine, s.system, i);
@@ -588,6 +630,7 @@ THRONE_HOST(findSystem, {
 })
 /// Resolves a zero-based attachment index for the Behaviour mutation API.
 Behaviour* attachment(State& s,LhatMachine* machine,const LhatValue* arguments) {
+    if(!s.writable(machine)) return nullptr;
     auto* node=s.target(machine,arguments[0]);
     if(!node) return nullptr;
     const auto index=number(arguments[1]);
@@ -621,7 +664,7 @@ THRONE_HOST(setBehaviourPriority, {
 THRONE_HOST(setBehaviourPhasePriority, {
     auto* b=attachment(s,machine,arguments); if(!b) return;
     const auto index=reinterpret_cast<std::uintptr_t>(lhat_hostdata_pointer(arguments[2],s.system));
-    const int phase=index<s.systems.size()?behaviourPhase(s.systems[index]->name):-1;
+    const int phase=index<s.systems.size()?s.column->phase(s.systems[index]->name):-1;
     if(phase<0) { lhat_machine_panic_text(machine,"Expected a BehaviourSystem"); return; }
     const auto previous=b->phasePriorities[phase];
     if(lhat_is_nil(arguments[3])) b->phasePriorities[phase].reset();
@@ -640,6 +683,7 @@ THRONE_HOST(setBehaviourEnabled, {
 })
 /// Adds an attachment; it is checked and instantiated at the next frame boundary.
 THRONE_HOST(addBehaviour, {
+    if(!s.writable(machine)) return;
     auto* node=s.target(machine,arguments[0]); if(!node) return;
     const auto path=std::filesystem::u8path(std::string(text(arguments[1]))).lexically_normal();
     if(path.empty() || path.is_absolute() || path.has_root_name() || *path.begin()=="..") {
@@ -934,8 +978,10 @@ const LhatUnit* checkBehaviour(State& s, const std::string& path, std::string& e
     }
     if (!lhat_unit_export_conforms(unit, symbol.c_str(), "t^{ new : f^ -> any^; }"))
         errors += path + ": " + symbol + " must be a def^\n";
+    const auto& column = columnOf(symbol);
     for(int method=0;method<4;++method) {
-        const std::string name=method==3?"start":behaviourMethods[method];
+        if(method<3 && !column.methods[method]) continue;
+        const std::string name=method==3?"start":column.methods[method];
         if(!behaviourHas(unit,name,"any^",symbol)) continue;
         bool valid=false;
         for(const char* receiver:{"throne.SceneNode","throne.System"}) {
@@ -998,7 +1044,7 @@ static BehaviourInfo inspectScript(const std::filesystem::path& root, const std:
     createProgram(s);
     std::string errors;
     if (symbol.empty()) symbol = "Behaviour";
-    if (symbol != "Behaviour") throw ScriptError("Expected a Behaviour script");
+    const auto& column = columnOf(symbol);
     const auto* unit = checkBehaviour(s, script, errors, -1, symbol);
     diagnostics(s.program.get(), errors);
     if (!errors.empty()) throw ScriptError(errors);
@@ -1012,9 +1058,9 @@ static BehaviourInfo inspectScript(const std::filesystem::path& root, const std:
     const auto* table = reinterpret_cast<const LhatTable*>(lhat_as_object(instance));
     BehaviourInfo info;
     auto& result=info.fields;
-    info.defaults=priorityDefaults(table);
+    info.defaults=priorityDefaults(table,column);
     info.start=behaviourHas(unit,"start","any^",symbol);
-    for(int phase=0;phase<3;++phase) info.methods[phase]=behaviourHas(unit,behaviourMethods[phase],"any^",symbol);
+    for(int phase=0;phase<3;++phase) info.methods[phase]=column.methods[phase] && behaviourHas(unit,column.methods[phase],"any^",symbol);
     for (std::size_t i = 0; i < type->instance->member_count; ++i) {
         const auto& member = type->instance->members[i];
         if (!member.type) continue;
@@ -1051,7 +1097,7 @@ void instantiate(State& s,const Pending& item) {
             lhat_machine_call_member(s.machine.get(), s.definitions.at(key), "new", 3, nullptr, 0), item.what + " new");
         auto entry=std::make_unique<Instance>();
         entry->instanceRoot=s.pin(instance);
-        entry->defaults=priorityDefaults(reinterpret_cast<const LhatTable*>(lhat_as_object(instance)));
+        entry->defaults=priorityDefaults(reinterpret_cast<const LhatTable*>(lhat_as_object(instance)),*s.column);
         auto* table = reinterpret_cast<LhatTable*>(lhat_as_object(instance));
         for (const auto& [name, value] : item.behaviour->data) {
             if (!behaviourHas(unit, name, fieldType(value), item.symbol) ||
@@ -1097,10 +1143,11 @@ void instantiate(State& s,const Pending& item) {
         entry->system=item.node==Expansion::npos?s.systemHandles[item.system]:s.handle(s.machine.get(),s.sceneNode,State::nodeBits(item.scene,item.node));
         if(item.node!=Expansion::npos) entry->handleRoot=s.pin(entry->system);
         entry->start=behaviourHas(unit,"start","any^",item.symbol);
-        for(int phase=0;phase<3;++phase) entry->methods[phase]=behaviourHas(unit,behaviourMethods[phase],"any^",item.symbol);
+        for(int phase=0;phase<3;++phase)
+            entry->methods[phase]=s.column->methods[phase] && behaviourHas(unit,s.column->methods[phase],"any^",item.symbol);
         entry->update=entry->methods[0]; entry->stage=item.stage;
         entry->scene=item.scene; entry->node=item.node;
-        entry->attachment=item.node==Expansion::npos?0:static_cast<std::size_t>(item.behaviour-s.expanded.instances[item.scene].expansion.nodes[item.node].node.behaviour.data());
+        entry->attachment=item.node==Expansion::npos?0:static_cast<std::size_t>(item.behaviour-(s.expanded.instances[item.scene].expansion.nodes[item.node].node.*s.column->list).data());
         if(item.node!=Expansion::npos) entry->owner=s.expanded.instances[item.scene].expansion.nodes[item.node].path;
         entry->identity=item.behaviour->id; entry->config=*item.behaviour;
         for(int phase=0;phase<3;++phase)
@@ -1135,24 +1182,25 @@ void ScriptRuntime::State::reconcile() {
         for(const auto n:expansion.hierarchy()) {
             auto& node=expansion.nodes[n];
             std::set<NodeId> identities;
-            for(std::size_t attachment=0;attachment<node.node.behaviour.size();++attachment) {
-                const auto& b=node.node.behaviour[attachment];
+            const auto& list=node.node.*column->list;
+            for(std::size_t attachment=0;attachment<list.size();++attachment) {
+                const auto& b=list[attachment];
                 if(!b.id || !identities.insert(b.id).second) throw ScriptError("Duplicate Behaviour attachment identity");
                 auto* entry=existing[{static_cast<int>(scene),node.path,b.id}];
                 if(entry && entry->config.script!=b.script) entry=nullptr;
                 if(!entry) {
-                    const auto key=b.script+"#Behaviour";
+                    const auto key=b.script+"#"+column->symbol;
                     if(!definitions.count(key)) {
                         std::string errors;
-                        const auto* unit=checkBehaviour(*this,b.script,errors,1);
+                        const auto* unit=checkBehaviour(*this,b.script,errors,1,column->symbol);
                         diagnostics(program.get(),errors);
                         if(!errors.empty()) throw ScriptError(errors);
                         compile(*this); lhat_program_install(program.get(),machine.get());
-                        units[key]=unit; definitions[key]=definition(*this,unit,b.script);
+                        units[key]=unit; definitions[key]=definition(*this,unit,b.script,column->symbol);
                     }
                     auto prefix=node.path;
                     if(!prefix.empty() && !node.root) prefix.pop_back();
-                    instantiate(*this,{static_cast<int>(scene),prefix,0,&b,node.node.name+" "+b.script,n,""});
+                    instantiate(*this,{static_cast<int>(scene),prefix,0,&b,node.node.name+" "+b.script,n,"",column->symbol});
                     entry=instances.back().get();
                 }
                 entry->alive=true; entry->config=b;
@@ -1186,7 +1234,7 @@ void ScriptRuntime::State::rebuildQuery(const std::string& system) {
     }
     if(!dirtyQueries[system]) return;
     auto& query=queries[system]; query.clear();
-    const int phase=behaviourPhase(system);
+    const int phase=column->phase(system);
     for(auto* entry:ordered[phase>=0?phase:3]) {
         bool matches=entry->node==Expansion::npos ? entry->stage==system : phase>=0 && entry->methods[phase];
         matches|=phase==0 && entry->node!=Expansion::npos && entry->start && !entry->started &&
@@ -1210,7 +1258,7 @@ void ScriptRuntime::State::execute(Instance& entry,int phase,LhatValue dt) {
             destination=systems[index]->name;
         }
         const auto at=std::find(stages.begin(),stages.end(),destination);
-        if(at==stages.end() || (isEngineStage(destination) && behaviourPhase(destination)<0))
+        if(at==stages.end() || (isEngineStage(destination) && column->phase(destination)<0))
             throw ScriptError(entry.what+": coroutine requires a serial script System");
         dirtyQueries[call.waiting]=true; dirtyQueries[destination]=true;
         call.waiting=destination;
@@ -1226,7 +1274,7 @@ void ScriptRuntime::State::execute(Instance& entry,int phase,LhatValue dt) {
     };
     const auto invoke=[&](int method) {
         auto& call=entry.calls[method]; call.origin=system; call.lastCall=frame;
-        const char* name=method==3?"start":behaviourMethods[method];
+        const char* name=method==3?"start":column->methods[method];
         const LhatValue args[]={entry.system,dt};
         const auto result=check(lhat_machine_call_member(machine.get(),entry.instance,name,std::strlen(name),args,method==3?1:2),entry.what+" "+name);
         if(lhat_is_object_kind(result,LHAT_OBJECT_COROUTINE)) {
@@ -1235,7 +1283,7 @@ void ScriptRuntime::State::execute(Instance& entry,int phase,LhatValue dt) {
     };
     if(!entry.started) {
         entry.started=true;
-        dirtyQueries[behaviourSystems[0]]=true;
+        dirtyQueries[column->stages[0]]=true;
         if(entry.start) invoke(3);
     }
     // Fixed method order resolves ties between a phase callback and a resumed call of the same instance.
@@ -1255,7 +1303,7 @@ std::vector<BehaviourMatch> ScriptRuntime::behaviourMatches(const std::string& s
     state_->rebuildQuery(system);
     const auto found=state_->queries.find(system);
     if(found==state_->queries.end()) return result;
-    const auto phase=behaviourPhase(system);
+    const auto phase=state_->column->phase(system);
     for(const auto* entry:found->second) {
         if(entry->node==Expansion::npos) continue;
         bool waiting=false;
@@ -1271,8 +1319,14 @@ ScriptRuntime::ScriptRuntime(const World& world, LevelExpansion& expanded, const
                              PlayScope scope)
     : state_(std::make_unique<State>(world, expanded, root, std::move(log))) {
     auto& s = *state_;
-    try { s.stages = schedule(world, expanded); }
-    catch (const std::exception& error) { throw ScriptError(error.what()); }
+    if (scope == PlayScope::RenderEvents) {
+        s.column = &renderColumn;
+        s.readOnly = true;
+        s.stages = {renderColumn.stages[0], renderColumn.stages[1]};
+    } else {
+        try { s.stages = schedule(world, expanded); }
+        catch (const std::exception& error) { throw ScriptError(error.what()); }
+    }
     createProgram(s);
     auto* program = s.program.get();
 
@@ -1295,15 +1349,19 @@ ScriptRuntime::ScriptRuntime(const World& world, LevelExpansion& expanded, const
         for (const auto& system : expanded.instances[i].expansion.systems)
             collect(static_cast<int>(i), system.instance, system.system, "scene " + std::to_string(expanded.instances[i].id));
     for (const auto& system : world.level.systems) collect(-1, {}, system, "level");
+    if (s.readOnly) {
+        pending.clear();
+        s.systems.clear();
+    }
 
     for (std::size_t scene = 0; scene < expanded.instances.size(); ++scene) {
         const auto& nodes = expanded.instances[scene].expansion.nodes;
         for (const auto n : expanded.instances[scene].expansion.hierarchy()) {
             auto prefix = nodes[n].path;
             if (!prefix.empty() && !nodes[n].root) prefix.pop_back();
-            for (const auto& behaviour : nodes[n].node.behaviour)
+            for (const auto& behaviour : nodes[n].node.*s.column->list)
                 pending.push_back({static_cast<int>(scene), prefix, 0, &behaviour,
-                                   nodes[n].node.name + " " + behaviour.script, n, ""});
+                                   nodes[n].node.name + " " + behaviour.script, n, "", s.column->symbol});
         }
     }
     std::map<std::string, const LhatUnit*> units;
@@ -1413,13 +1471,27 @@ FrameTimes ScriptRuntime::update(float deltaSeconds, const std::function<void(co
         if (engine) engine(stage);
         if (stage == s.stages[0]) ++s.frame;
         if (stage == s.stages[1]) ++s.frame, s.time += fixedStep;
-        if (isEngineStage(stage) && behaviourPhase(stage) < 0) return;
         const auto at = std::find(s.stages.begin(), s.stages.end(), stage) - s.stages.begin();
-        s.currentStage = static_cast<int>(at);
-        s.rebuildQuery(stage);
-        const auto& query = s.queries[stage];
-        for (auto* instance : query) s.execute(*instance, behaviourPhase(stage), at < loopEnd ? stepDt : frameDt);
-        s.currentStage = -1;
+        s.runStage(stage, at < loopEnd ? stepDt : frameDt);
     });
+}
+
+void ScriptRuntime::renderEvent(const std::string& stage, float deltaSeconds) {
+    auto& s = *state_;
+    if (stage == s.stages.front()) {
+        s.reconcile();
+        ++s.frame;
+        s.time += deltaSeconds;
+    }
+    s.runStage(stage, lhat_real(deltaSeconds));
+}
+
+void ScriptRuntime::State::runStage(const std::string& stage, LhatValue dt) {
+    const auto at = std::find(stages.begin(), stages.end(), stage);
+    if (at == stages.end() || (isEngineStage(stage) && column->phase(stage) < 0)) return;
+    currentStage = static_cast<int>(at - stages.begin());
+    rebuildQuery(stage);
+    for (auto* instance : queries[stage]) execute(*instance, column->phase(stage), dt);
+    currentStage = -1;
 }
 }
