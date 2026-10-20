@@ -253,7 +253,7 @@ int main(int argc, char** argv) {
         try {
             runtime = std::make_unique<throne::ScriptRuntime>(basic.world, basic.expanded, sample, [](const std::string&) {},
                                                             throne::PlayScope::Level);
-            runtime->update(0.5f);
+            for (int i = 0; i < 30; ++i) runtime->update(static_cast<float>(throne::fixedStep));
         } catch (const throne::ScriptError& e) {
             return fail(std::string("The sample was rejected:\n") + e.what());
         }
@@ -269,11 +269,13 @@ int main(int argc, char** argv) {
             return fail("The sample's prefab and variant did not spin their hubs at their own speeds");
         const auto& position = basic.nodes()[0].node.transform->position;
         if (std::fabs(position.y - 0.5f) > 0.001f) return fail("Pop did not rest at its starting height between hops");
-        runtime->update(1.2f);
+        // Updates are fixed 1/60 s steps; advance the sample by whole steps.
+        const auto advance = [&](int steps) { while (steps--) runtime->update(static_cast<float>(throne::fixedStep)); };
+        advance(72);
         if (std::fabs(position.y - 1.0f) > 0.001f) return fail("Pop did not reach its configured height");
-        runtime->update(1.5f);
+        advance(90);
         if (std::fabs(position.y - 1.0f) > 0.001f) return fail("Pop did not repeat at its configured interval");
-        runtime->update(0.2f);
+        advance(12);
         if (std::fabs(position.y - 0.5f) > 0.001f || position.x != 0 || position.z != 0)
             return fail("Pop failed to return to its starting position");
     }

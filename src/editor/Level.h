@@ -34,9 +34,10 @@ struct Level : SystemSet {
     /// Scene instances loaded when the level starts, in order.
     std::vector<SceneInstance> scenes;
     std::uint32_t nextSceneId = 1;
-    /// One level-wide execution schedule; engine barriers are fixed.
-    std::vector<ExecutionStage> stages = defaultStages();
-    /// Debug mode preserves snapshots and barriers while running group members in order.
+    /// The simulation column of the level's schedule (TDDja/07); engine stages keep their order.
+    std::vector<std::string> stages = defaultStages();
+    /// No frame delay: simulation, then rendering of its result on one thread. Otherwise
+    /// rendering draws the previous frame while simulation runs on a worker thread.
     bool serialExecution = false;
 
     /// Appends an instance of the scene at @p path and returns it.

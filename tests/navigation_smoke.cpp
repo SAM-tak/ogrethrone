@@ -277,7 +277,7 @@ void navigationSmoke(Editor& editor, Ogre::Window& nativeWindow, Ogre::Camera& c
     };
     const auto frozen = image();
     for (int i = 0; i < 30; ++i) frame();
-    require(editor.frameTimings().bodies == pausedBodies && editor.frameTimings().physicsStepMs == 0,
+    require(editor.frameTimings().bodies == pausedBodies && editor.frameTimings().physicsMs == 0,
             "Pause continued spawning or stepping physics");
     require(image() == frozen, "Paused scene poses changed");
     const auto beforePausedFly = camera.getPosition();
@@ -287,7 +287,7 @@ void navigationSmoke(Editor& editor, Ogre::Window& nativeWindow, Ogre::Camera& c
     tap(ImGuiKey_Pause);
     require(!editor.paused() && editor.playing(), "Pause key did not resume Play");
     for (int i = 0; i < 12; ++i) frame();
-    require(editor.frameTimings().bodies > pausedBodies && editor.frameTimings().physicsStepMs > 0,
+    require(editor.frameTimings().bodies > pausedBodies && editor.frameTimings().physicsMs > 0,
             "Resume did not restart spawning and physics");
     tap(ImGuiKey_Pause);
     // Keep an authored node selected when Stop removes the spawned render objects.

@@ -15,7 +15,7 @@ namespace throne {
 /// Small bounded pool for native simulation tasks; waiting callers help drain the queue.
 class TaskPool {
 public:
-    /// Leaves room for the main thread, the simulation driver and the animation driver.
+    /// Leaves room for the main (rendering) thread and the simulation driver.
     explicit TaskPool(unsigned count = simulationWorkers()) {
         workers_.reserve(count);
         try {
@@ -39,10 +39,10 @@ public:
             throw;
         }
     }
-    /// Reserves three cores for rendering and the two engine group drivers.
+    /// Reserves two cores for rendering and the simulation driver.
     static unsigned simulationWorkers() {
         const auto cores = std::thread::hardware_concurrency();
-        return cores > 3 ? (std::min)(cores - 3, 4u) : 0u;
+        return cores > 2 ? (std::min)(cores - 2, 4u) : 0u;
     }
     /// Joins all workers after draining pending tasks.
     ~TaskPool() {

@@ -1,64 +1,71 @@
 #include "runtime/FramePipeline.h"
 #include "runtime/TaskPool.h"
+#include <algorithm>
+#include <chrono>
 #include <exception>
 #include <future>
 #include <set>
 #include <stdexcept>
 
 namespace throne {
-std::vector<ExecutionStage> defaultStages() {
-    return {{"FetchInput", {}}, {"ApplyPhysics", {}}, {behaviourSystems[0], {}},
-            {behaviourSystems[1], {}}, {"SyncRender", {}},
-            {"Parallel", {"OGRE", "Box3D", "Animator"}}, {"SyncSimulation", {}},
-            {behaviourSystems[2], {}}};
+bool isEngineStage(const std::string& name) {
+    const auto in = [&](const auto& list) { return std::find(list.begin(), list.end(), name) != list.end(); };
+    return in(simulationStages) || in(renderStages) || name == "SyncSimulation" || name == "SyncRender";
 }
 
-void validateStages(const std::vector<ExecutionStage>& stages) {
-    if (stages.empty() || stages.front().name != "FetchInput")
-        throw std::runtime_error("FetchInput must be the first stage");
+std::vector<std::string> defaultStages() { return {simulationStages.begin(), simulationStages.end()}; }
+
+void validateStages(const std::vector<std::string>& stages) {
     std::set<std::string> names;
     std::vector<std::string> engine;
-    for (const auto& stage : stages) {
-        if (stage.name.empty() || stage.name.size() > 255 || stage.name.find('\0') != std::string::npos || !names.insert(stage.name).second)
+    for (const auto& name : stages) {
+        if (name.empty() || name.size() > 255 || name.find('\0') != std::string::npos || !names.insert(name).second)
             throw std::runtime_error("Execution stage names must be nonempty and unique");
-        if (behaviourPhase(stage.name)>=0 || stage.name == "FetchInput" || stage.name == "ApplyPhysics" || stage.name == "SyncRender" ||
-            stage.name == "Parallel" || stage.name == "SyncSimulation") engine.push_back(stage.name);
-        if (stage.name == "Parallel") {
-            if (stage.parallel != std::vector<std::string>{"OGRE", "Box3D", "Animator"})
-                throw std::runtime_error("Parallel must contain OGRE, Box3D, Animator in that order");
-        } else if (!stage.parallel.empty()) throw std::runtime_error("Only the engine group may run in parallel");
-        for (const auto& name : stage.parallel)
-            if (!names.insert(name).second) throw std::runtime_error("Duplicate parallel member");
+        if (isEngineStage(name)) engine.push_back(name);
     }
-    if (engine != std::vector<std::string>{"FetchInput", "ApplyPhysics", behaviourSystems[0], behaviourSystems[1],
-                                         "SyncRender", "Parallel", "SyncSimulation", behaviourSystems[2]})
-        throw std::runtime_error("Engine and BehaviourSystem stages cannot be removed or reordered");
+    if (engine != defaultStages() || stages.front() != simulationStages.front())
+        throw std::runtime_error("FetchInput comes first; engine and BehaviourSystem stages cannot be removed or reordered");
 }
 
-void runStages(const std::vector<ExecutionStage>& stages, bool serial,
-               const std::function<void(const std::string&)>& run) {
+FrameTimes runFrame(const std::vector<std::string>& stages, bool serial, int steps,
+                    const std::function<void(const std::string&)>& run) {
+    using Clock = std::chrono::steady_clock;
+    const auto since = [](Clock::time_point start) {
+        return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+    };
     validateStages(stages);
-    for (const auto& stage : stages) {
-        if (stage.parallel.empty()) { run(stage.name); continue; }
-        if (serial || std::thread::hardware_concurrency() < 3) {
-            for (const auto& member : stage.parallel) run(member);
-            continue;
-        }
-        static TaskPool drivers(2);
-        std::vector<std::future<void>> workers;
-        workers.reserve(stage.parallel.size() - 1);
-        std::exception_ptr failure;
-        try {
-            for (std::size_t i = 1; i < stage.parallel.size(); ++i) {
-                const auto member = stage.parallel[i];
-                workers.push_back(drivers.submit([&, member] { run(member); }));
-            }
-            run(stage.parallel.front());
-        } catch (...) { failure = std::current_exception(); }
-        for (auto& worker : workers) {
+    FrameTimes times;
+    const auto loopEnd = std::find(stages.begin(), stages.end(), behaviourSystems[2]);
+    const auto simulate = [&] {
+        const auto start = Clock::now();
+        run(stages.front());
+        for (int i = 0; i < steps; ++i)
+            for (auto stage = stages.begin() + 1; stage != loopEnd; ++stage) run(*stage);
+        for (auto stage = loopEnd; stage != stages.end(); ++stage) run(*stage);
+        times.simulationMs = since(start);
+    };
+    const auto render = [&] { for (const char* stage : renderStages) run(stage); };
+    if (serial) {
+        simulate();
+        run("SyncSimulation");
+        render();
+    } else {
+        run("SyncSimulation");
+        if (std::thread::hardware_concurrency() < 2) {
+            render();
+            simulate();
+        } else {
+            static TaskPool driver(1);
+            auto worker = driver.submit(simulate);
+            std::exception_ptr failure;
+            try { render(); } catch (...) { failure = std::current_exception(); }
+            const auto wait = Clock::now();
             try { worker.get(); } catch (...) { if (!failure) failure = std::current_exception(); }
+            times.waitMs = since(wait);
+            if (failure) std::rethrow_exception(failure);
         }
-        if (failure) std::rethrow_exception(failure);
     }
+    run("SyncRender");
+    return times;
 }
 }

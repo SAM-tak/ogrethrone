@@ -85,11 +85,11 @@ public:
     bool frame(float deltaSeconds, const std::function<void()>& input = {});
     /// Physical joystick/gamepad states captured before this frame's UI and simulation.
     const OisInput& input() const { return input_; }
-    /// Wall-clock milliseconds for one completed frame. Physics runs alongside rendering;
-    /// render/present includes driver/GPU/display waits, so these are not GPU timestamps.
+    /// Wall-clock milliseconds for one completed frame. With frame delay, scripts and
+    /// physics run alongside rendering; render/present includes driver/GPU/display waits,
+    /// so these are not GPU timestamps.
     struct FrameTimings {
-        double frameMs = 0, uiMs = 0, scriptMs = 0, snapshotMs = 0;
-        double physicsApplyMs = 0, physicsPrepareMs = 0, physicsStepMs = 0;
+        double frameMs = 0, uiMs = 0, scriptMs = 0, snapshotMs = 0, physicsMs = 0;
         double renderSyncMs = 0, renderMs = 0, waitMs = 0;
         std::size_t nodes = 0, bodies = 0, particleSystems = 0, particles = 0;
     };
@@ -269,7 +269,7 @@ private:
     /// Copies node transforms and colours to the render objects and the selection outline.
     void syncTransforms(const LevelExpansion* snapshot = nullptr);
     /// Applies persisted lighting settings, including the Forward+ method.
-    void syncLighting();
+    void syncLighting(const LevelExpansion& shown);
     /// Loads one project texture with a project-qualified cache key; masks share an R8 pool.
     Ogre::TextureGpu* projectTexture(const std::string& path, int kind, bool mask = false);
     /// Replaces the mipmaps of an environment cubemap with GGX-prefiltered radiance.

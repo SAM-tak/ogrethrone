@@ -850,30 +850,17 @@ bool Editor::frame(float deltaSeconds, const std::function<void()>& input) {
     }
     measured.uiMs = milliseconds(frameStart, Clock::now());
     bool running = true;
-    std::optional<LevelExpansion> nextSnapshot;
     if (physics_) physics_->setSerial(doc_.world.level.serialExecution);
-    auto lastMainEnd = Clock::now();
+    // Simulation stages may run on the worker thread: they touch view_, physics_ and their
+    // own timing fields only. The main thread reads view_ only at the Sync barriers.
     const auto engine = [&](const std::string& stage) {
         const auto start = Clock::now();
-        // Worker callbacks touch their own timing field only; runStages joins before publication.
-        if (stage == "Box3D") {
-            if (physics_) physics_->advance(deltaSeconds);
-            measured.physicsStepMs = milliseconds(start, Clock::now());
-            return;
-        }
-        if (stage == "Animator") return;
-        const auto gap = milliseconds(lastMainEnd, start);
-        if (stage == "SyncSimulation") measured.waitMs += gap;
-        else if(!paused()) measured.scriptMs += gap;
-        if (stage == "ApplyPhysics") {
-            if (physics_) physics_->apply(view_);
-            measured.physicsApplyMs = milliseconds(start, Clock::now());
-        } else if (stage == "SyncRender") {
-            if (runtime_) nextSnapshot = view_;
+        if (stage == "Box3DStep") {
+            if (physics_) physics_->step(view_);
+            measured.physicsMs += milliseconds(start, Clock::now());
+        } else if (stage == "SyncSimulation") {
+            if (runtime_) renderSnapshot_ = view_;
             measured.snapshotMs = milliseconds(start, Clock::now());
-            const auto prepare = Clock::now();
-            if (physics_) physics_->prepare(view_);
-            measured.physicsPrepareMs = milliseconds(prepare, Clock::now());
         } else if (stage == "OGRE") {
             if(viewportVisible_) {
                 syncTransforms(runtime_ && renderSnapshot_ ? &*renderSnapshot_ : nullptr);
@@ -895,18 +882,17 @@ bool Editor::frame(float deltaSeconds, const std::function<void()>& input) {
             Ogre::ControllerManager::getSingleton().setTimeFactor(paused()?0.0f:1.0f);
             running = root_.renderOneFrame(deltaSeconds);
             measured.renderMs = milliseconds(render, Clock::now());
-        } else if (stage == "SyncSimulation") {
-            if (nextSnapshot) renderSnapshot_ = std::move(nextSnapshot);
-            measured.snapshotMs += milliseconds(start, Clock::now());
         }
-        lastMainEnd = Clock::now();
         // FetchInput has already collected this frame's OS/ImGui/OIS input above.
-        // Animator has no bindings until animation components exist.
+        // Animation has no bindings until animation components exist.
     };
     try {
+        FrameTimes times;
         if (paused()) engine("OGRE");
-        else if (runtime_) runtime_->update(deltaSeconds, engine);
-        else runStages(ScriptRuntime::schedule(doc_.world, view_), doc_.world.level.serialExecution, engine);
+        else if (runtime_) times = runtime_->update(deltaSeconds, engine);
+        else times = runFrame(ScriptRuntime::schedule(doc_.world, view_), doc_.world.level.serialExecution, 0, engine);
+        measured.scriptMs = (std::max)(0.0, times.simulationMs - measured.physicsMs);
+        measured.waitMs = times.waitMs;
     } catch (const std::runtime_error& error) {
         log(error.what());
         stop();
@@ -921,8 +907,8 @@ bool Editor::frame(float deltaSeconds, const std::function<void()>& input) {
     timings_ = measured;
     const auto weight = averageTimings_.frameMs == 0 ? 1.0 : 1.0 - std::exp(-measured.frameMs / 500.0);
     for (auto member : {&FrameTimings::frameMs, &FrameTimings::uiMs, &FrameTimings::scriptMs,
-         &FrameTimings::snapshotMs, &FrameTimings::physicsApplyMs, &FrameTimings::physicsPrepareMs,
-         &FrameTimings::physicsStepMs, &FrameTimings::renderSyncMs, &FrameTimings::renderMs, &FrameTimings::waitMs})
+         &FrameTimings::snapshotMs, &FrameTimings::physicsMs, &FrameTimings::renderSyncMs,
+         &FrameTimings::renderMs, &FrameTimings::waitMs})
         averageTimings_.*member += weight * (measured.*member - averageTimings_.*member);
     return running;
 }
@@ -1451,7 +1437,7 @@ Ogre::Matrix4 Editor::instanceTransform(int instance) const {
     return sceneRoots_[std::size_t(instance)]->_getFullTransformUpdated();
 }
 
-void Editor::syncLighting() {
+void Editor::syncLighting(const LevelExpansion& shown) {
     const auto& level=doc_.world.level.rendering;
     if(!clustered_ || *clustered_!=level.clustered || clusterMin_!=level.minDistance || clusterMax_!=level.maxDistance) {
         if(level.clustered) scene_.setForwardClustered(true,16,8,24,96,0,16,level.minDistance,level.maxDistance);
@@ -1511,7 +1497,7 @@ void Editor::syncLighting() {
         gi_->active() ? 0u : Ogre::SceneManager::EnvFeatures_DiffuseGiFromReflectionProbe);
     // Reserve enough Forward slots for every authored rectangular light, including hidden ones.
     unsigned approx=0,ltc=0;
-    for(const auto& instance:view_.instances) for(const auto& n:instance.expansion.nodes) if(n.node.light) {
+    for(const auto& instance:shown.instances) for(const auto& n:instance.expansion.nodes) if(n.node.light) {
         const auto type=n.node.light->type;
         if(type==LightType::AreaApprox || type==LightType::AreaLtc) {
             approx+=areaLightModel_==0 || (areaLightModel_<0 && type==LightType::AreaApprox);
@@ -1524,8 +1510,9 @@ void Editor::syncLighting() {
 void Editor::syncTransforms(const LevelExpansion* snapshot) {
     // Before lighting, so a bake that finishes switches this frame's materials to its probes.
     tasks_.update();
-    syncLighting();
+    // During Play, simulation may be changing view_ on its worker thread; draw the snapshot.
     const auto& shown = snapshot ? *snapshot : view_;
+    syncLighting(shown);
     // Stop or scene replacement may remove runtime nodes; discard their render resources.
     bool shrunk = sceneRoots_.size() > shown.instances.size();
     for (std::size_t i = 0; i < sceneNodes_.size() && i < shown.instances.size(); ++i)
@@ -2726,14 +2713,13 @@ void Editor::viewport() {
                         ImGui::Text("Nodes %zu | Bodies %zu", renderObjects_.size(), physics_ ? physics_->bodyCount() : 0);
                         ImGui::Text("Particles ~%zu | Systems %zu",particleCount_,particleSystemCount_);
                         ImGui::Text("UI / scripts: %.2f / %.2f ms", t.uiMs, t.scriptMs);
-                        ImGui::Text("Physics step: %.2f ms", t.physicsStepMs);
-                        ImGui::Text("Physics apply/prepare: %.2f ms", t.physicsApplyMs + t.physicsPrepareMs);
+                        ImGui::Text("Physics: %.2f ms", t.physicsMs);
                         ImGui::Text("Scene snapshot: %.2f ms", t.snapshotMs);
                         ImGui::Text("Render sync: %.2f ms", t.renderSyncMs);
                         ImGui::Text("Render / present: %.2f ms", t.renderMs);
-                        ImGui::Text("Physics wait: %.2f ms", t.waitMs);
+                        ImGui::Text("Simulation wait: %.2f ms", t.waitMs);
                         if (ImGui::IsItemHovered())
-                            ImGui::SetTooltip("CPU wall times; physics and rendering overlap.\nRender / present includes GPU and display waits.");
+                            ImGui::SetTooltip("CPU wall times; with frame delay, simulation and rendering overlap.\nRender / present includes GPU and display waits.");
                     }
                 }
                 ImGui::EndChild();

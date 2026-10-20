@@ -37,7 +37,7 @@ int main() {
         require(physics.bodyCount()==4,"Scene bodies were not created");
         std::array<std::array<throne::Vec3,3>,240> first;
         for (auto& sample:first) {
-            physics.prepare(expanded); physics.advance(1.0f/60); physics.apply(expanded);
+            physics.step(expanded);
             for (int i=0;i<3;++i) sample[i]=expanded.instances[0].expansion.nodes[i+1].node.transform->position;
         }
         for (int i=0;i<3;++i) {
@@ -48,7 +48,7 @@ int main() {
         auto serial=fixture();
         physics.setSerial(true); physics.load(serial);
         for (const auto& expected:first) {
-            physics.prepare(serial); physics.advance(1.0f/60); physics.apply(serial);
+            physics.step(serial);
             for (int i=0;i<3;++i)
                 require(serial.instances[0].expansion.nodes[i+1].node.transform->position==expected[i],
                         "Serial and parallel physics diverged");
@@ -119,15 +119,13 @@ int main() {
                     expandedPrefab.nodes[0].node.rigidBody->gravityScale==0,"Physics prefab overrides were lost");
             std::filesystem::remove_all(root);
         }
-        // UI/console commands between frames must not be overwritten by an older result.
+        // Script/console commands between steps are the next step's input.
         {
             auto commanded=fixture(); physics.load(commanded);
-            physics.prepare(commanded); physics.advance(1.0f/60);
+            physics.step(commanded);
             auto& node=commanded.instances[0].expansion.nodes[2].node;
             node.transform->position.y=8; node.rigidBody->linearVelocity={0,3,0};
-            physics.apply(commanded);
-            require(node.transform->position.y==8 && node.rigidBody->linearVelocity.y==3,"Old physics result overwrote a new command");
-            physics.prepare(commanded); physics.advance(1.0f/60); physics.apply(commanded);
+            physics.step(commanded);
             require(node.transform->position.y>8,"Teleport/velocity command did not enter Box3D");
         }
         {
@@ -137,7 +135,7 @@ int main() {
             kinematic.rigidBody->linearVelocity={1,0,0};
             modes.instances[0].expansion.nodes[2].node.sphereCollider->sensor=true;
             physics.load(modes);
-            for(int frame=0;frame<120;++frame) {physics.prepare(modes);physics.advance(1.0f/60);physics.apply(modes);}
+            for(int frame=0;frame<120;++frame) physics.step(modes);
             require(std::abs(kinematic.transform->position.x)<.02f && kinematic.transform->position.y==4,
                     "Kinematic body did not follow velocity independently of gravity");
             require(modes.instances[0].expansion.nodes[2].node.transform->position.y<-5,"Sensor produced a collision response");
@@ -149,7 +147,7 @@ int main() {
         nested.instances[0].expansion.nodes[1].node.rigidBody->type=throne::BodyType::Static;
         physics.load(nested);
         for(int frame=0;frame<240;++frame) {
-            physics.prepare(nested); physics.advance(1.0f/60); physics.apply(nested);
+            physics.step(nested);
         }
         require(nested.instances[0].expansion.nodes[1].node.transform->position==throne::Vec3{-2,4,0},"Static body moved");
         require(std::abs(nested.instances[0].expansion.nodes[2].node.transform->position.y-.5f)<.15f,
@@ -159,7 +157,7 @@ int main() {
         outside.instances[0].expansion.nodes[2].node.transform->position.x=20;
         physics.load(outside);
         for(int frame=0;frame<120;++frame) {
-            physics.prepare(outside); physics.advance(1.0f/60); physics.apply(outside);
+            physics.step(outside);
         }
         require(outside.instances[0].expansion.nodes[2].node.transform->position.y < -5,"PlaneCollider was not finite");
         outside.instances[0].expansion.nodes[0].node.rigidBody.emplace();
@@ -181,9 +179,7 @@ int main() {
             const auto bodies = simulation.bodyCount();
             const auto tick = [&](float dt) {
                 scripts.update(dt, [&](const std::string& stage) {
-                    if (stage == "ApplyPhysics") simulation.apply(growing);
-                    if (stage == "SyncRender") simulation.prepare(growing);
-                    if (stage == "Box3D") simulation.advance(dt);
+                    if (stage == "Box3DStep") simulation.step(growing);
                 });
             };
             tick(.05f);
@@ -191,10 +187,10 @@ int main() {
             tick(.05f);
             require(growing.instances[0].expansion.nodes.size() == initial + 1, "Spawner did not fire at 0.1s");
             require(simulation.bodyCount() == bodies + 1, "Spawned box did not enter physics");
-            tick(.35f);
-            require(growing.instances[0].expansion.nodes.size() == initial + 4, "Spawner lost catch-up intervals");
+            // One frame may run several UpdateLoop passes (at most a quarter second).
+            tick(.25f);
+            require(growing.instances[0].expansion.nodes.size() == initial + 3, "Spawner lost catch-up intervals");
             for (int i = 0; i < 600; ++i) tick(1.0f / 60);
-            simulation.apply(growing);
             const auto& nodes = growing.instances[0].expansion.nodes;
             require(nodes.size() >= initial + 103 && nodes.size() <= initial + 105, "Spawner did not keep generating boxes");
             require(simulation.bodyCount() == bodies + nodes.size() - initial, "Incremental physics duplicated or missed bodies");

@@ -186,8 +186,8 @@ the final OGRE marker is also written to standard error.
 frame time, scene node count and active physics body count. Its **− / +** button
 switches between the full panel and a single FPS row. Expanded statistics also
 show CPU wall times for UI/scripts, physics, scene copying, render synchronization,
-render/present and waiting for physics. Physics and rendering overlap; render/present
-includes GPU/driver/display waits and is not a GPU timestamp. The panel is enabled
+render/present and waiting for simulation. With frame delay, simulation and rendering
+overlap; render/present includes GPU/driver/display waits and is not a GPU timestamp. The panel is enabled
 by default.
 
 `ogrethrone --profile-physics [project] [output.csv]` profiles a temporary copy of
@@ -293,15 +293,16 @@ the scene workspace, so unseen scenes do not keep issuing draw calls. Returning
 to the Viewport restores the checkbox's preference. Synchronization uses Vulkan
 FIFO presentation; turning it off allows immediate presentation when supported.
 
-Select **Systems → Parallel → OGRE** to inspect rendering settings. **Game
+Select **OGRE** in the Systems panel to inspect rendering settings. **Game
 rendering (project) → VSync** is a separate project-wide setting, saved in
 `project.throne.lton` as `rendering = { vsync = true^ }`. It supports Save and Undo
 and never overrides editor Play's checkbox. Standalone game execution is not yet
 implemented; this setting records its presentation preference. A level's rendering
 (Forward Clustered and its depth range, Show Clusters) is in the level's Inspector,
 and the environment and global illumination are in each scene's (below).
-Box3D and Animator are selectable too; their Inspectors currently show only the
-system name, reserving the same place for future settings.
+The other engine stages (Box3DStep, Animation, the Sync barriers) are selectable too;
+their Inspectors currently show only the stage name, reserving the same place for
+future settings.
 
 Paths are relative to the project folder. `main.lh` at the top of the project is the
 game's entry point and organizer (which levels to play, in what order); new
@@ -364,8 +365,9 @@ effect at the next frame boundary. Sorting is done when configuration changes.
 Callbacks accept ordinary functions and procedures. Their result is ignored unless
 it is a coroutine, in which case the system drives it immediately and retains its
 suspended invocation. `yield^ nil^` waits for the next visit of the originating
-system; `yield^ target` waits for a serial `throne.System`. A later phase can resume
-in the same frame; the current or an earlier phase resumes next frame. Each method
+system; `yield^ target` waits for a script `throne.System`. A later stage can resume
+in the same UpdateLoop pass; the current or an earlier stage resumes in the next pass
+(EndOfFrameBehaviourSystem and the stages after it: the next frame). Each method
 is independent and never overlaps itself. Disabling freezes pending invocations;
 removing an attachment or stopping Play disposes them, running `finally^`.
 
@@ -384,20 +386,40 @@ including editing fields, adding attachments, and removing them.
 
 The level owns the execution schedule. The Systems panel shows engine stages and
 user stages together, expands their attachments in execution order, adds user stages,
-and moves them between the fixed engine stages. The default schedule is:
+and moves them among the simulation stages. There is only a fixed update: UpdateLoop
+runs once per elapsed 1/60 s (catching up at most a quarter second per frame), each
+pass with `dt` = 1/60; EndOfFrameBehaviourSystem and the stages after it run once per
+frame with the time the passes advanced. The level's `serialExecution` chooses between
+two frames:
 
 ```text
-FetchInput -> ApplyPhysics -> UpdateBehaviourSystem -> LateUpdateBehaviourSystem
-           -> SyncRender -> [OGRE / Box3D / Animator] -> SyncSimulation
-           -> EndOfFrameBehaviourSystem
+serialExecution = false^ (default)       serialExecution = true^
+SyncSimulation                           FetchInput
+Parallel                                 UpdateLoop x n
+    Rendering (main thread)                  UpdateBehaviourSystem
+        PreRenderEventSystem                 LateUpdateBehaviourSystem
+        OGRE                                 Animation
+        PostRenderEventSystem                Box3DStep
+    Simulation (worker thread)           EndOfFrameBehaviourSystem
+        FetchInput                       SyncSimulation
+        UpdateLoop x n                   PreRenderEventSystem
+            UpdateBehaviourSystem        OGRE
+            LateUpdateBehaviourSystem    PostRenderEventSystem
+            Animation                    SyncRender
+            Box3DStep
+        EndOfFrameBehaviourSystem
+SyncRender
 ```
 
-OGRE stays on the main thread; the engine group joins before the next stage. Serial
-mode uses the same barriers and render snapshots. During Play, drawing uses the
-previous frame's snapshot, so direct Behaviour changes appear one frame later.
-Box3D uses a bounded native task pool and simulates the playing scene. Completed
-poses are applied at the next ApplyPhysics stage; physics motion appears two frames
-later. Animator currently has no animation components to process.
+SyncSimulation copies the simulated scene to the render snapshot; SyncRender joins the
+two columns and ends the frame. Without the flag, rendering draws the previous frame's
+snapshot while simulation computes this one, so script and physics changes appear one
+frame later; with it, they appear in the same frame and nothing overlaps. Scripts and
+the editor UI never run at the same time, and OGRE stays on the main thread.
+Box3DStep advances Box3D by one fixed step with a bounded native task pool, taking the
+scene's edits as input and writing poses back, so the next stage already sees them.
+Animation currently has no animation components to process; the render event stages
+have no script components yet.
 
 A Behaviour script attached directly to a system receives the system in its
 optional callbacks. It can iterate
@@ -427,8 +449,8 @@ The `throne` module provides:
 - `throne.BoxPrimitive`: `colour()` and `setColour(v)`, kept in [0, 1].
 - A component handle whose node or component is gone panics.
 - `throne.System`: `name()`; passed to direct system attachments and Systems.
-- `throne.system(name)`: a serial script system handle, or nil. Native engine
-  barriers and parallel members cannot be coroutine wait targets.
+- `throne.system(name)`: a script system handle (a user stage or a
+  BehaviourSystem), or nil. Native engine stages cannot be coroutine wait targets.
 - `throne.currentSystem()`: the current callback/resume context, or nil outside
   system execution.
 - `node.setBehaviourPriority(index, numberOrNil)` and
@@ -653,8 +675,8 @@ shape dimensions and collider centres are readable. Body transform edits become
 teleports at the next physics preparation step.
 
 For a reproducible graphical check, `--smoke-physics [project] [capture-directory]`
-plays a temporary project copy for 240 fixed frames and checks that Play remains
-active and Forward Clustered is selected. Initial shadow ON/OFF frames must differ;
+captures the initial scene, then plays a temporary project copy until frame 240 at
+a fixed 1/60 s, checking that Play remains active and Forward Clustered is selected. Initial shadow ON/OFF frames must differ;
 after Stop, unshadowed rendering must exactly match the initial unshadowed frame,
 and enabling shadows must affect the restored frame. This keeps PCF edge sampling
 variation separate from exact geometry/lighting restoration. Viewport frames 2, 3,

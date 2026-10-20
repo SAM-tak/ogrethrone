@@ -23,7 +23,7 @@ struct Session {
         runtime=std::make_unique<throne::ScriptRuntime>(world,expanded,root,[this](const auto& text) { log.push_back(text); },throne::PlayScope::Level);
     }
     /// Starts a frame and returns only that frame's callback log.
-    const std::vector<std::string>& frame() { log.clear(); runtime->update(.016f); return log; }
+    const std::vector<std::string>& frame() { log.clear(); runtime->update(static_cast<float>(throne::fixedStep)); return log; }
     /// Mutates attachments through the same API a game uses.
     void eval(const std::string& text) {
         const auto answer=runtime->evaluate("import^ throne\n"+text);
@@ -259,7 +259,7 @@ nodes={ {id=1,name="Data",parent=0,components={
         data.world.scenes["scene.lton"].save(root/"data-again.scene.lton");
         data.world.scenes["scene.lton"]=throne::Scene::load(root/"data-again.scene.lton");
         data.open(root); data.frame();
-        require(std::abs(data.expanded.instances[0].expansion.nodes[0].node.transform->rotation.y-2.16f)<.001f,
+        require(std::abs(data.expanded.instances[0].expansion.nodes[0].node.transform->rotation.y-2.25f)<.001f,
                 "Repeated scripts did not own independent data after loading components.behaviour");
         write(root,"obsolete.scene.lton",R"(format="ogrethrone-scene",version=2,
 nodes={ {id=1,name="Obsolete",parent=0,behaviours={{script="data.lh"}}} },

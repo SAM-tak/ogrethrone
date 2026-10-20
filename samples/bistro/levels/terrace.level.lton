@@ -24,35 +24,12 @@ scenes = {
 },
 serialExecution = false^,
 stages = {
-    {
-        name = "FetchInput",
-    },
-    {
-        name = "ApplyPhysics",
-    },
-    {
-        name = "UpdateBehaviourSystem",
-    },
-    {
-        name = "LateUpdateBehaviourSystem",
-    },
-    {
-        name = "SyncRender",
-    },
-    {
-        name = "Parallel",
-        parallel = {
-            "OGRE",
-            "Box3D",
-            "Animator",
-        },
-    },
-    {
-        name = "SyncSimulation",
-    },
-    {
-        name = "EndOfFrameBehaviourSystem",
-    },
+    "FetchInput",
+    "UpdateBehaviourSystem",
+    "LateUpdateBehaviourSystem",
+    "Animation",
+    "Box3DStep",
+    "EndOfFrameBehaviourSystem",
 },
 systems = {
 },

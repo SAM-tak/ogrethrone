@@ -59,28 +59,33 @@ public^let^ Behaviour = def^{
         world.level.addScene("scene.lton");
         world.level.addScene("scene.lton");
         world.level.addSystem("Update").behaviour.push_back({"system.lh", {}});
-        world.level.stages.insert(world.level.stages.begin() + 3, {"Late", {}});
+        world.level.stages.insert(world.level.stages.begin() + 3, "Late");
         scene.save(root / "scene.lton");
         world.level.save(root / "level.lton");
         world.scenes["scene.lton"] = throne::Scene::load(root / "scene.lton");
         world.level = throne::Level::load(root / "level.lton");
-        require(world.level.stages[3].name == "Late", "Schedule lost on save");
+        require(world.level.stages[3] == "Late", "Schedule lost on save");
         throne::Library library(root);
         auto expanded = throne::expand(world, library);
         std::vector<std::string> log;
         throne::ScriptRuntime runtime(world, expanded, root, [&](const std::string& text) { log.push_back(text); },
                                      throne::PlayScope::Level);
-        runtime.update(0.5f);
+        // One fixed step: UpdateLoop runs once, with dt = 1/60.
+        runtime.update(static_cast<float>(throne::fixedStep));
         require(log == std::vector<std::string>{"system Update", "start Parent", "Parent", "start Child", "Child",
                                                "start Parent", "Parent", "start Child", "Child"}, "Stage or hierarchy order wrong");
-        require(std::fabs(expanded.instances[0].expansion.nodes[0].node.transform->rotation.y - 15) < .01f,
+        require(std::fabs(expanded.instances[0].expansion.nodes[0].node.transform->rotation.y - .5f) < .001f,
                 "System failed to query built-in components");
-        require(std::fabs(expanded.instances[1].expansion.nodes[1].node.transform->position.x - 10) < .01f,
+        require(std::fabs(expanded.instances[1].expansion.nodes[1].node.transform->position.x - 20.0f / 60) < .001f,
                 "Node behaviour did not receive its own node");
+        // Time below one step runs no UpdateLoop pass; the remainder carries over.
+        log.clear();
+        runtime.update(static_cast<float>(throne::fixedStep / 2));
+        require(log.empty(), "UpdateLoop ran before a whole step elapsed");
         const auto move = runtime.evaluate("import^ throne\nlet^ n = throne.find(\"Parent\")\nlet^ r = throne.system(\"Late\")\nif^ n != nil^ and^ r != nil^ { n.setBehaviourPriority(0, 2) }");
         require(move.text.empty(), move.text.c_str());
         log.clear();
-        runtime.update(.5f);
+        runtime.update(static_cast<float>(throne::fixedStep));
         require(log == std::vector<std::string>{"system Update", "Child", "Parent", "Child", "Parent"},
                 "Moving a behaviour repeated start or changed other instances");
         require(throne::ScriptRuntime::fields(root, "node.lh").size() == 1, "Node inspector field reflection failed");
@@ -148,47 +153,49 @@ if^ n != nil^ { let^ t:throne.BoxPrimitive|nil^ = n.component(throne.Transform) 
         require(resolved.nodes[0].node.behaviour.empty(), "Prefab Behaviour removal failed");
 
         const auto mainThread = std::this_thread::get_id();
+        const bool threaded = std::thread::hardware_concurrency() >= 2;
         for (const bool serial : {false, true}) {
-            int completed = 0;
-            std::mutex mutex;
-            throne::runStages(throne::defaultStages(), serial, [&](const std::string& stage) {
-                if (stage == "OGRE") require(std::this_thread::get_id() == mainThread, "OGRE left main thread");
-                if (stage == "Box3D" || stage == "Animator") { std::lock_guard<std::mutex> lock(mutex); ++completed; }
-                if (stage == "SyncSimulation") require(completed == 2, "Simulation barrier did not join workers");
+            std::vector<std::string> order;
+            bool simulationOnMain = true;
+            throne::runFrame(throne::defaultStages(), serial, 3, [&](const std::string& stage) {
+                const bool main = std::this_thread::get_id() == mainThread;
+                if (stage == "OGRE") require(main, "OGRE left main thread");
+                if (stage == "FetchInput") simulationOnMain = main;
+                if (stage == "SyncSimulation" || stage == "SyncRender") require(main, "Barrier left main thread");
+                static std::mutex mutex;
+                std::lock_guard<std::mutex> lock(mutex);
+                if (!throne::isEngineStage(stage) || throne::behaviourPhase(stage) >= 0 || stage == "FetchInput" ||
+                    stage == "Box3DStep" || stage == "SyncRender") order.push_back(stage);
             });
+            require(simulationOnMain == (serial || !threaded), "Simulation ran on the wrong thread");
+            std::vector<std::string> expected{"FetchInput"};
+            for (int pass = 0; pass < 3; ++pass)
+                expected.insert(expected.end(), {"UpdateBehaviourSystem", "LateUpdateBehaviourSystem", "Box3DStep"});
+            expected.insert(expected.end(), {"EndOfFrameBehaviourSystem", "SyncRender"});
+            require(order == expected, "UpdateLoop passes or the SyncRender join are wrong");
         }
-        // Rendering sees the previous capture, and simulation results enter the following capture.
-        std::vector<int> parallelFrames;
+        // Serial rendering shows this frame's simulation; otherwise it shows the previous frame's.
         for (const bool serial : {false, true}) {
-            int node = 0, render = 0, next = 0, input = 0, result = 0;
+            int node = 0, render = 0;
             std::vector<int> drawn;
             for (int frame = 0; frame < 3; ++frame)
-                throne::runStages(throne::defaultStages(), serial, [&](const std::string& stage) {
+                throne::runFrame(throne::defaultStages(), serial, 1, [&](const std::string& stage) {
                     if (stage == "UpdateBehaviourSystem") node += 10;
-                    if (stage == "SyncRender") input = node, next = node;
+                    if (stage == "SyncSimulation") render = node;
                     if (stage == "OGRE") drawn.push_back(render);
-                    if (stage == "Box3D") result = input + 1;
-                    if (stage == "SyncSimulation") node = result, render = next;
                 });
-            require(drawn == std::vector<int>{0, 10, 21}, "Frame snapshot latency changed");
-            if (!serial) parallelFrames = drawn;
-            else require(drawn == parallelFrames, "Serial execution changed snapshot timing");
+            require(drawn == (serial ? std::vector<int>{10, 20, 30} : std::vector<int>{0, 10, 20}),
+                    "Frame delay changed");
         }
-        // An exception on the main thread must still join both simulation drivers.
-        int joined = 0;
-        std::mutex joinedMutex;
-        bool rendererFailed = false;
+        // An exception on the main thread must still join the simulation.
+        bool simulated = false, rendererFailed = false;
         try {
-            throne::runStages(throne::defaultStages(), false, [&](const std::string& stage) {
+            throne::runFrame(throne::defaultStages(), false, 1, [&](const std::string& stage) {
                 if (stage == "OGRE") throw std::runtime_error("renderer failure");
-                if (stage == "Box3D" || stage == "Animator") {
-                    std::lock_guard<std::mutex> lock(joinedMutex);
-                    ++joined;
-                }
+                if (stage == "EndOfFrameBehaviourSystem") simulated = true;
             });
         } catch (const std::runtime_error&) { rendererFailed = true; }
-        require(rendererFailed && joined == (std::thread::hardware_concurrency() < 3 ? 0 : 2),
-                "A failed renderer left simulation work running");
+        require(rendererFailed && simulated == threaded, "A failed renderer left simulation work running");
         // Non-finite ordering values must be refused before sorting any query.
         auto rejectedWorld = world;
         rejectedWorld.scenes["scene.lton"].nodes[0].behaviour[0].priority = std::numeric_limits<double>::infinity();

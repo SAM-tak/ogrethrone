@@ -154,7 +154,7 @@ void showcaseSmoke(Editor& editor, Ogre::Window& window, Ogre::SceneManager& sce
         settle(); require(before!=capture(std::string(name)+"-play"),"Showcase rotation script did not animate");
         tap(ImGuiKey_Pause); require(editor.paused(),"Showcase Pause failed");
         const auto paused=capture(std::string(name)+"-paused"); settle();
-        require(editor.frameTimings().scriptMs==0 && editor.frameTimings().physicsStepMs==0,"Paused showcase still executed simulation");
+        require(editor.frameTimings().scriptMs==0 && editor.frameTimings().physicsMs==0,"Paused showcase still executed simulation");
         require(same(paused,capture(std::string(name)+"-paused-again")),"Paused showcase kept animating");
         tap(ImGuiKey_F5); require(!editor.playing(),"Showcase Stop failed"); settle();
         require(same(before,capture(std::string(name)+"-stopped")),"Stop did not restore the authored showcase");

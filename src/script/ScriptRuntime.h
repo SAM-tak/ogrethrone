@@ -54,8 +54,8 @@ enum class PlayScope {
 
 /// Runs a world's L^ node Behaviours, direct system attachments.
 /// Each Play checks and compiles its scripts, then constructs isolated Behaviour
-/// instances for every expanded scene/prefab instance. All VM calls
-/// stay on the calling thread; native engine callbacks may run in the parallel group.
+/// instances for every expanded scene/prefab instance. VM calls run on one thread at a
+/// time: the simulation column's, or the caller's between frames (console input).
 class ScriptRuntime {
 public:
     /// Receives text the scripts pass to throne.log, and warnings about field values.
@@ -76,15 +76,19 @@ public:
     ScriptRuntime(const ScriptRuntime&) = delete;
     ScriptRuntime& operator=(const ScriptRuntime&) = delete;
 
-    /// Runs main.lh (Game scope) and the level schedule. BehaviourSystems query
-    /// enabled methods in effective-priority order, with hierarchy/attachment ties.
+    /// Runs main.lh (Game scope) and one frame of the level schedule: FetchInput, one
+    /// UpdateLoop pass per elapsed fixedStep (dt is fixedStep), then the stages from
+    /// EndOfFrameBehaviourSystem on (dt is the time those passes advanced). BehaviourSystems
+    /// query enabled methods in effective-priority order, with hierarchy/attachment ties.
     /// Each method owns its suspended invocation independently; start runs once.
     /// @throws ScriptError on a run-time failure or a frame over budget.
-    void update(float deltaSeconds);
-    /// Runs engine callbacks at the same barriers as script stages; OGRE stays on this thread.
-    void update(float deltaSeconds, const std::function<void(const std::string&)>& engine);
-    /// Effective level schedule, including direct systems declared in scenes or prefabs.
-    static std::vector<ExecutionStage> schedule(const World& world, const LevelExpansion& expanded);
+    FrameTimes update(float deltaSeconds);
+    /// Also passes every stage, the render column and barriers included, to @p engine
+    /// before its scripts run. The simulation column, scripts included, runs on a worker
+    /// thread unless the level is serial; the render column stays on this thread.
+    FrameTimes update(float deltaSeconds, const std::function<void(const std::string&)>& engine);
+    /// Effective simulation column, including direct systems declared in scenes or prefabs.
+    static std::vector<std::string> schedule(const World& world, const LevelExpansion& expanded);
     /// True once main.lh has run to its end (Game scope only).
     bool finished() const;
 

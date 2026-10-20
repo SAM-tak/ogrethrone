@@ -257,17 +257,17 @@ void Editor::systemsPanel() {
         ImGui::BeginDisabled(runtime_ != nullptr);
         auto& level = doc_.world.level;
         bool serial = level.serialExecution;
-        if (ImGui::Checkbox("Run engine group serially", &serial)) checkpoint(), level.serialExecution = serial;
+        if (ImGui::Checkbox("No frame delay (serial)", &serial)) checkpoint(), level.serialExecution = serial;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("On: rendering shows this frame's simulation, after it.\n"
+                              "Off: rendering shows the previous frame while simulation runs on a worker thread.");
         static char newStage[256] = "CustomSystem";
         ImGui::InputText("System name", newStage, sizeof newStage);
-        if (ImGui::Button("Add System Stage") && newStage[0]) {
+        if (ImGui::Button("Add System Stage") && newStage[0] && !isEngineStage(newStage)) {
             const auto stages = ScriptRuntime::schedule(doc_.world, view_);
-            if (std::none_of(stages.begin(), stages.end(), [&](const ExecutionStage& stage) { return stage.name == newStage || std::find(stage.parallel.begin(), stage.parallel.end(), newStage) != stage.parallel.end(); })) {
+            if (std::find(stages.begin(), stages.end(), newStage) == stages.end()) {
                 checkpoint();
-                const auto at = std::find_if(level.stages.begin(), level.stages.end(), [](const ExecutionStage& stage) {
-                    return stage.name == "SyncRender";
-                });
-                level.stages.insert(at, {newStage, {}});
+                level.stages.insert(std::find(level.stages.begin(), level.stages.end(), "Animation"), newStage);
             }
         }
         if (ImGui::Button("+ Script System")) addSystem();
@@ -287,15 +287,23 @@ void Editor::systemsPanel() {
                 ImGui::BulletText("%s [Behaviour]", behaviour.script.c_str());
             ImGui::PopID();
         };
-        for (const auto& stage : stages) {
-            const int phase=behaviourPhase(stage.name);
-            const bool engine = phase>=0 || !stage.parallel.empty() || stage.name == "FetchInput" || stage.name == "ApplyPhysics" ||
-                stage.name == "SyncRender" || stage.name == "SyncSimulation";
-            ImGui::PushID(stage.name.c_str());
-            const bool open = ImGui::TreeNodeEx(stage.name.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
-            if (!engine) {
+        // Native engine stages are leaves; OGRE's Inspector holds the rendering settings.
+        const auto engineStage = [&](const std::string& name) {
+            if (ImGui::Selectable(name.c_str(), selected_.kind == Selection::Kind::EngineSystem && selected_.engine == name))
+                selected_ = {Selection::Kind::EngineSystem, -1, {}, 0, name};
+            if (!ImGui::IsItemHovered()) return;
+            if (name == "OGRE") ImGui::SetTooltip("Rendering settings");
+            if (name == "SyncSimulation") ImGui::SetTooltip("Copies the simulation's scene to the render snapshot");
+            if (name == "SyncRender") ImGui::SetTooltip("Joins rendering and simulation; the frame ends");
+        };
+        const auto stageRow = [&](std::size_t index) {
+            const auto& stage = stages[index];
+            const int phase=behaviourPhase(stage);
+            if (isEngineStage(stage) && phase < 0) return engineStage(stage);
+            ImGui::PushID(stage.c_str());
+            const bool open = ImGui::TreeNodeEx(stage.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
+            if (phase < 0) {
                 ImGui::BeginDisabled(runtime_ != nullptr);
-                const auto index = static_cast<std::size_t>(&stage - stages.data());
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Up") && index > 1) {
                     checkpoint();
@@ -309,9 +317,9 @@ void Editor::systemsPanel() {
                     std::swap(level.stages[index], level.stages[index + 1]);
                 }
                 bool used = false;
-                for (const auto& system : level.systems) used |= system.name == stage.name;
+                for (const auto& system : level.systems) used |= system.name == stage;
                 for (const auto& instance : view_.instances) {
-                    for (const auto& system : instance.expansion.systems) used |= system.system.name == stage.name;
+                    for (const auto& system : instance.expansion.systems) used |= system.system.name == stage;
                 }
                 ImGui::SameLine();
                 ImGui::BeginDisabled(used);
@@ -324,20 +332,15 @@ void Editor::systemsPanel() {
                 ImGui::EndDisabled();
             }
             if (open) {
-                for (const auto& member : stage.parallel) {
-                    if(ImGui::Selectable(member.c_str(),selected_.kind==Selection::Kind::EngineSystem && selected_.engine==member))
-                        selected_={Selection::Kind::EngineSystem,-1,{},0,member};
-                    if(member=="OGRE" && ImGui::IsItemHovered()) ImGui::SetTooltip("Rendering settings");
-                }
                 // Script Systems own their stage; BehaviourSystems query node attachments below.
                 for (std::size_t i = 0; i < view_.instances.size(); ++i)
                     for (const auto& system : view_.instances[i].expansion.systems)
-                        if (system.system.name == stage.name) direct(system.system, static_cast<int>(i), system.instance);
+                        if (system.system.name == stage) direct(system.system, static_cast<int>(i), system.instance);
                 for (const auto& system : level.systems)
-                    if (system.name == stage.name) direct(system, -1, {});
+                    if (system.name == stage) direct(system, -1, {});
                 if(phase>=0) ImGui::TextDisabled("Query: enabled Behaviour.%s | order_by: effective priority",behaviourMethods[phase]);
                 std::vector<BehaviourMatch> matches;
-                if(runtime_) matches=runtime_->behaviourMatches(stage.name);
+                if(runtime_) matches=runtime_->behaviourMatches(stage);
                 else if(phase>=0) {
                     for(std::size_t i=0;i<view_.instances.size();++i)
                         for(const auto n:view_.instances[i].expansion.hierarchy()) {
@@ -366,11 +369,35 @@ void Editor::systemsPanel() {
                 ImGui::TreePop();
             }
             ImGui::PopID();
-        }
-        const auto invalid = [&](const System& system) {
-            return std::none_of(stages.begin(), stages.end(), [&](const ExecutionStage& stage) {
-                return stage.name == system.name;
+        };
+        const auto group = [&](const char* name, const char* tip, const std::function<void()>& rows) {
+            const bool open = ImGui::TreeNodeEx(name, ImGuiTreeNodeFlags_DefaultOpen);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+            if (!open) return;
+            rows();
+            ImGui::TreePop();
+        };
+        const auto loopEnd = static_cast<std::size_t>(std::find(stages.begin(), stages.end(), behaviourSystems[2]) - stages.begin());
+        const auto simulation = [&] {
+            stageRow(0);
+            group("UpdateLoop", "Runs once per elapsed 1/60 s", [&] { for (std::size_t i = 1; i < loopEnd; ++i) stageRow(i); });
+            for (std::size_t i = loopEnd; i < stages.size(); ++i) stageRow(i);
+        };
+        const auto rendering = [&] { for (const char* stage : renderStages) engineStage(stage); };
+        if (level.serialExecution) {
+            simulation();
+            engineStage("SyncSimulation");
+            rendering();
+        } else {
+            engineStage("SyncSimulation");
+            group("Parallel", "Rendering draws the previous frame while simulation computes this one", [&] {
+                group("Rendering", "Main thread", rendering);
+                group("Simulation", "Worker thread", simulation);
             });
+        }
+        engineStage("SyncRender");
+        const auto invalid = [&](const System& system) {
+            return std::find(stages.begin(), stages.end(), system.name) == stages.end();
         };
         for (std::size_t i = 0; i < view_.instances.size(); ++i)
             for (const auto& system : view_.instances[i].expansion.systems)

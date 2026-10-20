@@ -1,5 +1,6 @@
 #include "runtime/PhysicsWorld.h"
 #include "runtime/Box3DMath.h"
+#include "runtime/FramePipeline.h"
 #include "runtime/TaskPool.h"
 #include <box3d/box3d.h>
 #include <algorithm>
@@ -78,15 +79,13 @@ b3ShapeDef shapeDef(const Collider& c) {
 
 struct PhysicsWorld::State {
     TaskPool tasks;
-    bool serial = false, pending = false;
-    double accumulator = 0;
+    bool serial = false;
     b3WorldId world;
     struct Body {
         std::size_t scene, node;
         b3BodyId id;
         Pose input;
         RigidBody settings;
-        Transform localInput;
     };
     std::vector<Body> bodies;
     std::vector<std::size_t> scanned;
@@ -170,7 +169,7 @@ struct PhysicsWorld::State {
                 def.gravityScale=settings.gravityScale; def.isBullet=settings.bullet;
                 auto body=b3CreateBody(this->world,&def);
                 shapes(body,node,world[at].scale);
-                bodies.push_back({scene,at,body,world[at],settings,node.transform.value_or(Transform{})});
+                bodies.push_back({scene,at,body,world[at],settings});
             }
             scanned[scene] = instance.expansion.nodes.size();
         }
@@ -190,7 +189,7 @@ void PhysicsWorld::load(const LevelExpansion& expanded) {
     state_=std::move(fresh);
 }
 
-void PhysicsWorld::prepare(const LevelExpansion& expanded) {
+void PhysicsWorld::step(LevelExpansion& expanded) {
     state_->append(expanded);
     for (auto& body : state_->bodies) {
         const auto& instance=expanded.instances.at(body.scene);
@@ -214,49 +213,28 @@ void PhysicsWorld::prepare(const LevelExpansion& expanded) {
             body.settings=c;
         }
         body.input=world;
-        body.localInput=node.transform.value_or(Transform{});
     }
-}
-
-void PhysicsWorld::advance(float deltaSeconds) {
-    if (!std::isfinite(deltaSeconds) || deltaSeconds<0) throw std::runtime_error("Physics delta time must be finite and nonnegative");
-    state_->accumulator+=(std::min)(double(deltaSeconds),0.25);
-    constexpr double step=1.0/60.0;
-    while (state_->accumulator+1.0e-9>=step) {
-        b3World_Step(state_->world,static_cast<float>(step),4);
-        state_->accumulator-=step;
-    }
-    state_->pending=true;
-}
-
-void PhysicsWorld::apply(LevelExpansion& expanded) {
-    if (!state_->pending) return;
+    b3World_Step(state_->world,static_cast<float>(fixedStep),4);
     // Bodies were collected in hierarchy order, so children see their updated parent.
     for (auto& body : state_->bodies) {
         auto& instance=expanded.instances.at(body.scene);
         auto& node=instance.expansion.nodes.at(body.node).node;
         if (!node.rigidBody || node.rigidBody->type == BodyType::Static) continue;
         const auto parent=parentPose(instance,body.node);
-        const bool teleported=node.transform->position!=body.localInput.position || node.transform->rotation!=body.localInput.rotation;
-        if(!teleported) {
-            const auto position=fromB3Pos(b3Body_GetPosition(body.id));
-            const auto q=b3Body_GetRotation(body.id);
-            const auto local=fromB3Pos(b3InvRotateVector(parent.rotation,vector(position-parent.position)));
-            node.transform->position={local.x/parent.scale.x,local.y/parent.scale.y,local.z/parent.scale.z};
-            node.transform->rotation=euler(b3InvMulQuat(parent.rotation,q));
-            const auto previousScale=body.input.scale;
-            body.input=compose(parent,*node.transform);
-            body.input.scale=previousScale; // prepare must still observe scale edits.
-            body.localInput=*node.transform;
-        }
+        const auto position=fromB3Pos(b3Body_GetPosition(body.id));
+        const auto q=b3Body_GetRotation(body.id);
+        const auto local=fromB3Pos(b3InvRotateVector(parent.rotation,vector(position-parent.position)));
+        node.transform->position={local.x/parent.scale.x,local.y/parent.scale.y,local.z/parent.scale.z};
+        node.transform->rotation=euler(b3InvMulQuat(parent.rotation,q));
+        const auto previousScale=body.input.scale;
+        body.input=compose(parent,*node.transform);
+        body.input.scale=previousScale; // The next step must still observe scale edits.
         const auto linear=fromB3Pos(b3Body_GetLinearVelocity(body.id));
         const auto angular=fromB3Pos(b3Body_GetAngularVelocity(body.id))*(1/radians);
-        // Console commands made between frames must survive publication of the old result.
-        if(node.rigidBody->linearVelocity==body.settings.linearVelocity) node.rigidBody->linearVelocity=linear;
-        if(node.rigidBody->angularVelocity==body.settings.angularVelocity) node.rigidBody->angularVelocity=angular;
+        node.rigidBody->linearVelocity=linear;
+        node.rigidBody->angularVelocity=angular;
         body.settings.linearVelocity=linear;
         body.settings.angularVelocity=angular;
     }
-    state_->pending=false;
 }
 }

@@ -46,16 +46,7 @@ void Level::save(const std::filesystem::path& path) const {
     out.set(root, "systems", writeSystems(out, systems));
     validateStages(stages);
     const auto schedule = out.table();
-    for (const auto& stage : stages) {
-        const auto item = out.table();
-        out.set(item, "name", out.string(stage.name));
-        if (!stage.parallel.empty()) {
-            const auto members = out.table();
-            for (const auto& member : stage.parallel) out.push(members, out.string(member));
-            out.set(item, "parallel", members);
-        }
-        out.push(schedule, item);
-    }
+    for (const auto& stage : stages) out.push(schedule, out.string(stage));
     out.set(root, "stages", schedule);
     out.set(root, "serialExecution", lhat_bool(serialExecution));
     out.save(root, path);
@@ -95,16 +86,8 @@ Level Level::load(const std::filesystem::path& path) {
     if (const auto schedule = lton::field(document.root(), "stages"); !lhat_is_nil(schedule)) {
         result.stages.clear();
         const auto& list = lton::table(schedule);
-        for (std::size_t i = 0, n = lton::sequence(list); i < n; ++i) {
-            const auto& item = lton::table(lton::at(list, i));
-            ExecutionStage stage{std::string(lton::string(lton::field(item, "name"))), {}};
-            if (const auto group = lton::field(item, "parallel"); !lhat_is_nil(group)) {
-                const auto& members = lton::table(group);
-                for (std::size_t j = 0, count = lton::sequence(members); j < count; ++j)
-                    stage.parallel.emplace_back(lton::string(lton::at(members, j)));
-            }
-            result.stages.push_back(std::move(stage));
-        }
+        for (std::size_t i = 0, n = lton::sequence(list); i < n; ++i)
+            result.stages.emplace_back(lton::string(lton::at(list, i)));
     }
     if (const auto serial = lton::field(document.root(), "serialExecution"); !lhat_is_nil(serial)) {
         if (!lhat_is_bool(serial)) lton::invalid();

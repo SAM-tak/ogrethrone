@@ -18,13 +18,16 @@ System とシーンの関係は 05 による。エンジンの処理と Behaviou
 
   ```text
   FetchInput
-  ApplyPhysics
-  OGRE / Box3D / Animator    ← 並行して走る組
+  UpdateLoop
+      UpdateBehaviourSystem
+      Animation
+      Box3DStep
+  OGRE
   ```
 
-  - OGRE（描画）は、前のフレームで組み上がったシーンの情報をもとに、メインスレッドで描画を発行する。
-  - Box3D は、前のフレームで確定した位置をもとに、別スレッドで物理を計算する。
-  - Animator は、別スレッドで、今のフレームのデータにアニメーションを適用する。
+  - OGRE（描画）は、SyncSimulation で写したシーンをもとに、メインスレッドで描画を発行する。
+  - Box3DStep は、UpdateLoop の 1 回ごとに物理を固定 1 刻み進める。
+  - Animation は、UpdateLoop の 1 回ごとにアニメーションを適用する。
 - `UpdateBehaviourSystem` は `update`、`LateUpdateBehaviourSystem` は `lateupdate`、`EndOfFrameBehaviourSystem` は `onendofframe` を問い合わせる。同じ Behaviour インスタンスが複数の System に参加する。
 
 ［補足］Unreal の Tick Group と Tick の依存関係は、最終的な実行順が見えないという欠点を持つ。throne の System は、並べた一覧がそのまま実行順になることで、これを避ける（Unity DOTS・Bevy・Flecs も、前後の制約から順番を計算する点では同じ欠点を持つ）。
@@ -101,10 +104,49 @@ update = p^self^, node:throne.SceneNode, dt:number^ { ... },
 
 System は、実行の段の並びになる。レベル全体で 1 本の並びを持ち、上から順に実行する。
 
-- エンジンの System: FetchInput、ApplyPhysics、SyncRender、Parallel、SyncSimulation。消去・並べ替えはできない。
+- エンジンの System: FetchInput、Animation、Box3DStep（シミュレーションの列）、PreRenderEventSystem、OGRE、PostRenderEventSystem（描画の列）、SyncSimulation、SyncRender（同期）。消去・並べ替えはできない。
 - BehaviourSystem: UpdateBehaviourSystem、LateUpdateBehaviourSystem、EndOfFrameBehaviourSystem。対応するメソッドを持つ有効な Behaviour を問い合わせる。
-- ユーザーの System: 名前を付けて固定の段の間に追加できる。直接付けた Behaviour を実行する。
-- 並行の組: OGRE / Box3D / Animator。L^ の VM はメインスレッドだけで動かし、この組では Behaviour を実行しない。
+- ユーザーの System: 名前を付けてシミュレーションの列の FetchInput より後に追加できる。直接付けた Behaviour を実行する。EndOfFrameBehaviourSystem より前なら UpdateLoop の中で走る。
+- 更新は固定刻み（1/60 秒）だけとする（Unity でいう FixedUpdate のみ）。UpdateLoop は経過時間の刻み数だけ回り（1 フレームで取り戻すのは最大 0.25 秒）、その中の段の `dt` は 1/60 秒、EndOfFrameBehaviourSystem 以降の段の `dt` はそのフレームで進んだ時間とする。
+- レベルの `serialExecution` で 2 通りのフレームを選ぶ。
+
+  ```text
+  遅延あり（serialExecution = false^、既定）
+  SyncSimulation
+  Parallel
+      Rendering（メインスレッド）
+          PreRenderEventSystem
+          OGRE
+          PostRenderEventSystem
+      Simulation（ワーカースレッド）
+          FetchInput
+          UpdateLoop
+              UpdateBehaviourSystem
+              LateUpdateBehaviourSystem
+              Animation
+              Box3DStep
+          EndOfFrameBehaviourSystem
+  SyncRender
+
+  遅延なし（serialExecution = true^）
+  FetchInput
+  UpdateLoop
+      UpdateBehaviourSystem
+      LateUpdateBehaviourSystem
+      Animation
+      Box3DStep
+  EndOfFrameBehaviourSystem
+  SyncSimulation
+  PreRenderEventSystem
+  OGRE
+  PostRenderEventSystem
+  SyncRender
+  ```
+
+  - SyncSimulation はシミュレーションのシーンを描画用の写しへコピーする。SyncRender は描画とシミュレーションの合流点で、フレームの終わり。
+  - 遅延ありでは、描画が前フレームの写しを描く間に、シミュレーションが今のフレームを計算する。スクリプトと物理の変更は 1 フレーム後に描かれる。遅延なしでは同じフレームで描かれ、並行には走らない。
+  - L^ の VM は一度に 1 スレッドだけで動く。シミュレーションの列のスレッドか、フレームの間（SyncRender から次の SyncSimulation まで、エディター UI とコンソール）のメインスレッド。
+  - PreRenderEventSystem／PostRenderEventSystem は、描画スレッドで動く RenderEventComponent（Behaviour とは別の Component）を実行する予定の段。今は実行するものがない。
 
 BehaviourSystem の `order_by` は、そのコンテキストで解決済みの有限実数 priority の昇順とする。同値はシーンインスタンス順、ノード階層順、付加順で決める。
 
@@ -146,15 +188,15 @@ Box3D には、C++ の小さなスレッドプールを渡す（Box3D はホス�
 
 ［補足］C++ のプールと std.task のプールのスレッドの数は、合わせてコア数に収まるように決める（取り合いを避けるため）。
 
-［補足］`throne.system(name)` は直列スクリプト System のハンドル（`throne.System|nil^`）を返す。ネイティブの同期段や並行の組は待ち先にできない。`node.setBehaviourPriority(index, numberOrNil)`、`setBehaviourPhasePriority(index, system, numberOrNil)`、`setBehaviourEnabled(index, bool)`、`addBehaviour(script)`、`removeBehaviour(index)` は次フレームのレジストリを変更する。index は 0 から始め、priority に nil を渡すと継承に戻る。
+［補足］`throne.system(name)` はスクリプト System（ユーザー段か BehaviourSystem）のハンドル（`throne.System|nil^`）を返す。ネイティブのエンジン段は待ち先にできない。待ち先が今の段より後なら同じ UpdateLoop の回で、同じか前なら次の回で再開する（EndOfFrameBehaviourSystem 以降は次のフレーム）。`node.setBehaviourPriority(index, numberOrNil)`、`setBehaviourPhasePriority(index, system, numberOrNil)`、`setBehaviourEnabled(index, bool)`、`addBehaviour(script)`、`removeBehaviour(index)` は次フレームのレジストリを変更する。index は 0 から始め、priority に nil を渡すと継承に戻る。
 
 ### 5.3. 現在のエンジンとの結線
 
-［補足］現在の実装では、レベルの `stages` に段の順番を保存する。既定は FetchInput → ApplyPhysics → UpdateBehaviourSystem → LateUpdateBehaviourSystem → SyncRender → Parallel（OGRE / Box3D / Animator）→ SyncSimulation → EndOfFrameBehaviourSystem。段を持たない直接の System は、その名前のユーザー段を UpdateBehaviourSystem の前に作る。同じ名前の System は同じ段で走る。
+［補足］現在の実装では、レベルの `stages` にシミュレーションの列の段名を順に保存する。既定は FetchInput → UpdateBehaviourSystem → LateUpdateBehaviourSystem → Animation → Box3DStep → EndOfFrameBehaviourSystem。描画の列と同期段は固定で、保存しない。段を持たない直接の System は、その名前のユーザー段を UpdateBehaviourSystem の前に作る。同じ名前の System は同じ段で走る。
 
-入力は UI の構築前に取得し、Behaviour と System はユーザー段で実行する。SyncRender で次フレームの描画用の写しを作り、OGRE は前フレームの写しをメインスレッドで描画する。Box3D は別スレッドで実行中のシーンに対応する物理世界を固定刻みで進め、内部タスクには待機中も子タスクを実行できる C++ プールを渡す。並行の組の後では、全ワーカーの終了を待ってから次の段へ進む。処理に失敗しても全ワーカーを回収してからエラーを返す。
+入力は UI の構築前に取得し、Behaviour と System はユーザー段で実行する。遅延ありでは、シミュレーションの列を専用のワーカー 1 本で走らせ、描画の列はメインスレッドで走らせる。SyncRender では両方の終了を待つ。処理に失敗しても、ワーカーを回収してからエラーを返す。
 
-［補足］物理ボディとシーンの Component の結線は 08 で実装した。ApplyPhysics で完成した物理結果をノードへ戻し、SyncRender で次の物理入力をコピーする。Box3D はその独立した世界を計算し、完成した結果は次フレームの ApplyPhysics まで保持する。アニメーションクリップ／スケルトンの Component は未実装で、Animator の段にはまだ処理対象がない（ECS-07）。
+［補足］物理ボディとシーンの Component の結線は 08 で実装した。Box3DStep はノードの変更を入力として取り込み、1 刻み進めて、結果をノードへ書き戻す。内部タスクには待機中も子タスクを実行できる C++ プールを渡す。アニメーションクリップ／スケルトンの Component は未実装で、Animation の段にはまだ処理対象がない（ECS-07）。
 
 ## 6. System
 

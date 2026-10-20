@@ -171,7 +171,8 @@ struct ScriptRuntime::State {
     std::vector<std::unique_ptr<Instance>> instances;
     /// Systems in run order; a throne.System handle is an index into this.
     std::vector<const System*> systems;
-    std::vector<ExecutionStage> stages;
+    /// The simulation column; script Systems and BehaviourSystems wait on these.
+    std::vector<std::string> stages;
     std::vector<System> stageSystems;
     std::vector<LhatValue> systemHandles;
     std::map<std::string,const LhatUnit*> units;
@@ -182,7 +183,10 @@ struct ScriptRuntime::State {
     std::array<std::vector<Instance*>,4> ordered;
     bool orderDirty = true;
     bool registryDirty = true;
+    /// Advances at FetchInput and at each UpdateLoop pass; coroutines wake by it.
     std::uint64_t frame = 0;
+    /// Elapsed time not yet consumed by UpdateLoop passes.
+    double accumulator = 0;
     int currentStage = -1;
     std::vector<LhatInteger> freeRoots;
     double time = 0;
@@ -574,8 +578,7 @@ THRONE_HOST(findSystem, {
     *count = 1;
     const auto name = text(arguments[0]);
     for (const auto& stage : s.stages) {
-        if (stage.name != name || !stage.parallel.empty() || name == "FetchInput" || name == "ApplyPhysics" ||
-            name == "SyncRender" || name == "SyncSimulation") continue;
+        if (stage != name || (isEngineStage(stage) && behaviourPhase(stage) < 0)) continue;
         for (std::size_t i = 0; i < s.systems.size(); ++i)
             if (s.systems[i]->name == name) {
                 answers[0] = s.handle(machine, s.system, i);
@@ -597,7 +600,7 @@ Behaviour* attachment(State& s,LhatMachine* machine,const LhatValue* arguments) 
 THRONE_HOST(currentSystem, {
     answers[0]=lhat_nil(); *count=1;
     if(s.currentStage<0) return;
-    const auto& name=s.stages[s.currentStage].name;
+    const auto& name=s.stages[s.currentStage];
     for(std::size_t i=0;i<s.systems.size();++i) if(s.systems[i]->name==name) {
         answers[0]=s.systemHandles[i]; return;
     }
@@ -1162,7 +1165,7 @@ void ScriptRuntime::State::reconcile() {
     for(auto& entry:instances) if(!entry->alive) cancel(*entry);
     instances.erase(std::remove_if(instances.begin(),instances.end(),[](const auto& entry) { return !entry->alive; }),instances.end());
     orderDirty=true;
-    for(const auto& stage:stages) dirtyQueries[stage.name]=true;
+    for(const auto& stage:stages) dirtyQueries[stage]=true;
 }
 
 void ScriptRuntime::State::rebuildQuery(const std::string& system) {
@@ -1195,7 +1198,7 @@ void ScriptRuntime::State::rebuildQuery(const std::string& system) {
 }
 
 void ScriptRuntime::State::execute(Instance& entry,int phase,LhatValue dt) {
-    const auto& system=stages[currentStage].name;
+    const auto& system=stages[currentStage];
     const auto suspend=[&](Invocation& call,LhatValue yielded) {
         std::string destination=call.origin;
         if(!lhat_is_nil(yielded)) {
@@ -1206,9 +1209,8 @@ void ScriptRuntime::State::execute(Instance& entry,int phase,LhatValue dt) {
             if(index>=systems.size()) throw ScriptError("Invalid System wait target");
             destination=systems[index]->name;
         }
-        const auto at=std::find_if(stages.begin(),stages.end(),[&](const auto& stage) { return stage.name==destination; });
-        if(at==stages.end() || !at->parallel.empty() || destination=="FetchInput" || destination=="ApplyPhysics" ||
-           destination=="SyncRender" || destination=="SyncSimulation")
+        const auto at=std::find(stages.begin(),stages.end(),destination);
+        if(at==stages.end() || (isEngineStage(destination) && behaviourPhase(destination)<0))
             throw ScriptError(entry.what+": coroutine requires a serial script System");
         dirtyQueries[call.waiting]=true; dirtyQueries[destination]=true;
         call.waiting=destination;
@@ -1310,11 +1312,7 @@ ScriptRuntime::ScriptRuntime(const World& world, LevelExpansion& expanded, const
             item.node != Expansion::npos, item.symbol);
     for (const auto& item : pending) {
         if (item.node!=Expansion::npos) continue;
-        const auto found = std::find_if(s.stages.begin(), s.stages.end(), [&](const ExecutionStage& stage) {
-            return stage.name == item.stage && stage.parallel.empty();
-        });
-        if (found == s.stages.end() || behaviourPhase(item.stage)>=0 || item.stage == "FetchInput" || item.stage == "ApplyPhysics" ||
-            item.stage == "SyncRender" || item.stage == "SyncSimulation")
+        if (std::find(s.stages.begin(), s.stages.end(), item.stage) == s.stages.end() || isEngineStage(item.stage))
             errors += item.what + ": unknown or engine-owned System " + item.stage + "\n";
     }
     diagnostics(program, errors);
@@ -1330,7 +1328,7 @@ ScriptRuntime::ScriptRuntime(const World& world, LevelExpansion& expanded, const
     }
     s.stageSystems.reserve(s.stages.size());
     for (const auto& stage : s.stages) {
-        s.stageSystems.push_back({0, stage.name, {}});
+        s.stageSystems.push_back({0, stage, {}});
         s.systems.push_back(&s.stageSystems.back());
     }
     std::vector<LhatValue> systemHandles;
@@ -1341,8 +1339,8 @@ ScriptRuntime::ScriptRuntime(const World& world, LevelExpansion& expanded, const
     s.systemHandles=systemHandles;
     for(const auto& item:pending) instantiate(s,item);
     s.registryDirty=false;
-    for(const auto& stage:s.stages) s.dirtyQueries[stage.name]=true;
-    for(const auto& stage:s.stages) s.rebuildQuery(stage.name);
+    for(const auto& stage:s.stages) s.dirtyQueries[stage]=true;
+    for(const auto& stage:s.stages) s.rebuildQuery(stage);
 }
 
 ScriptRuntime::~ScriptRuntime() = default;
@@ -1373,14 +1371,11 @@ void ScriptRuntime::dropInput() {
     if (state_->prompt) lhat_prompt_drop(state_->prompt.get());
 }
 
-std::vector<ExecutionStage> ScriptRuntime::schedule(const World& world, const LevelExpansion& expanded) {
+std::vector<std::string> ScriptRuntime::schedule(const World& world, const LevelExpansion& expanded) {
     auto stages = world.level.stages;
     const auto add = [&](const System& system) {
-        if (system.name == "OGRE" || system.name == "Box3D" || system.name == "Animator") return;
-        if (std::none_of(stages.begin(), stages.end(), [&](const ExecutionStage& stage) { return stage.name == system.name; })) {
-            const auto at = std::find_if(stages.begin(), stages.end(), [](const ExecutionStage& stage) { return stage.name == behaviourSystems[0]; });
-            stages.insert(at, {system.name, {}});
-        }
+        if (isEngineStage(system.name) || std::find(stages.begin(), stages.end(), system.name) != stages.end()) return;
+        stages.insert(std::find(stages.begin(), stages.end(), behaviourSystems[0]), system.name);
     };
     for (const auto& scene : expanded.instances)
         for (const auto& system : scene.expansion.systems) add(system.system);
@@ -1389,11 +1384,10 @@ std::vector<ExecutionStage> ScriptRuntime::schedule(const World& world, const Le
     return stages;
 }
 
-void ScriptRuntime::update(float deltaSeconds) { update(deltaSeconds, {}); }
+FrameTimes ScriptRuntime::update(float deltaSeconds) { return update(deltaSeconds, {}); }
 
-void ScriptRuntime::update(float deltaSeconds, const std::function<void(const std::string&)>& engine) {
+FrameTimes ScriptRuntime::update(float deltaSeconds, const std::function<void(const std::string&)>& engine) {
     auto& s = *state_;
-    ++s.frame;
     s.reconcile();
     if (!s.started) {
         s.started = true;
@@ -1405,21 +1399,27 @@ void ScriptRuntime::update(float deltaSeconds, const std::function<void(const st
         }
 
     }
-    s.time += deltaSeconds;
-    const LhatValue dt = lhat_real(deltaSeconds);
     if (!lhat_is_nil(s.game) && !s.finished) {
         s.check(lhat_machine_resume(s.machine.get(), s.game, nullptr, 0), mainPath);
         s.finished = lhat_machine_coroutine_done(s.game);
     }
-    runStages(s.stages, s.world.level.serialExecution || !engine, [&](const std::string& stage) {
+    // Long stalls are not caught up beyond a quarter second.
+    s.accumulator += (std::min)(double(deltaSeconds), 0.25);
+    const int steps = static_cast<int>((s.accumulator + 1.0e-9) / fixedStep);
+    s.accumulator -= steps * fixedStep;
+    const LhatValue stepDt = lhat_real(fixedStep), frameDt = lhat_real(steps * fixedStep);
+    const auto loopEnd = std::find(s.stages.begin(), s.stages.end(), behaviourSystems[2]) - s.stages.begin();
+    return runFrame(s.stages, s.world.level.serialExecution || !engine, steps, [&](const std::string& stage) {
         if (engine) engine(stage);
-        if (stage == "Box3D" || stage == "Animator" || stage == "OGRE") return;
-        const auto found=std::find_if(s.stages.begin(),s.stages.end(),[&](const auto& item) { return item.name==stage; });
-        s.currentStage=static_cast<int>(std::distance(s.stages.begin(),found));
+        if (stage == s.stages[0]) ++s.frame;
+        if (stage == s.stages[1]) ++s.frame, s.time += fixedStep;
+        if (isEngineStage(stage) && behaviourPhase(stage) < 0) return;
+        const auto at = std::find(s.stages.begin(), s.stages.end(), stage) - s.stages.begin();
+        s.currentStage = static_cast<int>(at);
         s.rebuildQuery(stage);
-        const auto& query=s.queries[stage];
-        for(auto* instance:query) s.execute(*instance,behaviourPhase(stage),dt);
-        s.currentStage=-1;
+        const auto& query = s.queries[stage];
+        for (auto* instance : query) s.execute(*instance, behaviourPhase(stage), at < loopEnd ? stepDt : frameDt);
+        s.currentStage = -1;
     });
 }
 }
