@@ -1,0 +1,76 @@
+// Screen-space subsurface scattering of the editor viewport's lit opaque surfaces (TDDja/09).
+fragment_program Throne/Subsurface_ps_VK glslvk
+{
+	source Subsurface_ps.glsl
+	default_params
+	{
+		param_named direction float2 1 0
+		param_named pixelScale float2 1 1
+		param_named depthParams float2 0 1
+		param_named frameNoise float 0
+		param_named vertical float 0
+	}
+}
+
+abstract material Throne/SubsurfaceQuad
+{
+	technique
+	{
+		pass
+		{
+			depth_check off
+			depth_write off
+			cull_hardware none
+
+			vertex_program_ref Ogre/Compositor/Quad_vs
+			{
+			}
+
+			texture_unit
+			{
+				filtering none
+				tex_address_mode clamp
+			}
+			texture_unit
+			{
+				filtering none
+				tex_address_mode clamp
+			}
+			texture_unit
+			{
+				filtering none
+				tex_address_mode clamp
+			}
+		}
+	}
+}
+
+// The lit scene, the subsurface widths and the depth; into a copy of the scene.
+material Throne/SubsurfaceHorizontal : Throne/SubsurfaceQuad
+{
+	technique
+	{
+		pass
+		{
+			fragment_program_ref Throne/Subsurface_ps_VK
+			{
+			}
+		}
+	}
+}
+
+// The horizontal pass's result, the widths and the depth; over the scene.
+material Throne/SubsurfaceVertical : Throne/SubsurfaceQuad
+{
+	technique
+	{
+		pass
+		{
+			fragment_program_ref Throne/Subsurface_ps_VK
+			{
+				param_named direction float2 0 1
+				param_named vertical float 1
+			}
+		}
+	}
+}

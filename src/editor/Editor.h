@@ -509,6 +509,9 @@ private:
     bool reflectionsEnabled_ = true, historyReady_ = false;
     /// The depth of field pass material.
     Ogre::MaterialPtr depthOfField_;
+    /// The subsurface scattering passes' materials, and whether they run.
+    Ogre::MaterialPtr subsurfaceHorizontal_, subsurfaceVertical_;
+    bool subsurfaceEnabled_ = true;
     /// This frame's offset of the screen-space passes' per-pixel noise.
     float taaNoise_ = 0;
     bool particleResourcesLoaded_ = false, particlePreview_ = true;

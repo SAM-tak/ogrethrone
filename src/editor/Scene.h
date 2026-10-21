@@ -146,6 +146,9 @@ struct PbsMaterial {
     /// The alpha of the whole surface, for Hash (multiplied by the diffuse map's).
     float opacity = 1;
     Translucency translucency;
+    /// How far light spreads under the surface, in metres, blurring its lighting on screen by a
+    /// skin-like profile (red furthest); 0 (the default) turns subsurface scattering off.
+    float subsurfaceWidth = 0;
 };
 /// Supported OGRE light models. Rectangular lights use regular Forward.
 enum class LightType { Directional, Point, Spot, AreaApprox, AreaLtc };
@@ -180,10 +183,12 @@ struct ModelMaterial {
     float thickness = .05f;
     /// Light the material passes through from behind (foliage).
     Translucency translucency;
+    /// Subsurface scattering width in metres (PbsMaterial::subsurfaceWidth).
+    float subsurfaceWidth = 0;
     /// Equality, to tell when the drawn model must be rebuilt.
     bool operator==(const ModelMaterial& other) const {
         return name == other.name && absorption == other.absorption && thickness == other.thickness &&
-               translucency == other.translucency;
+               translucency == other.translucency && subsurfaceWidth == other.subsurfaceWidth;
     }
 };
 

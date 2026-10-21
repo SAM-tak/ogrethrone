@@ -2,6 +2,8 @@
 // change in UV of the surface since the previous frame. MotionVectors (an HlmsListener) sets
 // custom_motion_vectors in prepasses and writes the previous view-projection; ThronePbs writes
 // each draw's previous world matrix into prevWorldBuf (read-only buffer slot 1).
+// The fourth target is the surface's subsurface scattering width in metres (0 for none), which
+// a material's custom piece defines as THRONE_SUBSURFACE_WIDTH (see surfacePiece in Model.cpp).
 @property( hlms_prepass && custom_motion_vectors )
 
 @piece( motionPassBuffer )
@@ -30,11 +32,17 @@
 
 @piece( custom_ps_output_types )
 	layout(location = @counter(rtv_target)) out vec2 outMotion;
+	layout(location = @counter(rtv_target)) out float outSubsurface;
 @end
 
 @piece( custom_ps_posExecution )
 	outMotion = ( inPs.motionCurrent.xy / inPs.motionCurrent.z -
 				  inPs.motionPrevious.xy / inPs.motionPrevious.z ) * 0.5;
+#ifdef THRONE_SUBSURFACE_WIDTH
+	outSubsurface = THRONE_SUBSURFACE_WIDTH;
+#else
+	outSubsurface = 0.0;
+#endif
 @end
 
 @end

@@ -317,7 +317,13 @@ thin surface from behind it, such as leaves, paper, cloth or wax: each direction
 spot light adds its colour times **Scale** times how directly the viewer looks into the light,
 bent by the surface normal (**Distortion**) and focused by **Power**. Shadows still hide it, so
 a thick object's own shadow removes it; thin surfaces lie within the shadow bias. Area lights
-add none. A Model's material changes have the same settings for named opaque materials.
+add none. **Subsurface Width (m)** (0, the default, turns it off) lets light spread under the
+surface (skin, wax, marble): after the opaque surfaces are lit, the viewport blurs the lighting
+of those that have it across and then down the screen by a skin-like profile (red spreads
+furthest), over the given distance at the surface, without crossing silhouettes or depth
+gaps; temporal anti-aliasing averages its sampling noise. Specular highlights are blurred with
+the rest. **View → Subsurface Scattering** (on by default) turns the blur off. A Model's
+material changes have both settings for named opaque materials.
 The other engine stages (Box3DStep, Animation, the Sync barriers) are selectable too;
 their Inspectors currently show only the stage name, reserving the same place for
 future settings.

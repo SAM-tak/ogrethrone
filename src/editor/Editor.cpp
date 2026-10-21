@@ -72,8 +72,8 @@ constexpr const char* windowWorkspaceName = "ThroneEditor/Window";
 constexpr const char* lineMaterial = "ThroneEditor/Lines";
 constexpr std::size_t historyLimit = 100, logLimit = 200;
 /// Execution masks of the viewport's passes: every pass runs with 0x01, then either the SMAA
-/// passes or the plain copy to the viewport.
-constexpr Ogre::uint8 smaaPasses = 0x02, plainPasses = 0x04;
+/// passes or the plain copy to the viewport, and the subsurface scattering passes when enabled.
+constexpr Ogre::uint8 smaaPasses = 0x02, plainPasses = 0x04, subsurfacePasses = 0x08;
 /// Lit opaque geometry is in queue 10 (OGRE's default), the only queue the depth prepass draws;
 /// then the sky (11), unlit lines and emitters (12, which HlmsUnlit cannot draw in a prepass),
 /// particles (15), absorbing volumes (99) and blended surfaces (200).
@@ -397,7 +397,7 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
     resources.addResourceLocation(THRONE_MEDIA_DIR "/gi", "FileSystem", skyGroup);
     root.getHlmsManager()->loadMaterials("IBL.material.json", skyGroup, nullptr, "");
     for (const auto* script : {"Quad.program", "Atmosphere.material", "Sky.material", "DPSM.material", "Copyback.material",
-                               "PccDepthCompressor.material", "Tonemap.material", "Bloom.material", "Taa.material", "MotionBlur.material", "Ssao.material", "Ssr.material", "DepthOfField.material", "ThroneSmaa.material",
+                               "PccDepthCompressor.material", "Tonemap.material", "Bloom.material", "Taa.material", "MotionBlur.material", "Ssao.material", "Ssr.material", "DepthOfField.material", "Subsurface.material", "ThroneSmaa.material",
                                "ThroneGi.compositor"}) {
         auto stream = resources.openResource(script, skyGroup);
         Ogre::MaterialManager::getSingleton().parseScript(stream, skyGroup);
@@ -429,14 +429,16 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
     ssaoBlur_ = Ogre::MaterialManager::getSingleton().getByName("Throne/SsaoBlur", skyGroup);
     ssr_ = Ogre::MaterialManager::getSingleton().getByName("Throne/Ssr", skyGroup);
     depthOfField_ = Ogre::MaterialManager::getSingleton().getByName("Throne/DepthOfField", skyGroup);
+    subsurfaceHorizontal_ = Ogre::MaterialManager::getSingleton().getByName("Throne/SubsurfaceHorizontal", skyGroup);
+    subsurfaceVertical_ = Ogre::MaterialManager::getSingleton().getByName("Throne/SubsurfaceVertical", skyGroup);
     {
         // A depth prepass draws lit opaque geometry (queue 10) into Depth and a G-buffer of
-        // view-space normals, sun shadow/roughness and motion vectors (MotionVectors, the
-        // change in UV since the previous frame), from which SSAO computes the ambient
+        // view-space normals, sun shadow/roughness, motion vectors (MotionVectors, the
+        // change in UV since the previous frame) and subsurface widths, from which SSAO computes the ambient
         // occlusion (Ssao) and SSR the reflections (Ssr, from the previous frame's TaaHistory)
         // that queue 10 then reads. The scene then renders in half float:
-        // queue 10 into Opaque reusing the prepass (depth read-only), then the other queues
-        // below 200. Opaque is copied to Hdr; refractive glass (queue 200 and up) samples
+        // queue 10 into Opaque reusing the prepass (depth read-only), whose surfaces with
+        // subsurface scattering are blurred, then the other queues below 200. Opaque is copied to Hdr; refractive glass (queue 200 and up) samples
         // Opaque and its depth while drawing into Hdr. Depth of field (with an f-stop) defocuses
         // Hdr into Focused; temporal anti-aliasing blends that into the reprojected history (Taa,
         // copied to TaaHistory for the next frame), smoothing the defocus's grain too, and writes
@@ -445,7 +447,7 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
         // it (the UI stays sharp).
         auto* node = compositor->addNodeDefinition("ThroneEditor/ViewportNode");
         node->addTextureSourceName("Viewport", 0, Ogre::TextureDefinitionBase::TEXTURE_INPUT);
-        node->setNumLocalTextureDefinitions(22);
+        node->setNumLocalTextureDefinitions(24);
         for (const auto* name : {"VelocityTiles", "VelocityNeighbours"}) {
             // One texel per 16x16 pixels (see media/postprocess/MotionTiles).
             auto* texture = node->addTextureDefinition(name);
@@ -453,8 +455,8 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
             texture->widthFactor = texture->heightFactor = 1.0f / 16;
             texture->depthBufferId = Ogre::DepthBuffer::POOL_NO_DEPTH;
         }
-        {
-            auto* texture = node->addTextureDefinition("Ssr");
+        for (const auto* name : {"Ssr", "SubsurfaceHorizontal"}) {
+            auto* texture = node->addTextureDefinition(name);
             texture->format = Ogre::PFG_RGBA16_FLOAT;
             texture->depthBufferId = Ogre::DepthBuffer::POOL_NO_DEPTH;
         }
@@ -467,9 +469,10 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
         node->addTextureDefinition("GBufferNormals")->format = Ogre::PFG_R10G10B10A2_UNORM;
         node->addTextureDefinition("GBufferShadowRoughness")->format = Ogre::PFG_RG16_UNORM;
         node->addTextureDefinition("GBufferMotion")->format = Ogre::PFG_RG16_FLOAT;
+        node->addTextureDefinition("GBufferSubsurface")->format = Ogre::PFG_R16_FLOAT;
         {
             auto* view = node->addRenderTextureView("GBuffer");
-            for (const auto* name : {"GBufferNormals", "GBufferShadowRoughness", "GBufferMotion"}) {
+            for (const auto* name : {"GBufferNormals", "GBufferShadowRoughness", "GBufferMotion", "GBufferSubsurface"}) {
                 Ogre::RenderTargetViewEntry attachment;
                 attachment.textureName = name;
                 view->colourAttachments.push_back(attachment);
@@ -502,7 +505,7 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
             texture->format = Ogre::String(name) == "SmaaEdges" ? Ogre::PFG_RG8_UNORM : Ogre::PFG_RGBA8_UNORM;
             texture->depthBufferId = Ogre::DepthBuffer::POOL_NO_DEPTH;
         }
-        node->setNumTargetPass(20);
+        node->setNumTargetPass(23);
         // @p outputs are further colour targets the material writes after @p target.
         const auto quad = [&](const char* target, const char* material, std::initializer_list<const char*> inputs,
                               std::initializer_list<const char*> outputs = {}) {
@@ -535,12 +538,13 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
         // Where nothing is drawn (the sky), motion comes from the camera alone; its users
         // reproject the depth for it.
         prepass->mClearColour[2] = Ogre::ColourValue(0, 0, 0, 0);
+        // Nor any subsurface scattering.
+        prepass->mClearColour[3] = Ogre::ColourValue(0, 0, 0, 0);
         prepass->mStoreActionStencil = Ogre::StoreAction::DontCare;
         quad("SsaoRaw", "Throne/Ssao", {"GBufferNormals", "Depth"});
         quad("Ssao", "Throne/SsaoBlur", {"SsaoRaw", "Depth"});
         quad("Ssr", "Throne/Ssr", {"GBufferNormals", "GBufferShadowRoughness", "Depth", "GBufferMotion", "TaaHistory"});
-        auto* opaqueTarget = node->addTargetPass("Opaque");
-        auto* opaque = static_cast<Ogre::CompositorPassSceneDef*>(opaqueTarget->addPass(Ogre::PASS_SCENE));
+        auto* opaque = static_cast<Ogre::CompositorPassSceneDef*>(node->addTargetPass("Opaque")->addPass(Ogre::PASS_SCENE));
         opaque->mShadowNode = "ThroneEditor/SunShadows";
         opaque->mShadowNodeRecalculation = Ogre::SHADOW_NODE_REUSE;
         opaque->setAllClearColours(Ogre::ColourValue(0.11f, 0.12f, 0.14f));
@@ -557,7 +561,25 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
         opaque->setUseDepthPrePass(gbuffer, "Depth", "Ssr");
         // AmbientOcclusion binds it; the barrier solver must make it readable.
         opaque->mExposedTextures.push_back("Ssao");
-        auto* rest = static_cast<Ogre::CompositorPassSceneDef*>(opaqueTarget->addPass(Ogre::PASS_SCENE));
+        // Subsurface scattering blurs the lit surfaces that have it (GBufferSubsurface) across,
+        // into a copy, then down, back over them, before anything else is drawn in front.
+        quad("SubsurfaceHorizontal", "Throne/SubsurfaceHorizontal", {"Opaque", "GBufferSubsurface", "Depth"})->mExecutionMask =
+            subsurfacePasses;
+        {
+            auto* view = node->addRenderTextureView("OpaqueColour");
+            Ogre::RenderTargetViewEntry attachment;
+            attachment.textureName = "Opaque";
+            view->colourAttachments.push_back(attachment);
+            view->depthBufferId = Ogre::DepthBuffer::POOL_NO_DEPTH;
+            auto* pass = static_cast<Ogre::CompositorPassQuadDef*>(node->addTargetPass("OpaqueColour")->addPass(Ogre::PASS_QUAD));
+            pass->mMaterialName = "Throne/SubsurfaceVertical";
+            Ogre::uint32 unit = 0;
+            for (const auto* input : {"SubsurfaceHorizontal", "GBufferSubsurface", "Depth"}) pass->addQuadTextureSource(unit++, input);
+            // It discards the pixels it leaves alone.
+            pass->setAllLoadActions(Ogre::LoadAction::Load);
+            pass->mExecutionMask = subsurfacePasses;
+        }
+        auto* rest = static_cast<Ogre::CompositorPassSceneDef*>(node->addTargetPass("Opaque")->addPass(Ogre::PASS_SCENE));
         rest->mShadowNode = "ThroneEditor/SunShadows";
         rest->mShadowNodeRecalculation = Ogre::SHADOW_NODE_REUSE;
         rest->setAllLoadActions(Ogre::LoadAction::Load);
@@ -914,6 +936,8 @@ Editor::~Editor() {
     ssaoBlur_.reset();
     ssr_.reset();
     depthOfField_.reset();
+    subsurfaceHorizontal_.reset();
+    subsurfaceVertical_.reset();
     sky_.reset();
     Ogre::ResourceGroupManager::getSingleton().destroyResourceGroup("ThroneEditorSky");
     root_.getCompositorManager2()->setCompositorPassProvider(nullptr);
@@ -1102,7 +1126,7 @@ void Editor::jitterCamera() {
     const auto mode = forcedAntiAliasing_.value_or(viewAntiAliasing_);
     const bool on = mode == AntiAliasing::Temporal && !orthographic_;
     const bool smaa = mode == AntiAliasing::Smaa || (mode == AntiAliasing::Temporal && orthographic_);
-    viewportWorkspace_->setExecutionMask(0x01 | (smaa ? smaaPasses : plainPasses));
+    viewportWorkspace_->setExecutionMask(0x01 | (smaa ? smaaPasses : plainPasses) | (subsurfaceEnabled_ ? subsurfacePasses : 0));
     if (on) {
         taaIndex_ = taaIndex_ % 8 + 1;
         const float x = (halton(taaIndex_, 2) - 0.5f) * 2 / float(viewportWidth_);
@@ -1151,8 +1175,15 @@ void Editor::jitterCamera() {
     // stays put rather than flicker.
     if (on) taaNoise_ = std::fmod(taaNoise_ + 0.618034f, 1.0f);
     frameNoise_.value = taaNoise_;
-    for (auto* material : {&ssao_, &ssr_, &depthOfField_})
+    for (auto* material : {&ssao_, &ssr_, &depthOfField_, &subsurfaceHorizontal_, &subsurfaceVertical_})
         (*material)->getTechnique(0)->getPass(0)->getFragmentProgramParameters()->setNamedConstant("frameNoise", taaNoise_);
+    // Subsurface widths become pixels at the surface's distance.
+    for (auto* material : {&subsurfaceHorizontal_, &subsurfaceVertical_}) {
+        auto params = (*material)->getTechnique(0)->getPass(0)->getFragmentProgramParameters();
+        params->setNamedConstant("pixelScale", Ogre::Vector2(std::abs(float(steady[0][0])) * 0.5f * float(viewportWidth_),
+                                                             std::abs(float(steady[1][1])) * 0.5f * float(viewportHeight_)));
+        params->setNamedConstant("depthParams", Ogre::Vector2(float(steady[2][2]), float(steady[2][3])));
+    }
     // A thin lens on a 35 mm full-frame sensor (24 mm high) of this field of view: the circle
     // of confusion's diameter in pixels is A f / (zf - f) * (z - zf) / z over the sensor's height.
     auto dof = depthOfField_->getTechnique(0)->getPass(0)->getFragmentProgramParameters();
@@ -1846,9 +1877,10 @@ void Editor::syncTransforms(const LevelExpansion* snapshot) {
             render.material->setTransparency(surface.alpha==AlphaMode::Hash ? surface.opacity : 1.0f,
                                              Ogre::HlmsPbsDatablock::None, true, false);
         }
-        // Translucency is a custom piece named after its content, so equal ones share shaders.
-        if(surface.translucency!=previous.translucency) {
-            const auto piece=surface.translucency.enabled() ? translucencyPiece(surface.translucency) : std::string();
+        // Translucency and subsurface scattering are a custom piece named after its content, so
+        // equal ones share shaders.
+        if(surface.translucency!=previous.translucency || surface.subsurfaceWidth!=previous.subsurfaceWidth) {
+            const auto piece=surfacePiece(surface.translucency,surface.subsurfaceWidth);
             render.material->setCustomPieceCodeFromMemory(piece.empty() ? std::string() : "Throne/"+std::to_string(std::hash<std::string>{}(piece)),
                                                           piece,Ogre::CustomPieceStage::PixelShader);
         }
@@ -2777,6 +2809,7 @@ void Editor::menu() {
         ImGui::MenuItem("Motion Blur (Play)",nullptr,&motionBlurInPlay_);
         ImGui::MenuItem("Ambient Occlusion",nullptr,&ambientOcclusionEnabled_);
         ImGui::MenuItem("Screen-Space Reflections",nullptr,&reflectionsEnabled_);
+        ImGui::MenuItem("Subsurface Scattering",nullptr,&subsurfaceEnabled_);
         ImGui::MenuItem("Orthographic", nullptr, &orthographic_);
         if (ImGui::MenuItem("Focus Selection", "F")) focusSelection();
         ImGui::EndMenu();

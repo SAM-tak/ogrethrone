@@ -50,10 +50,18 @@ std::string absorptionPiece(const Vec3& absorption, float thickness) {
 
 } // namespace
 
-std::string translucencyPiece(const Translucency& t) {
+std::string surfacePiece(const Translucency& t, float subsurfaceWidth) {
+    std::string pieces;
+    char text[1024];
+    if (subsurfaceWidth > 0) {
+        std::snprintf(text, sizeof text, "#define THRONE_SUBSURFACE_WIDTH %f\n", subsurfaceWidth);
+        pieces += text;
+    }
+    if (!t.enabled())
+        return pieces.empty() ? pieces : "@piece( custom_ps_uniformStructDeclaration )\n" + pieces + "@end\n";
     // The rename comes before DeclareBRDF; the wrapper, under BRDF's own conditions, after it.
     constexpr const char* format = R"(@piece( custom_ps_uniformStructDeclaration )
-#define BRDF throneSurfaceBRDF
+%s#define BRDF throneSurfaceBRDF
 @end
 @piece( custom_ps_functions )
 @property( (hlms_normal || hlms_qtangent) && !hlms_prepass && needs_view_dir )
@@ -68,8 +76,7 @@ INLINE midf3 BRDF( midf3 lightDir, midf3 lightDiffuse, midf3 lightSpecular, Pixe
 @end
 @end
 )";
-    char text[1024];
-    std::snprintf(text, sizeof text, format, t.distortion, t.power, t.scale, t.colour.x, t.colour.y, t.colour.z);
+    std::snprintf(text, sizeof text, format, pieces.c_str(), t.distortion, t.power, t.scale, t.colour.x, t.colour.y, t.colour.z);
     return text;
 }
 
@@ -229,7 +236,7 @@ std::string ModelLibrary::key(const ModelComponent& component, const std::filesy
                std::to_string(m.absorption.z) + "/" + std::to_string(m.thickness) + "/" + std::to_string(m.translucency.colour.x) +
                "," + std::to_string(m.translucency.colour.y) + "," + std::to_string(m.translucency.colour.z) + "," +
                std::to_string(m.translucency.distortion) + "," + std::to_string(m.translucency.power) + "," +
-               std::to_string(m.translucency.scale);
+               std::to_string(m.translucency.scale) + "/" + std::to_string(m.subsurfaceWidth);
     return key;
 }
 
@@ -354,8 +361,8 @@ ModelLibrary::Parsed ModelLibrary::parse(const std::filesystem::path& file, cons
                              (change->absorption.x > 0 || change->absorption.y > 0 || change->absorption.z > 0);
         if (absorbs) material.pieces += absorptionPiece(change->absorption, change->thickness);
         if (!material.orm.empty()) material.pieces += ormPiece;
-        if (!material.blended && change != component.materials.end() && change->translucency.enabled())
-            material.pieces += translucencyPiece(change->translucency);
+        if (!material.blended && change != component.materials.end())
+            material.pieces += surfacePiece(change->translucency, change->subsurfaceWidth);
         material.renderQueue = absorbs ? 99 : material.blended ? 200 : 0;
         out.materials.push_back(std::move(material));
     }

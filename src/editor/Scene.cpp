@@ -185,6 +185,7 @@ void readExtraComponents(const LhatTable& table, Node& node) {
                 m.thickness=scalar(item,"thickness",m.thickness,0.0001f,100);
                 for(const float a:{m.absorption.x,m.absorption.y,m.absorption.z}) if(!(a>=0)) lton::invalid();
                 readTranslucency(item,m.translucency);
+                m.subsurfaceWidth=scalar(item,"subsurfaceWidth",m.subsurfaceWidth,0,10);
                 c.materials.push_back(m);
             }
         }
@@ -203,6 +204,7 @@ void readExtraComponents(const LhatTable& table, Node& node) {
         c.alphaThreshold = scalar(t,"alphaThreshold",c.alphaThreshold,0,1);
         c.opacity = scalar(t,"opacity",c.opacity,0,1);
         readTranslucency(t,c.translucency);
+        c.subsurfaceWidth = scalar(t,"subsurfaceWidth",c.subsurfaceWidth,0,10);
         for (const auto& entry : {std::pair{"fresnel",&c.fresnel},std::pair{"emissive",&c.emissive}}) {
             if (const auto v=lton::field(t,entry.first); !lhat_is_nil(v)) lton::vector(v,entry.second->data());
             for (float v:*entry.second) if (v<0 || v>(std::string_view(entry.first)=="fresnel"?1.0f:1.0e6f)) lton::invalid();
@@ -325,6 +327,7 @@ void writeExtraComponents(lton::Writer& out, LhatValue table, const Node& node) 
                 out.set(item,"absorption",out.vector(m.absorption.data()));
                 out.set(item,"thickness",lhat_real(m.thickness));
                 writeTranslucency(out,item,m.translucency);
+                if(m.subsurfaceWidth>0) out.set(item,"subsurfaceWidth",lhat_real(m.subsurfaceWidth));
                 out.push(list,item);
             }
             out.set(t,"materials",list);
@@ -340,6 +343,7 @@ void writeExtraComponents(lton::Writer& out, LhatValue table, const Node& node) 
             out.set(t,"alphaThreshold",lhat_real(c.alphaThreshold)); out.set(t,"opacity",lhat_real(c.opacity));
         }
         writeTranslucency(out,t,c.translucency);
+        if(c.subsurfaceWidth>0) out.set(t,"subsurfaceWidth",lhat_real(c.subsurfaceWidth));
         for(const auto& entry:{std::pair{"diffuseMap",&c.diffuseMap},std::pair{"normalMap",&c.normalMap},
             std::pair{"roughnessMap",&c.roughnessMap},std::pair{"specularMap",&c.specularMap},std::pair{"reflectionMap",&c.reflectionMap}})
             if(!entry.second->empty()) out.set(t,entry.first,out.string(*entry.second));

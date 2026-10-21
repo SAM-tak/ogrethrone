@@ -693,6 +693,12 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         }
         return edited;
     };
+    const auto subsurface=[&](float& width) {
+        bool edited=ImGui::DragFloat("Subsurface Width (m)",&width,.0005f,0,10,width>0?"%.4f":"off",ImGuiSliderFlags_AlwaysClamp); track();
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("How far light spreads under the surface (skin about 0.01): its lighting is\n"
+                                                     "blurred on screen by a skin-like profile, red furthest. 0 turns it off.");
+        return edited;
+    };
     component("Model",value.model,&SceneNode::model,&NodeOverride::model,[&](auto& c) {
         bool edited=texturePath("File",c.path);
         edited|=ImGui::Checkbox("DirectX normal maps",&c.directXNormals); track();
@@ -711,6 +717,7 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
             edited|=vector("Absorption (1/m)",m.absorption);
             edited|=scalar("Thickness (m)",m.thickness,.0001f,100);
             edited|=translucency(m.translucency);
+            edited|=subsurface(m.subsurfaceWidth);
             const bool removed=ImGui::SmallButton("Remove Material Change");
             ImGui::PopID();
             if(removed) { c.materials.erase(c.materials.begin()+std::ptrdiff_t(i)); edited=true; }
@@ -746,6 +753,7 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
             ImGui::TextDisabled("Each pixel is kept with the probability of its alpha;\ntemporal anti-aliasing averages it.");
         }
         edited|=translucency(c.translucency);
+        edited|=subsurface(c.subsurfaceWidth);
         return edited;
     });
     component("Camera",value.camera,&SceneNode::camera,&NodeOverride::camera,[&](auto& c) {
