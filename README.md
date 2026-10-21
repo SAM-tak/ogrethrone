@@ -116,7 +116,8 @@ effect-free data):
   instances and no overrides of its own: editing a scene's content at the Level
   step writes to that scene's file, so every instance of it shows the change.
 - A **Camera** component keeps a viewpoint: the node's position and orientation (it
-  looks along its local -Z, +Y up), with a field of view and near/far clip distances.
+  looks along its local -Z, +Y up), with a field of view, near/far clip distances and
+  depth of field (a focus distance and an f-stop; 0 keeps everything in focus).
   Its Inspector has **Align View to Camera** (the scene view takes its position,
   direction and projection; the view has no roll) and **Align Camera to View** (the
   node's Transform and the component take the view's; one undo step). Levels keep no
@@ -651,7 +652,14 @@ depth prepass, smoothed across a depth-aware 5×5 filter. **View → Screen-Spac
 Reflections** (on by default) traces each glossy surface's reflection through the depth
 buffer (up to 20 m) and shows what it meets as the previous frame drew it, blended over the
 reflection probes by confidence: it fades out on rough surfaces, near the screen's edges
-and for reflections towards the camera, which the screen cannot show. The viewport then
+and for reflections towards the camera, which the screen cannot show. **Depth of field**
+follows the view's focus distance and f-stop (the level's Inspector, or a Camera's via
+Align View to Camera): a thin lens on a 35 mm full-frame sensor of the view's field of
+view, gathering each pixel's neighbours whose circle of confusion reaches it (at most 16
+pixels across) without letting the background bleed over a sharp foreground. Transparent
+surfaces write no depth, so they take the focus of what lies behind them. The noise of
+these screen-space passes changes each frame so that temporal anti-aliasing averages it
+away. The viewport then
 applies subtle HDR bloom before
 exposure/tone mapping, then OGRE's SMAA 1x High preset to smooth edges. Editor UI is
 composed afterwards. `--capture` waits 16 frames for the history to settle.

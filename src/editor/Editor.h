@@ -502,6 +502,10 @@ private:
     /// the previous frame (TaaHistory, which they read) shows this view.
     Ogre::MaterialPtr ssr_;
     bool reflectionsEnabled_ = true, historyReady_ = false;
+    /// The depth of field pass material.
+    Ogre::MaterialPtr depthOfField_;
+    /// This frame's offset of the screen-space passes' per-pixel noise.
+    float taaNoise_ = 0;
     bool particleResourcesLoaded_ = false, particlePreview_ = true;
     int particleBlending_ = 1, appliedParticleBlending_ = -1;
     std::set<std::string> particleScripts_;
@@ -641,6 +645,8 @@ private:
     /// The view's projection: vertical field of view in degrees, and clip distances. Not saved;
     /// a Camera node keeps a view (alignViewToCamera(), alignCameraToView()).
     float viewFieldOfView_ = 45, viewNear_ = .1f, viewFar_ = 10000;
+    /// The view's depth of field: the distance in focus, in metres, and the f-number (0: off).
+    float viewFocusDistance_ = 10, viewFStop_ = 0;
     /// Base fly speed in scene units per second, adjusted by the wheel during flight.
     float flySpeed_ = 5.0f;
     unsigned viewportWidth_ = 0, viewportHeight_ = 0;

@@ -1,0 +1,46 @@
+// Depth of field of the editor viewport's half-float scene, before temporal anti-aliasing (TDDja/09).
+fragment_program Throne/DepthOfField_ps_VK glslvk
+{
+	source DepthOfField_ps.glsl
+	default_params
+	{
+		param_named focusDistance float 10
+		param_named cocScale float 0
+		param_named maxRadius float 16
+		param_named depthParams float2 0 1
+		param_named frameNoise float 0
+	}
+}
+
+material Throne/DepthOfField
+{
+	technique
+	{
+		pass
+		{
+			depth_check off
+			depth_write off
+			cull_hardware none
+
+			vertex_program_ref Ogre/Compositor/Quad_vs
+			{
+			}
+
+			fragment_program_ref Throne/DepthOfField_ps_VK
+			{
+			}
+
+			// The scene and the depth.
+			texture_unit
+			{
+				filtering none
+				tex_address_mode clamp
+			}
+			texture_unit
+			{
+				filtering none
+				tex_address_mode clamp
+			}
+		}
+	}
+}

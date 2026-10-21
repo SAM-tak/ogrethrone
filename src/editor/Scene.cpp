@@ -148,6 +148,8 @@ void readExtraComponents(const LhatTable& table, Node& node) {
         c.nearClip=scalar(t,"nearClip",c.nearClip,.001f,1.0e6f);
         c.farClip=scalar(t,"farClip",c.farClip,.001f,1.0e7f);
         if(c.farClip<=c.nearClip) lton::invalid();
+        c.focusDistance=scalar(t,"focusDistance",c.focusDistance,.01f,1.0e6f);
+        c.fStop=scalar(t,"fStop",c.fStop,0,64);
     });
     read("model", node.model, [&](const auto& t, auto& c) {
         if(const auto v=lton::field(t,"path"); !lhat_is_nil(v)) c.path=lton::relativePath(v);
@@ -267,6 +269,7 @@ void writeExtraComponents(lton::Writer& out, LhatValue table, const Node& node) 
     write("camera", node.camera, [&](auto t,const auto& c) {
         out.set(t,"fieldOfView",lhat_real(c.fieldOfView));
         out.set(t,"nearClip",lhat_real(c.nearClip)); out.set(t,"farClip",lhat_real(c.farClip));
+        out.set(t,"focusDistance",lhat_real(c.focusDistance)); out.set(t,"fStop",lhat_real(c.fStop));
     });
     write("model", node.model, [&](auto t,const auto& c) {
         out.set(t,"path",out.string(c.path)); out.set(t,"directXNormals",lhat_bool(c.directXNormals));

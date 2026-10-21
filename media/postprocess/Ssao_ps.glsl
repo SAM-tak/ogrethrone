@@ -18,6 +18,8 @@ vulkan( layout( ogre_P0 ) uniform Params { )
 	uniform float strength;
 	// 1 when the depth buffer is reversed (the far plane is 0).
 	uniform float reverseDepth;
+	// Changes every frame, so temporal anti-aliasing averages the noise away.
+	uniform float frameNoise;
 vulkan( }; )
 
 vulkan_layout( location = 0 )
@@ -52,7 +54,7 @@ void main()
 	vec3 normal = normalize( texelFetch( vkSampler2D( normals, normalSampler ), pixel, 0 ).xyz * 2.0 - 1.0 );
 
 	// A tangent frame turned by the noise.
-	float angle = 6.2831853 * fract( 52.9829189 * fract( dot( gl_FragCoord.xy, vec2( 0.06711056, 0.00583715 ) ) ) );
+	float angle = 6.2831853 * fract( fract( 52.9829189 * fract( dot( gl_FragCoord.xy, vec2( 0.06711056, 0.00583715 ) ) ) ) + frameNoise );
 	vec3 turned = vec3( cos( angle ), sin( angle ), 0.0 );
 	vec3 tangent = normalize( turned - normal * dot( turned, normal ) + vec3( 1e-4, 0.0, 0.0 ) );
 	vec3 bitangent = cross( normal, tangent );

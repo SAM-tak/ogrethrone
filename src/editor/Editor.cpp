@@ -394,7 +394,7 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
     resources.addResourceLocation(THRONE_MEDIA_DIR "/gi", "FileSystem", skyGroup);
     root.getHlmsManager()->loadMaterials("IBL.material.json", skyGroup, nullptr, "");
     for (const auto* script : {"Quad.program", "Atmosphere.material", "Sky.material", "DPSM.material", "Copyback.material",
-                               "PccDepthCompressor.material", "Tonemap.material", "Bloom.material", "Taa.material", "MotionBlur.material", "Ssao.material", "Ssr.material", "ThroneSmaa.material",
+                               "PccDepthCompressor.material", "Tonemap.material", "Bloom.material", "Taa.material", "MotionBlur.material", "Ssao.material", "Ssr.material", "DepthOfField.material", "ThroneSmaa.material",
                                "ThroneGi.compositor"}) {
         auto stream = resources.openResource(script, skyGroup);
         Ogre::MaterialManager::getSingleton().parseScript(stream, skyGroup);
@@ -424,6 +424,7 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
     ssao_ = Ogre::MaterialManager::getSingleton().getByName("Throne/Ssao", skyGroup);
     ssaoBlur_ = Ogre::MaterialManager::getSingleton().getByName("Throne/SsaoBlur", skyGroup);
     ssr_ = Ogre::MaterialManager::getSingleton().getByName("Throne/Ssr", skyGroup);
+    depthOfField_ = Ogre::MaterialManager::getSingleton().getByName("Throne/DepthOfField", skyGroup);
     {
         // A depth prepass draws lit opaque geometry (queue 10) into Depth and a G-buffer of
         // view-space normals, sun shadow/roughness and motion vectors (MotionVectors, the
@@ -432,14 +433,15 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
         // that queue 10 then reads. The scene then renders in half float:
         // queue 10 into Opaque reusing the prepass (depth read-only), then the other queues
         // below 200. Opaque is copied to Hdr; refractive glass (queue 200 and up) samples
-        // Opaque and its depth while drawing into Hdr. Temporal anti-aliasing blends Hdr into
-        // the reprojected history (Taa, copied to TaaHistory for the next frame) and writes each
-        // pixel's Velocity, along which motion blur (in Play) smears Taa into Blurred. Bloom is
-        // combined before tone mapping, then SMAA filters the LDR scene before ImGui presents
+        // Opaque and its depth while drawing into Hdr. Depth of field (with an f-stop) defocuses
+        // Hdr into Focused; temporal anti-aliasing blends that into the reprojected history (Taa,
+        // copied to TaaHistory for the next frame), smoothing the defocus's grain too, and writes
+        // each pixel's Velocity, along which motion blur (in Play) smears Taa into Blurred. Bloom
+        // is combined before tone mapping, then SMAA filters the LDR scene before ImGui presents
         // it (the UI stays sharp).
         auto* node = compositor->addNodeDefinition("ThroneEditor/ViewportNode");
         node->addTextureSourceName("Viewport", 0, Ogre::TextureDefinitionBase::TEXTURE_INPUT);
-        node->setNumLocalTextureDefinitions(19);
+        node->setNumLocalTextureDefinitions(20);
         {
             auto* texture = node->addTextureDefinition("Ssr");
             texture->format = Ogre::PFG_RGBA16_FLOAT;
@@ -471,7 +473,7 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
             view->colourAttachments.push_back(attachment);
             view->depthAttachment.textureName = "Depth";
         }
-        for (const auto* name : {"Velocity", "Blurred", "Taa", "TaaHistory"}) {
+        for (const auto* name : {"Velocity", "Focused", "Blurred", "Taa", "TaaHistory"}) {
             auto* texture = node->addTextureDefinition(name);
             texture->format = Ogre::String(name) == "Velocity" ? Ogre::PFG_RG16_FLOAT : Ogre::PFG_RGBA16_FLOAT;
             texture->depthBufferId = Ogre::DepthBuffer::POOL_NO_DEPTH;
@@ -489,7 +491,7 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
             texture->format = Ogre::String(name) == "SmaaEdges" ? Ogre::PFG_RG8_UNORM : Ogre::PFG_RGBA8_UNORM;
             texture->depthBufferId = Ogre::DepthBuffer::POOL_NO_DEPTH;
         }
-        node->setNumTargetPass(16);
+        node->setNumTargetPass(17);
         // @p outputs are further colour targets the material writes after @p target.
         const auto quad = [&](const char* target, const char* material, std::initializer_list<const char*> inputs,
                               std::initializer_list<const char*> outputs = {}) {
@@ -560,7 +562,8 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
         refractive->mStoreActionDepth = refractive->mStoreActionStencil = Ogre::StoreAction::DontCare;
         refractive->mFirstRQ = 200;
         refractive->setUseRefractions("Depth", "Opaque");
-        quad("Taa", "Throne/Taa", {"Hdr", "TaaHistory", "GBufferMotion", "Depth"}, {"Velocity"});
+        quad("Focused", "Throne/DepthOfField", {"Hdr", "Depth"});
+        quad("Taa", "Throne/Taa", {"Focused", "TaaHistory", "GBufferMotion", "Depth"}, {"Velocity"});
         quad("TaaHistory", "Ogre/Copy/4xFP32", {"Taa"});
         quad("Blurred", "Throne/MotionBlur", {"Taa", "Velocity", "Depth"});
         quad("BloomBright", "Throne/BloomExtract", {"Blurred"});
@@ -893,6 +896,7 @@ Editor::~Editor() {
     ssao_.reset();
     ssaoBlur_.reset();
     ssr_.reset();
+    depthOfField_.reset();
     sky_.reset();
     Ogre::ResourceGroupManager::getSingleton().destroyResourceGroup("ThroneEditorSky");
     root_.getCompositorManager2()->setCompositorPassProvider(nullptr);
@@ -1124,6 +1128,20 @@ void Editor::jitterCamera() {
     ssr->setNamedConstant("strength", reflectionsEnabled_ && historyReady_ ? 1.0f : 0.0f);
     ssr->setNamedConstant("reverseDepth", root_.getRenderSystem()->isReverseDepth() ? 1.0f : 0.0f);
     historyReady_ = true;
+    // With temporal anti-aliasing, the per-pixel noise of the screen-space passes moves on every
+    // frame (an additive recurrence of the golden ratio), so that it averages away; without, it
+    // stays put rather than flicker.
+    if (on) taaNoise_ = std::fmod(taaNoise_ + 0.618034f, 1.0f);
+    for (auto* material : {&ssao_, &ssr_, &depthOfField_})
+        (*material)->getTechnique(0)->getPass(0)->getFragmentProgramParameters()->setNamedConstant("frameNoise", taaNoise_);
+    // A thin lens on a 35 mm full-frame sensor (24 mm high) of this field of view: the circle
+    // of confusion's diameter in pixels is A f / (zf - f) * (z - zf) / z over the sensor's height.
+    auto dof = depthOfField_->getTechnique(0)->getPass(0)->getFragmentProgramParameters();
+    const float focal = 12.0f / std::tan(camera_.getFOVy().valueRadians() * 0.5f), focus = viewFocusDistance_ * 1000.0f;
+    const bool defocus = viewFStop_ > 0 && !orthographic_ && focus > focal;
+    dof->setNamedConstant("focusDistance", viewFocusDistance_);
+    dof->setNamedConstant("cocScale", defocus ? focal / viewFStop_ * focal / (focus - focal) / 24.0f * float(viewportHeight_) : 0.0f);
+    dof->setNamedConstant("depthParams", Ogre::Vector2(float(steady[2][2]), float(steady[2][3])));
     taaViewProj_ = viewProj;
     taaJitter_ = jitter;
     taaReset_ = !on;
@@ -3162,6 +3180,8 @@ void Editor::alignViewToCamera(std::size_t instance, std::size_t index, const Ca
     viewFieldOfView_ = camera.fieldOfView;
     viewNear_ = camera.nearClip;
     viewFar_ = camera.farClip;
+    viewFocusDistance_ = camera.focusDistance;
+    viewFStop_ = camera.fStop;
     updateCamera();
 }
 
@@ -3197,6 +3217,8 @@ void Editor::alignCameraToView() {
     camera.fieldOfView = viewFieldOfView_;
     camera.nearClip = viewNear_;
     camera.farClip = viewFar_;
+    camera.focusDistance = viewFocusDistance_;
+    camera.fStop = viewFStop_;
     const auto target = targetOf(selected_.instance, selected_.path);
     if (target.node && target.node->camera) target.node->camera = camera;
     else if (target.overrides) target.overrides->node(target.relative).camera = camera;

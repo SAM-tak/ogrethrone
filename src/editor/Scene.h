@@ -188,9 +188,13 @@ struct CameraComponent {
     float fieldOfView = 45;
     /// Near and far clip distances, in metres.
     float nearClip = .1f, farClip = 1000;
+    /// Depth of field of a 35 mm full-frame lens of this field of view: the distance in focus,
+    /// in metres, and the f-number (0: everything in focus).
+    float focusDistance = 10, fStop = 0;
     /// Equality of every field.
     bool operator==(const CameraComponent& other) const {
-        return fieldOfView == other.fieldOfView && nearClip == other.nearClip && farClip == other.farClip;
+        return fieldOfView == other.fieldOfView && nearClip == other.nearClip && farClip == other.farClip &&
+               focusDistance == other.focusDistance && fStop == other.fStop;
     }
     /// Negation of equality.
     bool operator!=(const CameraComponent& other) const { return !(*this == other); }

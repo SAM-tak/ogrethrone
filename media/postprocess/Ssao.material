@@ -9,6 +9,7 @@ fragment_program Throne/Ssao_ps_VK glslvk
 		param_named radius float 0.5
 		param_named strength float 0
 		param_named reverseDepth float 1
+		param_named frameNoise float 0
 	}
 }
 

@@ -725,6 +725,8 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         edited|=scalar("Near Clip",c.nearClip,.001f,1.0e6f);
         edited|=scalar("Far Clip",c.farClip,.001f,1.0e7f);
         c.farClip=(std::max)(c.farClip,c.nearClip*1.001f);
+        edited|=scalar("Focus Distance",c.focusDistance,.01f,1.0e6f);
+        edited|=scalar("F-Stop (0: no depth of field)",c.fStop,0,64);
         // The view and the camera, either way; the camera looks along the node's -Z.
         if(ImGui::Button("Align View to Camera")) alignViewToCamera(std::size_t(selected_.instance),std::size_t(&expanded-view_.instances[std::size_t(selected_.instance)].expansion.nodes.data()),c);
         ImGui::SameLine();
@@ -1046,6 +1048,8 @@ void Editor::levelInspector() {
         viewFar_ = (std::max)(viewFar_, viewNear_ * 1.001f);
         updateCamera();
     }
+    ImGui::DragFloat("Focus Distance", &viewFocusDistance_, .05f, .01f, 1.0e6f, "%.2f m", ImGuiSliderFlags_AlwaysClamp);
+    ImGui::DragFloat("F-Stop", &viewFStop_, .1f, 0, 64, viewFStop_ > 0 ? "f/%.1f" : "off", ImGuiSliderFlags_AlwaysClamp);
 }
 
 void Editor::sceneInspector(SceneInstance& instance) {

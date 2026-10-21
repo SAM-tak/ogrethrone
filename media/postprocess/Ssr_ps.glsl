@@ -31,6 +31,8 @@ vulkan( layout( ogre_P0 ) uniform Params { )
 	uniform float strength;
 	// 1 when the depth buffer is reversed (the far plane is 0).
 	uniform float reverseDepth;
+	// Changes every frame, so temporal anti-aliasing averages the noise away.
+	uniform float frameNoise;
 vulkan( }; )
 
 vulkan_layout( location = 0 )
@@ -89,7 +91,7 @@ void main()
 		return;
 
 	// March with steps that grow with distance, offset per pixel by noise.
-	float noise = fract( 52.9829189 * fract( dot( gl_FragCoord.xy, vec2( 0.06711056, 0.00583715 ) ) ) );
+	float noise = fract( fract( 52.9829189 * fract( dot( gl_FragCoord.xy, vec2( 0.06711056, 0.00583715 ) ) ) ) + frameNoise );
 	float previousT = 0.0;
 	bool hit = false;
 	float t = 0.0;
