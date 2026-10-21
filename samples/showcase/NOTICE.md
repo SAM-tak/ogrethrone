@@ -9,6 +9,9 @@ OGRE-Next examples:
 - `Samples/2.0/ApiUsage/ParticleFX2/ParticleFX2GameState.cpp`
 - `Samples/Media/2.0/scripts/materials/ParticleFX2/Examples.particle2` and `smoke.particle2`
 
+The skinned level places the pinned OGRE sample media's `Stickman`, `ninja` and `robot`
+meshes and skeletons, referenced in place.
+
 `media/particles/Showcase.particle2` adapts the five used templates with smoke
 inheritance expanded; it retains the OGRE MIT notice. Particle textures, normal
 maps and HLMS materials remain referenced from the pinned OGRE sample media.

@@ -139,12 +139,19 @@ private:
         Ogre::Matrix4 previous, current;
         std::uint64_t frame = 0;
     };
+    /// A skinned renderable's bone matrices (4x3 rows, in its blend index order) in the last
+    /// two prepass frames it was drawn in.
+    struct Bones {
+        std::vector<float> previous, current;
+        std::uint64_t frame = 0;
+    };
     /// Unmaps the buffer being written, keeping it for the frame.
     void unmap();
     /// Binds the buffer being written, if any.
     void bind(Ogre::CommandBuffer* commandBuffer) const;
 
     std::unordered_map<const Ogre::MovableObject*, Motion> motion_;
+    std::unordered_map<const Ogre::Renderable*, Bones> bones_;
     /// Counts depth prepasses; one per frame.
     std::uint64_t frame_ = 0;
     bool motionPass_ = false;
@@ -153,5 +160,7 @@ private:
     Ogre::ReadOnlyBufferPacked* current_ = nullptr;
     const Ogre::ConstBufferPacked* currentConstBuffer_ = nullptr;
     float* mapped_ = nullptr;
+    /// The next free float4 row of the current buffer's bone area, after its draws' rows.
+    std::size_t boneCursor_ = 0, boneEnd_ = 0;
 };
 }

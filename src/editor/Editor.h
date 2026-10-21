@@ -14,6 +14,7 @@
 #include "editor/Project.h"
 #include "script/ScriptRuntime.h"
 #include "runtime/PhysicsWorld.h"
+#include "runtime/AnimationWorld.h"
 #include <OgreMaterial.h>
 #include <OgreVector3.h>
 #include <imgui.h>
@@ -36,6 +37,8 @@ class Camera;
 class SceneNode;
 class ManualObject;
 class TextureGpu;
+class Bone;
+class SkeletonInstance;
 class CompositorWorkspace;
 class ImguiManager;
 class CompositorPassImguiProvider;
@@ -192,6 +195,11 @@ private:
         ModelLibrary::Placed placedModel;
         /// The library key the model is read under; empty when there is nothing to place.
         std::string modelKey;
+        /// The placed model's bones in its skeleton asset's joint order (null where the mesh
+        /// has no such bone), and what they were matched for.
+        std::vector<Ogre::Bone*> bones;
+        const Ogre::SkeletonInstance* bonesOf = nullptr;
+        std::shared_ptr<const SkeletonAsset> bonesFor;
         std::optional<ParticleSystemComponent> particleConfig;
 
     };
@@ -288,6 +296,8 @@ private:
     /// Moves the sky OGRE made into the queue after opaque geometry.
     void drawSkyAfterOpaque();
     /// Loads one project texture with a project-qualified cache key; masks share an R8 pool.
+    /// A project-relative path's file; @ogre/ refers to the pinned OGRE sample media.
+    std::filesystem::path mediaFile(const std::string& path) const;
     Ogre::TextureGpu* projectTexture(const std::string& path, int kind, bool mask = false);
     /// Replaces the mipmaps of an environment cubemap with GGX-prefiltered radiance.
     void prefilter(Ogre::TextureGpu& cubemap);
@@ -485,6 +495,10 @@ private:
     std::unique_ptr<Ogre::AtmosphereNpr> sky_;
     /// Model files read for Model components, shared between the nodes placing them.
     std::unique_ptr<ModelLibrary> models_;
+    /// The skeletons of the models read, by Model path, and the Animator poses sampled from
+    /// them (the Animation stage during Play; once a frame while editing).
+    AnimationLibrary animations_;
+    AnimationWorld animation_{animations_};
     bool skyboxEnabled_ = true;
     Ogre::SceneNode* sunNode_ = nullptr;
     bool shadowsEnabled_ = true;

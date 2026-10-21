@@ -154,6 +154,13 @@ void readExtraComponents(const LhatTable& table, Node& node) {
         if(const auto v=lton::field(t,"script"); !lhat_is_nil(v)) c.script=lton::relativePath(v);
         c.enabled=flag(t,"enabled",c.enabled);
     });
+    read("animator", node.animator, [&](const auto& t, auto& c) {
+        if(const auto v=lton::field(t,"clip"); !lhat_is_nil(v)) c.clip=std::string(lton::string(v));
+        c.time=scalar(t,"time",c.time,0,1.0e6f);
+        c.speed=scalar(t,"speed",c.speed,-100,100);
+        c.loop=flag(t,"loop",c.loop);
+        c.playing=flag(t,"playing",c.playing);
+    });
     read("camera", node.camera, [&](const auto& t, auto& c) {
         c.fieldOfView=scalar(t,"fieldOfView",c.fieldOfView,1,170);
         c.nearClip=scalar(t,"nearClip",c.nearClip,.001f,1.0e6f);
@@ -307,6 +314,11 @@ void writeExtraComponents(lton::Writer& out, LhatValue table, const Node& node) 
     write("particles", node.particles, [&](auto t,const auto& c) {
         out.set(t,"definition",out.string(c.definition)); out.set(t,"enabled",lhat_bool(c.enabled));
         if(!c.script.empty()) out.set(t,"script",out.string(c.script));
+    });
+    write("animator", node.animator, [&](auto t,const auto& c) {
+        if(!c.clip.empty()) out.set(t,"clip",out.string(c.clip));
+        out.set(t,"time",lhat_real(c.time)); out.set(t,"speed",lhat_real(c.speed));
+        out.set(t,"loop",lhat_bool(c.loop)); out.set(t,"playing",lhat_bool(c.playing));
     });
     write("camera", node.camera, [&](auto t,const auto& c) {
         out.set(t,"fieldOfView",lhat_real(c.fieldOfView));

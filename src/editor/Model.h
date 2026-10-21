@@ -2,6 +2,7 @@
 
 #include "editor/AdaptiveIrradianceField.h"
 #include "editor/Scene.h"
+#include "runtime/AnimationLibrary.h"
 #include <OgreMesh2.h>
 #include <cstdint>
 #include <filesystem>
@@ -104,6 +105,9 @@ public:
         std::vector<SurfacePoint> surface;
         /// Problems found while reading, logged by add().
         std::vector<std::string> messages;
+        /// An OGRE mesh file (.mesh, with its .skeleton), which add() reads through OGRE
+        /// instead; the rest is then empty.
+        std::filesystem::path ogreMesh;
     };
 
     /// @param scene Where placed models are created; must outlive the library.
@@ -139,6 +143,9 @@ public:
     static constexpr float surfaceCell = 0.5f;
     /// Parsed::surface of the model added under @p key; empty when there is none.
     const std::vector<SurfacePoint>& surface(const std::string& key) const;
+    /// The skeleton and clips of the model added under @p key, or null when it has none. A
+    /// skinned model is placed as one item, whose SkeletonInstance poses it.
+    std::shared_ptr<const SkeletonAsset> skeleton(const std::string& key) const;
 
 private:
     /// One submesh of a mesh instance of a file (so one material): its mesh and its
@@ -160,7 +167,10 @@ private:
         std::vector<Ogre::MeshPtr> meshes;
         std::vector<Ogre::HlmsPbsDatablock*> materials;
         std::vector<SurfacePoint> surface;
+        std::shared_ptr<const SkeletonAsset> skeleton;
     };
+    /// Reads an OGRE .mesh (and its skeleton) for add().
+    void addOgreMesh(const std::string& key, const std::filesystem::path& file);
 
     Ogre::Root& root_;
     Ogre::SceneManager& scene_;

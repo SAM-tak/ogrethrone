@@ -244,6 +244,22 @@ enum class AntiAliasing {
     None,
 };
 
+/// Plays a skeletal clip of the node's Model (TDDja/07 5.3): the Animation stage advances the
+/// time and samples the pose on the simulation side; the renderer poses the model's bones.
+struct AnimatorComponent {
+    /// The clip's name in the model's skeleton; empty shows the rest pose.
+    std::string clip;
+    /// Seconds into the clip; the Animation stage advances it by speed while playing.
+    float time = 0;
+    float speed = 1;
+    /// Whether the clip repeats; otherwise it holds its last pose.
+    bool loop = true, playing = true;
+    /// Equality of every field.
+    bool operator==(const AnimatorComponent& other) const {
+        return clip == other.clip && time == other.time && speed == other.speed && loop == other.loop && playing == other.playing;
+    }
+};
+
 struct CameraComponent {
     /// Vertical field of view, in degrees.
     float fieldOfView = 45;
@@ -305,6 +321,7 @@ struct NodeOverride {
     std::optional<ParticleSystemComponent> particles;
     std::optional<ModelComponent> model;
     std::optional<CameraComponent> camera;
+    std::optional<AnimatorComponent> animator;
     std::optional<BoxCollider> boxCollider;
     std::optional<SphereCollider> sphereCollider;
     std::optional<CapsuleCollider> capsuleCollider;
@@ -395,6 +412,7 @@ struct SceneNode {
     std::optional<ParticleSystemComponent> particles;
     std::optional<ModelComponent> model;
     std::optional<CameraComponent> camera;
+    std::optional<AnimatorComponent> animator;
     std::optional<BoxCollider> boxCollider;
     std::optional<SphereCollider> sphereCollider;
     std::optional<CapsuleCollider> capsuleCollider;
@@ -417,6 +435,7 @@ inline void applyExtraComponents(SceneNode& node, const NodeOverride& layer) {
     if (node.particles && layer.particles) node.particles = layer.particles;
     if (node.model && layer.model) node.model = layer.model;
     if (node.camera && layer.camera) node.camera = layer.camera;
+    if (node.animator && layer.animator) node.animator = layer.animator;
     if (node.material && layer.material) node.material = layer.material;
     if (node.light && layer.light) node.light = layer.light;
     if (node.sphere && layer.sphere) node.sphere = layer.sphere;

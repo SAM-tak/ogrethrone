@@ -1,4 +1,4 @@
-foreach(dependency IN ITEMS ogre-next box3d imgui colibri rapidjson glslang ois)
+foreach(dependency IN ITEMS ogre-next box3d imgui colibri rapidjson glslang ois ozz-animation)
     if(NOT EXISTS "${PROJECT_SOURCE_DIR}/third_party/${dependency}/.git")
         message(FATAL_ERROR "Missing ${dependency}. Run: git submodule update --init --recursive")
     endif()
@@ -14,6 +14,18 @@ endforeach()
 # The standard library provides LTON reading/writing and the modules scripts may use.
 set(LHAT_BUILD_STDLIB ON CACHE BOOL "Build the L^ standard library" FORCE)
 add_subdirectory("${THRONE_LHAT_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/third_party/lhat" EXCLUDE_FROM_ALL)
+
+# ozz-animation samples poses on the simulation side: its runtime and offline (raw data to
+# runtime data) libraries only, without tools, importers, samples or tests.
+foreach(feature IN ITEMS tools fbx gltf data samples howtos tests postfix)
+    set(ozz_build_${feature} OFF CACHE BOOL "Only build the ozz-animation libraries" FORCE)
+endforeach()
+add_subdirectory(third_party/ozz-animation EXCLUDE_FROM_ALL)
+# Its warning flags (-Wall is -Weverything under clang-cl) and warnings-as-errors are its own.
+foreach(target IN ITEMS ozz_base ozz_animation ozz_animation_offline)
+    set_target_properties(${target} PROPERTIES COMPILE_WARNING_AS_ERROR OFF)
+    target_compile_options(${target} PRIVATE "$<IF:$<BOOL:${MSVC}>,/w,-w>")
+endforeach()
 
 if(NOT THRONE_BUILD_GRAPHICS)
     return()

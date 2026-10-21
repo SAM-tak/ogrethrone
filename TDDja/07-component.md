@@ -198,7 +198,20 @@ Box3D には、C++ の小さなスレッドプールを渡す（Box3D はホス�
 
 入力は UI の構築前に取得し、Behaviour と System はユーザー段で実行する。遅延ありでは、シミュレーションの列を専用のワーカー 1 本で走らせ、描画の列はメインスレッドで走らせる。SyncRender では両方の終了を待つ。処理に失敗しても、ワーカーを回収してからエラーを返す。
 
-［補足］物理ボディとシーンの Component の結線は 08 で実装した。Box3DStep はノードの変更を入力として取り込み、1 刻み進めて、結果をノードへ書き戻す。内部タスクには待機中も子タスクを実行できる C++ プールを渡す。アニメーションクリップ／スケルトンの Component は未実装で、Animation の段にはまだ処理対象がない（ECS-07）。
+［補足］物理ボディとシーンの Component の結線は 08 で実装した。Box3DStep はノードの変更を入力として取り込み、1 刻み進めて、結果をノードへ書き戻す。内部タスクには待機中も子タスクを実行できる C++ プールを渡す。Animation の段は Animator Component を処理する（5.4）。
+
+### 5.4. スケルタルアニメーション
+
+姿勢はシミュレーション側で ozz-animation が計算し、ロジック（関節の位置、将来の IK や当たり判定）が同じ姿勢を読める。OGRE は受け取った局所姿勢を骨に書き、階層の計算（OGRE のワーカー）とスキニング（HlmsPbs の GPU）だけを行う。OGRE の SkeletonAnimation は使わない。アクティブなアニメーションが無ければ `SkeletonInstance::update` は骨を上書きしないので、外から書いた局所 TRS がそのまま使われる。
+
+- **Animator Component**: clip、time（秒）、speed、loop、playing。同じノードの Model が骨格を持つときに働く。保存・プレハブの上書き・Inspector（クリップの一覧、時刻のスライダー）を持つ。
+- **AnimationLibrary**（src/runtime）: Model のパスごとの骨格とクリップ（ozz の Skeleton／Animation）。モデルの読み込みで一度作り、以後は読むだけなので、シミュレーションと描画のスレッドで共有する。インポーターは ozz の生データ（RawSkeleton と、関節名ごとのキーを持つクリップ）を作るだけ。キーの無い関節は休止姿勢になる。
+- **AnimationWorld**（src/runtime）: Animation の段が持つ密なプール。PhysicsWorld が Box3D のボディを持つのと同じく、ノードの Component は設定だけを持ち、姿勢（SamplingJob の文脈、局所姿勢、モデル空間行列）は System が持つ。`step` が時刻を進めて標本化し、SyncSimulation の `publish` が描画用に複写する（描画中に書き換わらない）。Play の外では OGRE の段で dt 0 の `step` と `publish` を行い、編集した時刻の姿勢を見せる。
+- **描画**: ozz は関節を並べ替えるので、骨とは名前で対応させる。前フレームの骨行列は ThronePbs がプリパスの prevWorldBuf の骨の領域に書き、スキンのモーションベクトルを出す（09）。
+- **入力**: OGRE の `.mesh`／`.skeleton`。v1 として読み込み、v2 に変換する。v1 のキーは休止姿勢からの相対（位置は加算、回転は後から掛ける、拡大は乗算）なので、ozz の局所変換に直す。FBX（ufbx）のスキンとクリップは次の段階で対応する。
+- **スクリプト**: `node.animator()` の再生操作と `jointPosition(name)`（ノード基準、無ければ nil^）。
+
+汎用の ECS アロケーター（アーキタイプの詰めた配置）は導入しない。重い処理は System が自分の密なデータを持ち、ノードはハンドルと設定を持つ。
 
 ## 6. System
 
@@ -229,7 +242,7 @@ for^ _^, node in^ throne.query("Transform", "BoxPrimitive") { ... }
 
 ## 8. 未決事項
 
-- **ECS-07**: アニメーションを L^ のジョブで回したときの、ループと小分けの呼び出しのコストが、アニメーションの量に見合うか（試作で測る）。
+- **ECS-07**: 解決。アニメーションは L^ ではなく ozz-animation（C++）で回し、System が密なプールを持つ（5.4）。
 
 ## 改定履歴（要約）
 

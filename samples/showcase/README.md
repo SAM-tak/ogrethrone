@@ -2,8 +2,8 @@
 
 Four editable Throne levels port the scene layouts and lighting from the pinned
 OGRE-Next `Forward3D`, `PbsMaterials`, `AreaApproxLights` and `ParticleFX2` samples.
-A fifth, `subsurface.level.lton`, shows the engine's subsurface scattering and
-translucency.
+Two more show engine features: `subsurface.level.lton` (subsurface scattering and
+translucency) and `skinned.level.lton` (skeletal animation).
 
 Open this folder from the project launcher, or run from the repository root:
 
@@ -33,6 +33,10 @@ The project opens **Area Lights**. Click a file in **Browser > Levels** to switc
   the point light inside it; and three leaves with a light behind them, the right one
   without translucency for comparison. **View → Subsurface Scattering** toggles the
   blur. The scattering blurs on screen, so fly closer to see it at its scale.
+- `skinned.level.lton`: OGRE's Stickman (Walk), ninja (Attack1) and robot (Walk, at 1.5×
+  speed), each a Model of the sample's `.mesh` with an Animator. Outside Play they hold the
+  Animator's time (drag **Time** to scrub); Play runs the clips. Their material scripts are
+  not read, so they are drawn in plain grey.
 
 F5 starts/stops the rotation and particle-platform behaviours. Pause suspends or
 resumes Play. These editor shortcuts replace the standalone samples' function-key controls.

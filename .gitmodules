@@ -32,3 +32,6 @@
 	path = third_party/ois
 	url = https://github.com/SAM-tak/OIS.git
 	branch = for-throne
+[submodule "third_party/ozz-animation"]
+	path = third_party/ozz-animation
+	url = https://github.com/guillaumeblanc/ozz-animation.git

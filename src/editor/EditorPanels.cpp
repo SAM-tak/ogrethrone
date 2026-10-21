@@ -770,6 +770,29 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         if(ImGui::Button("Align Camera to View")) alignCameraToView();
         return edited;
     });
+    component("Animator",value.animator,&SceneNode::animator,&NodeOverride::animator,[&](auto& c) {
+        // The clips of the node's model, once it has been read; otherwise the name as typed.
+        const auto* skeleton=value.model ? animations_.find(value.model->path) : nullptr;
+        bool edited=false;
+        if(skeleton) {
+            if(ImGui::BeginCombo("Clip",c.clip.empty()?"(rest pose)":c.clip.c_str())) {
+                if(ImGui::Selectable("(rest pose)",c.clip.empty())) c.clip.clear(),edited=true;
+                for(const auto& clip:skeleton->clips)
+                    if(ImGui::Selectable(clip.name.c_str(),clip.name==c.clip)) c.clip=clip.name,edited=true;
+                ImGui::EndCombo();
+            }
+            track();
+        } else edited|=texturePath("Clip",c.clip);
+        const float length=skeleton ? skeleton->duration(c.clip) : 0;
+        edited|=ImGui::DragFloat("Time (s)",&c.time,.01f,0,length>0?length:1.0e6f,"%.3f",ImGuiSliderFlags_AlwaysClamp); track();
+        edited|=ImGui::DragFloat("Speed",&c.speed,.01f,-100,100,"%.2f",ImGuiSliderFlags_AlwaysClamp); track();
+        edited|=ImGui::Checkbox("Loop",&c.loop); track();
+        ImGui::SameLine();
+        edited|=ImGui::Checkbox("Playing",&c.playing); track();
+        if(!value.model) ImGui::TextDisabled("Poses the skeleton of the node's Model.");
+        else if(!skeleton) ImGui::TextDisabled("The Model has no skeleton (yet).");
+        return edited;
+    });
     component("Light",value.light,&SceneNode::light,&NodeOverride::light,[&](auto& c) {
         int type=static_cast<int>(c.type);
         bool edited=ImGui::Combo("Type",&type,"Directional\0Point\0Spot\0Area Approx\0Area LTC\0"); track();
@@ -1022,6 +1045,7 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
             if(!own->particles && ImGui::Selectable("Particle System")) checkpoint(),own->particles.emplace();
             if(!own->model && ImGui::Selectable("Model")) checkpoint(),own->model.emplace();
             if(!own->camera && ImGui::Selectable("Camera")) checkpoint(),own->camera.emplace();
+            if(!own->animator && ImGui::Selectable("Animator")) checkpoint(),own->animator.emplace();
             if(!own->material && ImGui::Selectable("PBS Material")) checkpoint(),own->material.emplace();
             if(!own->light && ImGui::Selectable("Light")) checkpoint(),own->light.emplace();
             if(!own->boxCollider && ImGui::Selectable("Box Collider")) checkpoint(),own->boxCollider.emplace();

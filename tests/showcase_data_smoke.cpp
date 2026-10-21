@@ -60,6 +60,14 @@ int main(int argc,char** argv) {
             }
             require(scattering==4 && translucent==4,"Subsurface showcase materials missing");
         }
+        {
+            // The skinned level poses OGRE's sample characters with Animators.
+            const auto level=throne::Level::load(project.resolve("levels/skinned.level.lton"));
+            const auto scene=throne::Scene::load(project.resolve(level.scenes[0].scene));
+            unsigned animated=0;
+            for(const auto& node:scene.nodes) animated+=node.animator && node.model && !node.animator->clip.empty();
+            require(level.scenes.size()==2 && animated==3,"Skinned showcase animators missing");
+        }
         throne::Prefab prefab;
         auto& root=prefab.addNode("Emitter"); root.light.emplace(); root.material.emplace(); root.particles.emplace(); const auto id=root.id;
         prefab.save(temporary/"light.prefab.lton");
@@ -83,7 +91,8 @@ int main(int argc,char** argv) {
             "particles = {definition = \"\"}","particles = {script = \"../escape.particle2\"}","particles = {enabled = 123}",
             "material = {roughness = -1}","material = {reflectionMap = \"../escape.dds\"}",
             "material = {alpha = \"Blend\"}","material = {opacity = 2}","material = {translucency = {colour = {-1,0,0}}}",
-            "material = {translucency = {power = 0}}","material = {subsurfaceWidth = -1}","camera = {antiAliasing = \"FXAA\"}"}) {
+            "material = {translucency = {power = 0}}","material = {subsurfaceWidth = -1}","camera = {antiAliasing = \"FXAA\"}",
+            "animator = {speed = 1000}","animator = {time = -1}","animator = {loop = 1}"}) {
             std::ofstream(temporary/"bad.lton")<<"format=\"ogrethrone-scene\",version=2,nodes={{id=1,name=\"Bad\",parent=0,components={"<<invalid<<"}}},";
             bool rejected=false; try { throne::Scene::load(temporary/"bad.lton"); } catch(const std::exception&) { rejected=true; }
             require(rejected,"Malformed light/material accepted");
@@ -95,6 +104,13 @@ int main(int argc,char** argv) {
         viewed.save(temporary/"camera.lton");
         const auto camera=throne::Scene::load(temporary/"camera.lton").nodes[0].camera;
         require(camera && camera->fStop==2.8f && camera->antiAliasing==throne::AntiAliasing::Smaa,"Camera settings lost");
+        // An Animator keeps its clip and playback.
+        throne::Scene posed;
+        auto& walker=posed.addNode("Walker"); walker.animator.emplace();
+        walker.animator->clip="Walk"; walker.animator->time=.5f; walker.animator->speed=-1.5f; walker.animator->loop=false;
+        posed.save(temporary/"animator.lton");
+        const auto animator=throne::Scene::load(temporary/"animator.lton").nodes[0].animator;
+        require(animator && *animator==*walker.animator,"Animator settings lost");
         std::filesystem::remove_all(temporary);
         std::puts("Showcase data passed: all levels, PBS palette, lights, persistence, prefab overrides and validation");
         return 0;

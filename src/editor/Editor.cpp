@@ -8,6 +8,10 @@
 #include <Compositor/OgreCompositorWorkspaceDef.h>
 #include <Compositor/OgreCompositorShadowNode.h>
 #include <OgreLight.h>
+#include <Animation/OgreBone.h>
+#include <Animation/OgreSkeletonInstance.h>
+#include <OgreItem.h>
+#include <ozz/animation/runtime/skeleton.h>
 #include <OgreForwardPlusBase.h>
 #include <OgreTextureFilters.h>
 #include <OgreTextureGpu.h>
@@ -874,6 +878,10 @@ void Editor::play() {
         // Play runs the open level; playing the whole game (with main.lh) comes later.
         runtime_ = std::make_unique<ScriptRuntime>(
             doc_.world, view_, project_->root, [this](const std::string& line) { log(line); }, PlayScope::Level);
+        // Scripts read the poses the Animation stage samples, on the same thread.
+        runtime_->setJointQuery([this](std::size_t instance, std::size_t node, std::string_view joint, float matrix[16]) {
+            return animation_.jointMatrix(instance, node, joint, matrix);
+        });
         physics_=std::make_unique<PhysicsWorld>();
         physics_->setSerial(doc_.world.level.serialExecution);
         physics_->load(view_);
@@ -1012,13 +1020,17 @@ bool Editor::frame(float deltaSeconds, const std::function<void()>& input) {
         if (stage == "Box3DStep") {
             if (physics_) physics_->step(view_);
             measured.physicsMs += milliseconds(start, Clock::now());
+        } else if (stage == "Animation") {
+            if (runtime_) animation_.step(view_, float(fixedStep));
         } else if (stage == "SyncSimulation") {
-            if (runtime_) renderSnapshot_ = view_;
+            if (runtime_) renderSnapshot_ = view_, animation_.publish();
             measured.snapshotMs = milliseconds(start, Clock::now());
         } else if (stage == renderStages[0] || stage == renderStages[2]) {
             if (renderEvents_) renderEvents_->renderEvent(stage, deltaSeconds);
         } else if (stage == "OGRE") {
             if(viewportVisible_) {
+                // While editing, the poses follow the Animators' times as edited.
+                if (!runtime_) animation_.step(view_, 0), animation_.publish();
                 syncTransforms(runtime_ && renderSnapshot_ ? &*renderSnapshot_ : nullptr);
                 updateCamera();
                 scene_.getParticleSystemManager2()->setCameraPosition(camera_.getDerivedPosition());
@@ -1043,7 +1055,6 @@ bool Editor::frame(float deltaSeconds, const std::function<void()>& input) {
             measured.renderMs = milliseconds(render, Clock::now());
         }
         // FetchInput has already collected this frame's OS/ImGui/OIS input above.
-        // Animation has no bindings until animation components exist.
     };
     try {
         FrameTimes times;
@@ -1458,9 +1469,13 @@ void Editor::destroyRenderObjects() {
     sceneNodes_.clear();
 }
 
+std::filesystem::path Editor::mediaFile(const std::string& path) const {
+    return path.rfind("@ogre/",0)==0 ? std::filesystem::path(THRONE_OGRE_MEDIA_DIR)/path.substr(6) : project_->resolve(path);
+}
+
 Ogre::TextureGpu* Editor::projectTexture(const std::string& path,int kind,bool mask) {
     if(path.empty() || !project_) return nullptr;
-    const auto file=path.rfind("@ogre/",0)==0 ? std::filesystem::path(THRONE_OGRE_MEDIA_DIR)/path.substr(6) : project_->resolve(path);
+    const auto file=mediaFile(path);
     const auto key=std::make_tuple(file.generic_u8string(),kind,mask);
     if(const auto it=projectTextures_.find(key); it!=projectTextures_.end()) return it->second;
     if(!std::filesystem::exists(file)) {
@@ -1649,10 +1664,12 @@ void Editor::updateProbeLayout() {
 
 void Editor::readModel(const ModelComponent& model, const std::string& key) {
     ++reads_;
-    const auto file=project_->resolve(model.path);
+    const auto file=mediaFile(model.path);
     tasks_.background<ModelLibrary::Parsed>("Reading "+model.path,[file,model] { return ModelLibrary::parse(file,model); },
-        [this,key](ModelLibrary::Parsed& parsed) {
+        [this,key,path=model.path](ModelLibrary::Parsed& parsed) {
             models_->add(key,parsed);
+            // The Animation stage finds its skeleton by the component's path.
+            if(auto skeleton=models_->skeleton(key)) animations_.put(path,std::move(skeleton));
             modelsReading_.erase(key);
             --reads_;
         });
@@ -1837,7 +1854,7 @@ void Editor::syncTransforms(const LevelExpansion* snapshot) {
             models_->remove(render.placedModel);
             render.model = node.model;
             render.modelKey = node.model && !node.model->path.empty() && project_
-                ? ModelLibrary::key(*node.model, project_->resolve(node.model->path)) : std::string{};
+                ? ModelLibrary::key(*node.model, mediaFile(node.model->path)) : std::string{};
         }
         if (!render.modelKey.empty() && !render.placedModel.root) {
             if (models_->has(render.modelKey)) {
@@ -1849,6 +1866,29 @@ void Editor::syncTransforms(const LevelExpansion* snapshot) {
         }
         if (render.placedModel.root && shape.kind == PrimitiveKind::None)
             render.lower = render.placedModel.lower, render.upper = render.placedModel.upper;
+        // An Animator poses a skinned model's bones as the simulation last published; OGRE's
+        // workers then derive their matrices, and the vertex shader skins the mesh.
+        const auto* pose = node.animator ? animation_.published(render.instance, render.index) : nullptr;
+        auto* skeleton = pose && render.placedModel.items.size() == 1 ? render.placedModel.items[0]->getSkeletonInstance() : nullptr;
+        if (skeleton) {
+            if (render.bonesOf != skeleton || render.bonesFor != pose->asset) {
+                // ozz orders the joints itself: match them to the mesh's bones by name.
+                std::map<std::string, Ogre::Bone*> byName;
+                for (std::size_t b = 0; b < skeleton->getNumBones(); ++b) byName[skeleton->getBone(b)->getName()] = skeleton->getBone(b);
+                const auto names = pose->asset->skeleton->joint_names();
+                render.bones.assign(names.size(), nullptr);
+                for (std::size_t j = 0; j < names.size(); ++j)
+                    if (const auto found = byName.find(names[j]); found != byName.end()) render.bones[j] = found->second;
+                render.bonesOf = skeleton, render.bonesFor = pose->asset;
+            }
+            for (std::size_t j = 0; j < render.bones.size() && j < pose->joints.size(); ++j) {
+                if (!render.bones[j]) continue;
+                const auto& joint = pose->joints[j];
+                render.bones[j]->setPosition(Ogre::Vector3(joint.position[0], joint.position[1], joint.position[2]));
+                render.bones[j]->setOrientation(Ogre::Quaternion(joint.rotation[3], joint.rotation[0], joint.rotation[1], joint.rotation[2]));
+                render.bones[j]->setScale(Ogre::Vector3(joint.scale[0], joint.scale[1], joint.scale[2]));
+            }
+        }
         const auto colour=primitiveColour(node);
         render.material->setDiffuse(Ogre::Vector3(colour[0],colour[1],colour[2]));
         render.material->setRoughness(surface.roughness);
@@ -2238,6 +2278,7 @@ void assign(NodeOverride& into, const NodeOverride& from) {
     if (from.particles) into.particles = from.particles;
     if (from.model) into.model = from.model;
     if (from.camera) into.camera = from.camera;
+    if (from.animator) into.animator = from.animator;
     if (from.material) into.material = from.material;
     if (from.light) into.light = from.light;
     if (from.sphere) into.sphere = from.sphere;

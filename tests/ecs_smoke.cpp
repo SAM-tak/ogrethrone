@@ -108,7 +108,7 @@ if^ n != nil^ {
                 "Typed BoxPrimitive access returned the wrong native component");
         for (const auto type : {"SpherePrimitive", "CapsulePrimitive", "PlanePrimitive", "BoxCollider",
                                 "SphereCollider", "CapsuleCollider", "PlaneCollider", "RigidBody",
-                                "PbsMaterial", "Light", "ParticleSystem"}) {
+                                "PbsMaterial", "Light", "ParticleSystem", "Animator"}) {
             const auto before = log.size();
             const auto absent = runtime.evaluate(std::string("import^ throne\nlet^ n = throne.find(\"Parent\")\n") +
                 "if^ n != nil^ { let^ c:throne." + type + "|nil^ = n.component(throne." + type +
@@ -116,6 +116,36 @@ if^ n != nil^ {
             require(absent.text.empty(), absent.text.c_str());
             require(log.size() == before, "Missing component did not return nil");
         }
+        // An Animator's playback is the component's data; joints come from the Animation stage.
+        expanded.instances[0].expansion.nodes[0].node.animator.emplace();
+        runtime.setJointQuery([](std::size_t, std::size_t, std::string_view joint, float matrix[16]) {
+            if (joint != "hand") return false;
+            for (int i = 0; i < 16; ++i) matrix[i] = i == 12 ? 1.0f : i == 13 ? 2.0f : i == 14 ? 3.0f : 0.0f;
+            return true;
+        });
+        // Inside a procedure: a console line's own names outlive it, which host values cannot.
+        const auto animated = runtime.evaluate(R"(import^ throne
+let^ check = p^ {
+    let^ n = throne.find("Parent")
+    if^ n != nil^ {
+        let^ a = n.animator()
+        if^ a != nil^ {
+            a.setClip("Walk")
+            a.setSpeed(2)
+            a.stop()
+            let^ hand = a.jointPosition("hand")
+            if^ hand != nil^ { if^ hand.y = 2 { throne.log("hand") } }
+            if^ a.jointPosition("foot") = nil^ { throne.log("no foot") }
+        }
+    }
+}
+check()
+)");
+        require(animated.text.empty(), animated.text.c_str());
+        const auto& animator = *expanded.instances[0].expansion.nodes[0].node.animator;
+        require(animator.clip == "Walk" && animator.speed == 2 && !animator.playing, "Animator setters did not edit the component");
+        require(log.size() >= 2 && log[log.size() - 2] == "hand" && log.back() == "no foot", "Animator joint positions wrong");
+        expanded.instances[0].expansion.nodes[0].node.animator.reset();
         const auto mismatch = runtime.evaluate(R"(import^ throne
 let^ n = throne.find("Parent")
 if^ n != nil^ { let^ t:throne.BoxPrimitive|nil^ = n.component(throne.Transform) }

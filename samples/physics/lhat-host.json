@@ -16,7 +16,8 @@
     {"kind": "hostdata", "module": "throne", "name": "RigidBody"},
     {"kind": "hostdata", "module": "throne", "name": "PbsMaterial"},
     {"kind": "hostdata", "module": "throne", "name": "Light"},
-    {"kind": "hostdata", "module": "throne", "name": "ParticleSystem"}
+    {"kind": "hostdata", "module": "throne", "name": "ParticleSystem"},
+    {"kind": "hostdata", "module": "throne", "name": "Animator"}
   ],
   "functions": [
     {"kind": "func", "module": "std.math", "name": "sin", "signature": "f^number^ -> number^;"},
@@ -115,6 +116,17 @@
     {"kind": "member", "module": "throne", "type": "RigidBody", "name": "setLinearVelocity", "signature": "p^self^, throne.Vec3;"},
     {"kind": "member", "module": "throne", "type": "RigidBody", "name": "angularVelocity", "signature": "f^self^ -> throne.Vec3;"},
     {"kind": "member", "module": "throne", "type": "RigidBody", "name": "setAngularVelocity", "signature": "p^self^, throne.Vec3;"},
+    {"kind": "member", "module": "throne", "type": "SceneNode", "name": "animator", "signature": "f^self^ -> throne.Animator|nil^;"},
+    {"kind": "member", "module": "throne", "type": "Animator", "name": "clip", "signature": "f^self^ -> string^;"},
+    {"kind": "member", "module": "throne", "type": "Animator", "name": "setClip", "signature": "p^self^, string^;"},
+    {"kind": "member", "module": "throne", "type": "Animator", "name": "time", "signature": "f^self^ -> number^;"},
+    {"kind": "member", "module": "throne", "type": "Animator", "name": "setTime", "signature": "p^self^, number^;"},
+    {"kind": "member", "module": "throne", "type": "Animator", "name": "speed", "signature": "f^self^ -> number^;"},
+    {"kind": "member", "module": "throne", "type": "Animator", "name": "setSpeed", "signature": "p^self^, number^;"},
+    {"kind": "member", "module": "throne", "type": "Animator", "name": "playing", "signature": "f^self^ -> bool^;"},
+    {"kind": "member", "module": "throne", "type": "Animator", "name": "play", "signature": "p^self^;"},
+    {"kind": "member", "module": "throne", "type": "Animator", "name": "stop", "signature": "p^self^;"},
+    {"kind": "member", "module": "throne", "type": "Animator", "name": "jointPosition", "signature": "f^self^, string^ -> throne.Vec3|nil^;"},
     {"kind": "member", "module": "throne", "type": "System", "name": "name", "signature": "f^self^ -> string^;"},
     {"kind": "func", "module": "throne", "name": "vec3", "signature": "f^number^, number^, number^ -> throne.Vec3;"},
     {"kind": "func", "module": "throne", "name": "query", "signature": "f^...:string^ -> t^{throne.SceneNode[]};"},

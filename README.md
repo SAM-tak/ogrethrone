@@ -443,7 +443,7 @@ frame later; with it, they appear in the same frame and nothing overlaps. Script
 the editor UI never run at the same time, and OGRE stays on the main thread.
 Box3DStep advances Box3D by one fixed step with a bounded native task pool, taking the
 scene's edits as input and writing poses back, so the next stage already sees them.
-Animation currently has no animation components to process.
+Animation advances the Animator components and samples their skeletal poses.
 
 A **Render Event** component (`components.renderEvent`, same list shape as `behaviour`)
 holds scripts that run on the render thread: PreRenderEventSystem calls their
@@ -501,6 +501,10 @@ The `throne` module provides:
 - `throne.query(names...)`: a snapshot list in scene-instance/hierarchy order;
   no names matches all nodes, an unknown name matches none. Built-in names are
   `Transform`, `BoxPrimitive` and the other built-in render/physics components.
+- `node.animator()`: the node's `throne.Animator`, or nil. `clip()`/`setClip(name)` (which
+  plays from the start), `time()`/`setTime(t)`, `speed()`/`setSpeed(s)`, `playing()`,
+  `play()` and `stop()`; `jointPosition(name)` is where a joint of the model's skeleton is,
+  relative to the node, as the Animation stage last posed it (nil when there is none).
 - `throne.find(name)` (the first node with that name, scene by scene),
   `throne.log(text)` and `throne.time()` (seconds since Play).
 
@@ -582,6 +586,17 @@ front of it shows it. Only opaque materials cast shadows. Lights and
 cameras in the file are not placed. A node with only a Model is picked and outlined
 by the model's bounds.
 
+A Model can also name an OGRE `.mesh` (with the `.skeleton` beside it), such as
+`@ogre/models/Stickman.mesh` from the pinned sample media; its material scripts are not
+read, so it is drawn in plain grey. An **Animator** component plays one of its skeleton's
+clips: **Clip**, **Time** (seconds), **Speed**, **Loop** and **Playing**. Poses are sampled on
+the simulation side with [ozz-animation](https://github.com/guillaumeblanc/ozz-animation):
+the Animation stage advances each playing Animator's time by its speed (wrapping, or
+holding at the clip's end) and samples its pose; SyncSimulation hands the poses to the
+renderer, which writes them to the model's OGRE bones, and OGRE derives the bone matrices
+on its worker threads and skins the mesh on the GPU. Outside Play the poses follow the
+Animators' times as edited, so dragging **Time** scrubs a clip.
+
 A scene keeps its environment and global illumination (`lighting = { ... }` in the scene
 file): the default sun, the procedural sky, the ambient light, an HDR environment, filmic tone
 mapping and exposure, and its bake. They are edited in the scene's Inspector: select the
@@ -652,7 +667,7 @@ surface to the diffuse light the probe itself saw (it is never brightened).
 The viewport first draws lit opaque geometry (render queue 10) in a depth prepass, which
 also writes a G-buffer of view-space normals, sun shadow/roughness and motion vectors
 (each pixel's change in UV since the previous frame, from the camera's and each object's
-motion; skinned meshes and the sky, left at zero, are not covered) for screen-space effects. It then renders the scene in half float: queue 10 again, reusing the prepass
+motion, skinned meshes' from their previous bone matrices; the sky is left at zero) for screen-space effects. It then renders the scene in half float: queue 10 again, reusing the prepass
 (its depth read-only, normal maps and sun shadows not sampled again), then the sky (11),
 unlit lines and emitters (12), particles (15) and absorbing volumes (99); then, after
 copying that image, queue 200 and above, where refractive materials sample the first image
@@ -877,6 +892,10 @@ license in `third_party/ois/LICENSE.md`.
 - glslang is pinned and built with SPIR-V output enabled. SPIRV-Tools optimization
   is disabled; it is not bundled by this bootstrap.
 - Box3D keeps its default deterministic math settings; do not enable fast-math.
+- ozz-animation (`third_party/ozz-animation`) is pinned to the 0.17.0 release. Only its
+  runtime and offline libraries are built (no tools, importers, samples or tests), with its
+  warnings off; skeletons and clips are built from imported data when a model is read, not
+  from `.ozz` files.
 - MSVC dependencies use the static runtime consistently (`/MT`, `/MTd`).
 - Initially assets are unpacked; OGRE ZIP, FreeImage and dependency demos/tools
   are disabled. RapidJSON is pinned for Colibri skins and OGRE materials.

@@ -135,6 +135,10 @@ template <> struct ComponentBinding<ParticleSystemComponent> {
     static constexpr const char* name = "ParticleSystem";
     static constexpr auto member = &SceneNode::particles;
 };
+template <> struct ComponentBinding<AnimatorComponent> {
+    static constexpr const char* name = "Animator";
+    static constexpr auto member = &SceneNode::animator;
+};
 #undef THRONE_BIND_COMPONENT
 
 /// Returns a number argument as a double, accepting integers and reals.
@@ -173,6 +177,7 @@ struct ScriptRuntime::State {
     LevelExpansion& expanded;
     std::filesystem::path root;
     Log log;
+    ScriptRuntime::JointQuery jointQuery;
     Program program{nullptr, &lhat_program_free};
     // Declared after the program so that it is disposed first.
     Machine machine{nullptr, &lhat_machine_dispose};
@@ -528,6 +533,7 @@ THRONE_HOST(typedComponent, {
     get(&SceneNode::capsule); get(&SceneNode::plane); get(&SceneNode::boxCollider);
     get(&SceneNode::sphereCollider); get(&SceneNode::capsuleCollider); get(&SceneNode::planeCollider);
     get(&SceneNode::rigidBody); get(&SceneNode::material); get(&SceneNode::light); get(&SceneNode::particles);
+    get(&SceneNode::animator);
     if (!matched) lhat_machine_panic_text(machine, "Expected a built-in component type");
 })
 /// Reads Vec3 @p value into @p out, clamped to [@p low, @p high]; panics when not finite.
@@ -598,6 +604,49 @@ THRONE_HOST(primitiveColourSet, {
     if (!s.writable(machine)) return;
     if (auto* c=s.component(machine,arguments[0],s.componentTags.at(ComponentBinding<T>::name),ComponentBinding<T>::member))
         finite(machine,vec3(s,arguments[1]),0,1,c->colour.data());
+})
+/// Animator.clip().
+THRONE_HOST(animatorClip, {
+    if(auto* c=s.component(machine,arguments[0],s.componentTags.at("Animator"),&SceneNode::animator))
+        if(lhat_machine_make_string(machine,c->clip.data(),c->clip.size(),&answers[0])) *count=1;
+})
+/// Animator.setClip(name): plays it from its start.
+THRONE_HOST(animatorSetClip, {
+    if (!s.writable(machine)) return;
+    if(auto* c=s.component(machine,arguments[0],s.componentTags.at("Animator"),&SceneNode::animator))
+        c->clip=std::string(text(arguments[1])), c->time=0;
+})
+/// Animator.setTime(t) (Which 0) and setSpeed(s) (Which 1).
+template <int Which>
+THRONE_HOST(animatorSet, {
+    if (!s.writable(machine)) return;
+    const double value=number(arguments[1]);
+    if(!std::isfinite(value)) { lhat_machine_panic_text(machine,"a component property must be finite"); return; }
+    if(auto* c=s.component(machine,arguments[0],s.componentTags.at("Animator"),&SceneNode::animator)) {
+        if(Which==0) c->time=float(std::clamp(value,0.0,1.0e6));
+        else c->speed=float(std::clamp(value,-100.0,100.0));
+    }
+})
+/// Animator.playing().
+THRONE_HOST(animatorPlaying, {
+    if(auto* c=s.component(machine,arguments[0],s.componentTags.at("Animator"),&SceneNode::animator))
+        answers[0]=lhat_bool(c->playing), *count=1;
+})
+/// Animator.play() (Playing true) and stop().
+template <bool Playing>
+THRONE_HOST(animatorPlay, {
+    if (!s.writable(machine)) return;
+    if(auto* c=s.component(machine,arguments[0],s.componentTags.at("Animator"),&SceneNode::animator)) c->playing=Playing;
+})
+/// Animator.jointPosition(name): where the joint is, relative to the node, as the Animation
+/// stage last posed it; nil when the model has no such joint (or no skeleton yet).
+THRONE_HOST(animatorJointPosition, {
+    if(!s.component(machine,arguments[0],s.componentTags.at("Animator"),&SceneNode::animator)) return;
+    answers[0]=lhat_nil(); *count=1;
+    const auto bits=reinterpret_cast<std::uintptr_t>(lhat_hostdata_pointer(arguments[0],s.componentTags.at("Animator")));
+    float matrix[16];
+    if(s.jointQuery && s.jointQuery(std::size_t(bits>>32)-1,std::size_t(bits&0xFFFFFFFFu),text(arguments[1]),matrix))
+        s.answer(answers,count,matrix+12);
 })
 /// RigidBody.type(): the Box3D motion mode.
 THRONE_HOST(bodyMotionType, {
@@ -776,6 +825,7 @@ void query(LhatMachine* machine, void* context, const LhatValue* arguments, std:
                 if(name=="PbsMaterial") present=bool(node.material);
                 if(name=="Light") present=bool(node.light);
                 if(name=="ParticleSystem") present=bool(node.particles);
+                if(name=="Animator") present=bool(node.animator);
                 matches=matches && present;
             }
             if (!matches) continue;
@@ -801,7 +851,7 @@ bool registerThrone(LhatProgram* program, State& s) {
     if (!s.vec3 || !s.sceneNode || !s.system || !s.transform || !s.box) return false;
     s.componentTags["Transform"]=s.transform;
     s.componentTags["BoxPrimitive"]=s.box;
-    for(const char* name:{"SpherePrimitive","CapsulePrimitive","PlanePrimitive","BoxCollider","SphereCollider","CapsuleCollider","PlaneCollider","RigidBody","PbsMaterial","Light","ParticleSystem"}) {
+    for(const char* name:{"SpherePrimitive","CapsulePrimitive","PlanePrimitive","BoxCollider","SphereCollider","CapsuleCollider","PlaneCollider","RigidBody","PbsMaterial","Light","ParticleSystem","Animator"}) {
         auto* tag=lhat_register_hostdata_type(program,moduleName,name);
         if(!tag) return false;
         s.componentTags[name]=tag;
@@ -888,6 +938,17 @@ bool registerThrone(LhatProgram* program, State& s) {
         {"RigidBody", "setLinearVelocity", "p^self^, throne.Vec3;", componentSetVector<RigidBody, &RigidBody::linearVelocity>},
         {"RigidBody", "angularVelocity", "f^self^ -> throne.Vec3;", componentVector<RigidBody, &RigidBody::angularVelocity>},
         {"RigidBody", "setAngularVelocity", "p^self^, throne.Vec3;", componentSetVector<RigidBody, &RigidBody::angularVelocity>},
+        {"SceneNode", "animator", "f^self^ -> throne.Animator|nil^;", nodeComponent<AnimatorComponent, &SceneNode::animator>},
+        {"Animator", "clip", "f^self^ -> string^;", animatorClip},
+        {"Animator", "setClip", "p^self^, string^;", animatorSetClip},
+        {"Animator", "time", "f^self^ -> number^;", componentScalar<AnimatorComponent, &AnimatorComponent::time>},
+        {"Animator", "setTime", "p^self^, number^;", animatorSet<0>},
+        {"Animator", "speed", "f^self^ -> number^;", componentScalar<AnimatorComponent, &AnimatorComponent::speed>},
+        {"Animator", "setSpeed", "p^self^, number^;", animatorSet<1>},
+        {"Animator", "playing", "f^self^ -> bool^;", animatorPlaying},
+        {"Animator", "play", "p^self^;", animatorPlay<true>},
+        {"Animator", "stop", "p^self^;", animatorPlay<false>},
+        {"Animator", "jointPosition", "f^self^, string^ -> throne.Vec3|nil^;", animatorJointPosition},
         {"System", "name", "f^self^ -> string^;", systemName},
         {nullptr, "vec3", "f^number^, number^, number^ -> throne.Vec3;", vecNew},
         {nullptr, "query", "f^...:string^ -> t^{throne.SceneNode[]};", query},
@@ -1404,6 +1465,8 @@ ScriptRuntime::ScriptRuntime(const World& world, LevelExpansion& expanded, const
 ScriptRuntime::~ScriptRuntime() = default;
 
 bool ScriptRuntime::finished() const { return state_->finished; }
+
+void ScriptRuntime::setJointQuery(JointQuery query) { state_->jointQuery = std::move(query); }
 
 ScriptRuntime::ConsoleAnswer ScriptRuntime::evaluate(const std::string& line) {
     auto& s = *state_;

@@ -37,9 +37,10 @@ foreach(check IN ITEMS audio acoustics)
     endif()
 endforeach()
 
-add_library(throne_runtime STATIC src/runtime/PhysicsWorld.cpp src/runtime/PhysicsWorld.h src/runtime/Box3DMath.h)
+add_library(throne_runtime STATIC src/runtime/PhysicsWorld.cpp src/runtime/PhysicsWorld.h src/runtime/Box3DMath.h
+    src/runtime/AnimationLibrary.cpp src/runtime/AnimationLibrary.h src/runtime/AnimationWorld.cpp src/runtime/AnimationWorld.h)
 target_include_directories(throne_runtime PUBLIC src)
-target_link_libraries(throne_runtime PUBLIC box3d::box3d lhat)
+target_link_libraries(throne_runtime PUBLIC box3d::box3d lhat ozz_animation_offline)
 target_compile_features(throne_runtime PUBLIC cxx_std_17)
 
 add_executable(throne_smoke tests/runtime_smoke.cpp)
@@ -47,6 +48,12 @@ target_link_libraries(throne_smoke PRIVATE throne_runtime)
 target_compile_definitions(throne_smoke PRIVATE THRONE_PHYSICS_SAMPLE="${PROJECT_SOURCE_DIR}/samples/physics")
 if(BUILD_TESTING)
     add_test(NAME runtime_smoke COMMAND throne_smoke)
+endif()
+
+add_executable(throne_animation_smoke tests/animation_smoke.cpp)
+target_link_libraries(throne_animation_smoke PRIVATE throne_runtime)
+if(BUILD_TESTING)
+    add_test(NAME animation_smoke COMMAND throne_animation_smoke)
 endif()
 
 # Levels, projects and the project list: the editor's LTON data, without OGRE.

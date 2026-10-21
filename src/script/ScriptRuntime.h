@@ -3,6 +3,7 @@
 #include "editor/Expansion.h"
 #include <filesystem>
 #include <functional>
+#include <string_view>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -63,6 +64,10 @@ class ScriptRuntime {
 public:
     /// Receives text the scripts pass to throne.log, and warnings about field values.
     using Log = std::function<void(const std::string&)>;
+    /// Writes the pose of joint @p joint of node @p node of scene instance @p instance, as the
+    /// Animation stage last sampled it (relative to the node, column-major), into @p matrix;
+    /// false when the node has no such joint.
+    using JointQuery = std::function<bool(std::size_t instance, std::size_t node, std::string_view joint, float matrix[16])>;
 
     /// @param world The level (for its own systems); must outlive the runtime.
     /// @param expanded The world's scene instances, expanded; the scripts read and
@@ -99,6 +104,8 @@ public:
     static std::vector<std::string> schedule(const World& world, const LevelExpansion& expanded);
     /// True once main.lh has run to its end (Game scope only).
     bool finished() const;
+    /// Answers Animator.jointPosition (none by default: it answers nil).
+    void setJointQuery(JointQuery query);
 
     /// What one console line gave.
     struct ConsoleAnswer {

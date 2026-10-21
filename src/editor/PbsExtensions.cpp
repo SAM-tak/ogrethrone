@@ -3,6 +3,8 @@
 #include <CommandBuffer/OgreCbTexture.h>
 #include <CommandBuffer/OgreCommandBuffer.h>
 #include <OgreCamera.h>
+#include <Animation/OgreSkeletonInstance.h>
+#include <OgreRenderable.h>
 #include <OgreHlms.h>
 #include <OgreHlmsManager.h>
 #include <OgreHlmsPbsPrerequisites.h>
@@ -177,8 +179,11 @@ void AmbientOcclusion::hlmsTypeChanged(bool casterPass, Ogre::CommandBuffer* com
 namespace {
 /// Read-only buffer slot of prevWorldBuf (media/pbs); HlmsPbs's world matrices take slot 0.
 constexpr Ogre::uint16 prevWorldSlot = 1;
-/// float4 rows per draw: the 4x3 world matrix and one unused row.
+/// float4 rows per draw: the 4x3 world matrix and one unused row. A skinned draw's first row
+/// holds instead where its previous bone matrices start in the buffer's bone area.
 constexpr std::size_t prevWorldRows = 4;
+/// float4 rows of each buffer's bone area: 32 skinned draws of 256 bones.
+constexpr std::size_t boneAreaRows = 3 * 256 * 32;
 }
 
 ThronePbs::ThronePbs(Ogre::Archive* dataFolder, Ogre::ArchiveVec* libraryFolders) : HlmsPbs(dataFolder, libraryFolders) {
@@ -195,6 +200,8 @@ Ogre::HlmsCache ThronePbs::preparePassHash(const Ogre::CompositorShadowNode* sha
         // Forget objects not drawn in the previous frame (destroyed, or out of view).
         for (auto it = motion_.begin(); it != motion_.end();)
             it = it->second.frame + 1 < frame_ ? motion_.erase(it) : std::next(it);
+        for (auto it = bones_.begin(); it != bones_.end();)
+            it = it->second.frame + 1 < frame_ ? bones_.erase(it) : std::next(it);
     }
     return cache;
 }
@@ -212,10 +219,13 @@ Ogre::uint32 ThronePbs::fillBuffersForV2(const Ogre::HlmsCache* cache, const Ogr
         // Shadow passes may have used the first const buffers already.
         if (mCurrentConstBuffer >= buffers_.size()) buffers_.resize(mCurrentConstBuffer + 1, nullptr);
         auto*& buffer = buffers_[mCurrentConstBuffer];
+        // HlmsPbs keeps one uint4 per draw in its const buffer; we keep four float4, then the bones.
+        const std::size_t drawRows = constBuffer->getTotalSizeBytes() / 16 * prevWorldRows;
         if (!buffer)
-            // HlmsPbs keeps one uint4 per draw in its const buffer; we keep four float4.
-            buffer = mVaoManager->createReadOnlyBuffer(Ogre::PFG_RGBA32_FLOAT, constBuffer->getTotalSizeBytes() * prevWorldRows,
+            buffer = mVaoManager->createReadOnlyBuffer(Ogre::PFG_RGBA32_FLOAT, (drawRows + boneAreaRows) * 16,
                                                        Ogre::BT_DYNAMIC_PERSISTENT, nullptr, false);
+        boneCursor_ = drawRows;
+        boneEnd_ = drawRows + boneAreaRows;
         current_ = buffer;
         mapped_ = static_cast<float*>(current_->map(0, current_->getNumElements()));
         currentConstBuffer_ = constBuffer;
@@ -229,8 +239,33 @@ Ogre::uint32 ThronePbs::fillBuffersForV2(const Ogre::HlmsCache* cache, const Ogr
         motion.current = world;
         motion.frame = frame_;
     }
-    // The rows of the 4x3 matrix, as HlmsPbs writes the world matrix.
-    std::memcpy(mapped_ + std::size_t(instance) * prevWorldRows * 4, &motion.previous, 12 * sizeof(float));
+    float* slot = mapped_ + std::size_t(instance) * prevWorldRows * 4;
+    if (!queuedRenderable.renderable->hasSkeletonAnimation()) {
+        // The rows of the 4x3 matrix, as HlmsPbs writes the world matrix.
+        std::memcpy(slot, &motion.previous, 12 * sizeof(float));
+        return instance;
+    }
+    // Skinned (v2 items only): the bones HlmsPbs streams, in their world space, a frame ago.
+    const auto* skeleton = object->getSkeletonInstance();
+    const auto* animated = dynamic_cast<const Ogre::RenderableAnimated*>(queuedRenderable.renderable);
+    const auto* indexMap = animated ? animated->getBlendIndexToBoneIndexMap() : nullptr;
+    slot[0] = -1;
+    if (!skeleton || !indexMap) return instance;
+    auto& bones = bones_[queuedRenderable.renderable];
+    if (bones.frame != frame_) {
+        std::swap(bones.previous, bones.current);
+        bones.current.resize(indexMap->size() * 12);
+        for (std::size_t i = 0; i < indexMap->size(); ++i)
+            skeleton->_getBoneFullTransform((*indexMap)[i]).streamTo4x3(bones.current.data() + i * 12);
+        if (bones.frame + 1 != frame_ || bones.previous.size() != bones.current.size()) bones.previous = bones.current;
+        bones.frame = frame_;
+    }
+    // Without room in the bone area, the vertex shader takes the current pose (no motion).
+    const std::size_t rows = indexMap->size() * 3;
+    if (boneCursor_ + rows > boneEnd_) return instance;
+    std::memcpy(mapped_ + boneCursor_ * 4, bones.previous.data(), bones.previous.size() * sizeof(float));
+    slot[0] = float(boneCursor_);
+    boneCursor_ += rows;
     return instance;
 }
 

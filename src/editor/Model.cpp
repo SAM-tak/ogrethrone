@@ -4,6 +4,14 @@
 #include <OgreItem.h>
 #include <OgreSubItem.h>
 #include <OgreMeshManager2.h>
+#include <OgreMeshManager.h>
+#include <OgreMesh.h>
+#include <OgreMesh2.h>
+#include <OgreSkeleton.h>
+#include <OgreOldBone.h>
+#include <OgreAnimation.h>
+#include <OgreAnimationTrack.h>
+#include <OgreKeyFrame.h>
 #include <OgreResourceGroupManager.h>
 #include <OgreRoot.h>
 #include <OgreSceneManager.h>
@@ -81,6 +89,71 @@ INLINE midf3 BRDF( midf3 lightDir, midf3 lightDiffuse, midf3 lightSpecular, Pixe
 }
 
 namespace {
+/// The ozz skeleton and clips of an OGRE v1 skeleton. OGRE's keys are relative to the bind
+/// pose (added to its position, after its rotation, times its scale); ozz's are the joints'
+/// whole local transforms.
+std::shared_ptr<const SkeletonAsset> toSkeleton(Ogre::v1::Skeleton& source) {
+    using namespace ozz::animation::offline;
+    const auto rest = [](const Ogre::v1::OldNode& bone) {
+        ozz::math::Transform transform;
+        const auto& p = bone.getPosition();
+        const auto& q = bone.getOrientation();
+        const auto& s = bone.getScale();
+        transform.translation = ozz::math::Float3(p.x, p.y, p.z);
+        transform.rotation = ozz::math::Quaternion(q.x, q.y, q.z, q.w);
+        transform.scale = ozz::math::Float3(s.x, s.y, s.z);
+        return transform;
+    };
+    RawSkeleton raw;
+    const std::function<void(const Ogre::v1::OldNode&, RawSkeleton::Joint&)> add = [&](const Ogre::v1::OldNode& bone,
+                                                                                      RawSkeleton::Joint& joint) {
+        joint.name = bone.getName().c_str();
+        joint.transform = rest(bone);
+        joint.children.resize(bone.numChildren());
+        for (unsigned short i = 0; i < bone.numChildren(); ++i) add(*bone.getChild(i), joint.children[i]);
+    };
+    for (unsigned short i = 0; i < source.getNumBones(); ++i) {
+        const auto* bone = source.getBone(i);
+        if (bone->getParent()) continue;
+        raw.roots.emplace_back();
+        add(*bone, raw.roots.back());
+    }
+    std::vector<RawClip> clips;
+    for (unsigned short a = 0; a < source.getNumAnimations(); ++a) {
+        const auto* animation = source.getAnimation(a);
+        RawClip clip;
+        clip.name = animation->getName();
+        clip.duration = std::max(float(animation->getLength()), 1e-3f);
+        for (const auto& [handle, track] : animation->_getOldNodeTrackList()) {
+            const auto* bone = source.getBone(handle);
+            const auto bind = rest(*bone);
+            auto& out = clip.tracks[bone->getName()];
+            float last = -1;
+            ozz::math::Quaternion previous = bind.rotation;
+            for (unsigned short k = 0; k < track->getNumKeyFrames(); ++k) {
+                const auto* key = track->getNodeKeyFrame(k);
+                const float time = std::clamp(float(key->getTime()), 0.0f, clip.duration);
+                if (time <= last) continue;
+                last = time;
+                const auto& t = key->getTranslate();
+                const auto& s = key->getScale();
+                const auto relative = ozz::math::Quaternion(key->getRotation().x, key->getRotation().y, key->getRotation().z,
+                                                            key->getRotation().w);
+                auto rotation = bind.rotation * relative;
+                // Keep consecutive keys in one hemisphere, so they interpolate the short way.
+                if (rotation.x * previous.x + rotation.y * previous.y + rotation.z * previous.z + rotation.w * previous.w < 0)
+                    rotation = -rotation;
+                previous = rotation;
+                out.translations.push_back({time, bind.translation + ozz::math::Float3(t.x, t.y, t.z)});
+                out.rotations.push_back({time, rotation});
+                out.scales.push_back({time, bind.scale * ozz::math::Float3(s.x, s.y, s.z)});
+            }
+        }
+        clips.push_back(std::move(clip));
+    }
+    return buildSkeleton(raw, clips);
+}
+
 /// One vertex as the file gives it, before tangents are derived.
 struct Corner {
     float position[3], normal[3], uv[2];
@@ -288,6 +361,51 @@ void ModelLibrary::reveal(unsigned materials) {
     hidden_.resize(kept);
 }
 
+std::shared_ptr<const SkeletonAsset> ModelLibrary::skeleton(const std::string& key) const {
+    const auto found = models_.find(key);
+    return found == models_.end() ? nullptr : found->second.skeleton;
+}
+
+void ModelLibrary::addOgreMesh(const std::string& key, const std::filesystem::path& file) {
+    Model out;
+    const auto prefix = "ThroneModel/" + std::to_string(models_.size()) + "/";
+    // Its skeleton and textures are found beside it, through a resource group per folder.
+    auto& resources = Ogre::ResourceGroupManager::getSingleton();
+    const auto location = file.parent_path().generic_u8string();
+    const Ogre::String group = "ThroneModels/" + location;
+    if (!resources.resourceGroupExists(group)) resources.createResourceGroup(group);
+    if (!resources.resourceLocationExists(location, group)) resources.addResourceLocation(location, "FileSystem", group);
+    try {
+        // Readable (static) buffers, which importing into a v2 mesh reads.
+        auto v1 = Ogre::v1::MeshManager::getSingleton().load(file.filename().u8string(), group, Ogre::v1::HardwareBuffer::HBU_STATIC,
+                                                             Ogre::v1::HardwareBuffer::HBU_STATIC);
+        auto mesh = Ogre::MeshManager::getSingleton().createByImportingV1(prefix + "mesh", group, v1.get(), false, false, false);
+        if (v1->hasSkeleton() && v1->getOldSkeleton()) out.skeleton = toSkeleton(*v1->getOldSkeleton());
+        v1->unload();
+        // The file's material scripts are not read: a plain PBS surface for every submesh.
+        const auto name = prefix + "material";
+        auto* material = static_cast<Ogre::HlmsPbsDatablock*>(
+            pbs_.createDatablock(name, name, Ogre::HlmsMacroblock(), Ogre::HlmsBlendblock(), Ogre::HlmsParamVec()));
+        material->setWorkflow(Ogre::HlmsPbsDatablock::MetallicWorkflow);
+        material->setDiffuse(Ogre::Vector3(0.7f, 0.7f, 0.7f));
+        material->setRoughness(0.6f);
+        material->setMetalness(0);
+        material->setTexture(Ogre::PBSM_REFLECTION, reflection_);
+        for (auto* submesh : mesh->getSubMeshes()) submesh->setMaterialName(name);
+        out.materials.push_back(material);
+        const auto& bounds = mesh->getAabb();
+        out.lower = {float(bounds.getMinimum().x), float(bounds.getMinimum().y), float(bounds.getMinimum().z)};
+        out.upper = {float(bounds.getMaximum().x), float(bounds.getMaximum().y), float(bounds.getMaximum().z)};
+        Part part;
+        part.mesh = mesh;
+        out.parts.push_back(part);
+        out.meshes.push_back(mesh);
+    } catch (const std::exception& error) {
+        log_("Cannot read model " + file.u8string() + ": " + error.what());
+    }
+    models_.emplace(key, std::move(out));
+}
+
 const std::vector<SurfacePoint>& ModelLibrary::surface(const std::string& key) const {
     static const std::vector<SurfacePoint> none;
     const auto found = models_.find(key);
@@ -314,6 +432,11 @@ void ModelLibrary::setReflection(Ogre::TextureGpu* cubemap) {
 
 ModelLibrary::Parsed ModelLibrary::parse(const std::filesystem::path& file, const ModelComponent& component) {
     Parsed out;
+    // OGRE meshes are read through OGRE's resource system on the main thread.
+    if (file.extension() == ".mesh") {
+        out.ogreMesh = file;
+        return out;
+    }
     ufbx_load_opts options = {};
     options.target_axes = ufbx_axes_right_handed_y_up;
     options.target_unit_meters = 1.0f;
@@ -501,6 +624,7 @@ ModelLibrary::Parsed ModelLibrary::parse(const std::filesystem::path& file, cons
 }
 
 void ModelLibrary::add(const std::string& key, const Parsed& parsed) {
+    if (!parsed.ogreMesh.empty()) return addOgreMesh(key, parsed.ogreMesh);
     for (const auto& message : parsed.messages) log_(message);
     Model out;
     out.lower = parsed.lower, out.upper = parsed.upper;
