@@ -394,7 +394,7 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
     resources.addResourceLocation(THRONE_MEDIA_DIR "/gi", "FileSystem", skyGroup);
     root.getHlmsManager()->loadMaterials("IBL.material.json", skyGroup, nullptr, "");
     for (const auto* script : {"Quad.program", "Atmosphere.material", "Sky.material", "DPSM.material", "Copyback.material",
-                               "PccDepthCompressor.material", "Tonemap.material", "Bloom.material", "Taa.material", "MotionBlur.material", "Ssao.material", "ThroneSmaa.material",
+                               "PccDepthCompressor.material", "Tonemap.material", "Bloom.material", "Taa.material", "MotionBlur.material", "Ssao.material", "Ssr.material", "ThroneSmaa.material",
                                "ThroneGi.compositor"}) {
         auto stream = resources.openResource(script, skyGroup);
         Ogre::MaterialManager::getSingleton().parseScript(stream, skyGroup);
@@ -423,11 +423,13 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
     motionBlur_ = Ogre::MaterialManager::getSingleton().getByName("Throne/MotionBlur", skyGroup);
     ssao_ = Ogre::MaterialManager::getSingleton().getByName("Throne/Ssao", skyGroup);
     ssaoBlur_ = Ogre::MaterialManager::getSingleton().getByName("Throne/SsaoBlur", skyGroup);
+    ssr_ = Ogre::MaterialManager::getSingleton().getByName("Throne/Ssr", skyGroup);
     {
         // A depth prepass draws lit opaque geometry (queue 10) into Depth and a G-buffer of
         // view-space normals, sun shadow/roughness and motion vectors (MotionVectors, the
         // change in UV since the previous frame), from which SSAO computes the ambient
-        // occlusion (Ssao) that queue 10 then reads. The scene then renders in half float:
+        // occlusion (Ssao) and SSR the reflections (Ssr, from the previous frame's TaaHistory)
+        // that queue 10 then reads. The scene then renders in half float:
         // queue 10 into Opaque reusing the prepass (depth read-only), then the other queues
         // below 200. Opaque is copied to Hdr; refractive glass (queue 200 and up) samples
         // Opaque and its depth while drawing into Hdr. Temporal anti-aliasing blends Hdr into
@@ -437,7 +439,12 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
         // it (the UI stays sharp).
         auto* node = compositor->addNodeDefinition("ThroneEditor/ViewportNode");
         node->addTextureSourceName("Viewport", 0, Ogre::TextureDefinitionBase::TEXTURE_INPUT);
-        node->setNumLocalTextureDefinitions(18);
+        node->setNumLocalTextureDefinitions(19);
+        {
+            auto* texture = node->addTextureDefinition("Ssr");
+            texture->format = Ogre::PFG_RGBA16_FLOAT;
+            texture->depthBufferId = Ogre::DepthBuffer::POOL_NO_DEPTH;
+        }
         for (const auto* name : {"SsaoRaw", "Ssao"}) {
             auto* texture = node->addTextureDefinition(name);
             texture->format = Ogre::PFG_R8_UNORM;
@@ -482,7 +489,7 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
             texture->format = Ogre::String(name) == "SmaaEdges" ? Ogre::PFG_RG8_UNORM : Ogre::PFG_RGBA8_UNORM;
             texture->depthBufferId = Ogre::DepthBuffer::POOL_NO_DEPTH;
         }
-        node->setNumTargetPass(15);
+        node->setNumTargetPass(16);
         // @p outputs are further colour targets the material writes after @p target.
         const auto quad = [&](const char* target, const char* material, std::initializer_list<const char*> inputs,
                               std::initializer_list<const char*> outputs = {}) {
@@ -518,6 +525,7 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
         prepass->mStoreActionStencil = Ogre::StoreAction::DontCare;
         quad("SsaoRaw", "Throne/Ssao", {"GBufferNormals", "Depth"});
         quad("Ssao", "Throne/SsaoBlur", {"SsaoRaw", "Depth"});
+        quad("Ssr", "Throne/Ssr", {"GBufferNormals", "GBufferShadowRoughness", "Depth", "GBufferMotion", "TaaHistory"});
         auto* opaqueTarget = node->addTargetPass("Opaque");
         auto* opaque = static_cast<Ogre::CompositorPassSceneDef*>(opaqueTarget->addPass(Ogre::PASS_SCENE));
         opaque->mShadowNode = "ThroneEditor/SunShadows";
@@ -532,7 +540,8 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
         gbuffer.push_back("GBufferShadowRoughness");
         // HlmsPbs reserves a texture slot for the prepass depth; leaving it unnamed shifts the
         // later textures (the BRDF lookup with them), so the read-only depth is bound there too.
-        opaque->setUseDepthPrePass(gbuffer, "Depth", Ogre::IdString());
+        // HlmsPbs blends Ssr's reflections over the reflection probes by their alpha.
+        opaque->setUseDepthPrePass(gbuffer, "Depth", "Ssr");
         // AmbientOcclusion binds it; the barrier solver must make it readable.
         opaque->mExposedTextures.push_back("Ssao");
         auto* rest = static_cast<Ogre::CompositorPassSceneDef*>(opaqueTarget->addPass(Ogre::PASS_SCENE));
@@ -883,6 +892,7 @@ Editor::~Editor() {
     motionBlur_.reset();
     ssao_.reset();
     ssaoBlur_.reset();
+    ssr_.reset();
     sky_.reset();
     Ogre::ResourceGroupManager::getSingleton().destroyResourceGroup("ThroneEditorSky");
     root_.getCompositorManager2()->setCompositorPassProvider(nullptr);
@@ -968,7 +978,7 @@ bool Editor::frame(float deltaSeconds, const std::function<void()>& input) {
                 updateCamera();
                 scene_.getParticleSystemManager2()->setCameraPosition(camera_.getDerivedPosition());
                 jitterCamera();
-            } else taaReset_ = true;
+            } else taaReset_ = true, historyReady_ = false;
             gui_->prepareForRender(&scene_);
             // Scene RGB is already composited. Particle alpha must not blend the viewport again.
             // The pinned ImGui backend creates this per-texture material during prepareForRender.
@@ -1106,6 +1116,14 @@ void Editor::jitterCamera() {
     ssao->setNamedConstant("reverseDepth", root_.getRenderSystem()->isReverseDepth() ? 1.0f : 0.0f);
     ssaoBlur_->getTechnique(0)->getPass(0)->getFragmentProgramParameters()->setNamedConstant(
         "depthParams", Ogre::Vector2(float(steady[2][2]), float(steady[2][3])));
+    // Reflections read the previous frame, so none while it shows nothing usable.
+    auto ssr = ssr_->getTechnique(0)->getPass(0)->getFragmentProgramParameters();
+    ssr->setNamedConstant("projection", jittered);
+    ssr->setNamedConstant("inverseProjection", jittered.inverse());
+    ssr->setNamedConstant("jitterDelta", jitter - taaJitter_);
+    ssr->setNamedConstant("strength", reflectionsEnabled_ && historyReady_ ? 1.0f : 0.0f);
+    ssr->setNamedConstant("reverseDepth", root_.getRenderSystem()->isReverseDepth() ? 1.0f : 0.0f);
+    historyReady_ = true;
     taaViewProj_ = viewProj;
     taaJitter_ = jitter;
     taaReset_ = !on;
@@ -2708,6 +2726,7 @@ void Editor::menu() {
         if(ImGui::MenuItem("Temporal Anti-Aliasing",nullptr,&temporal)) setTemporalAntialiasing(temporal);
         ImGui::MenuItem("Motion Blur (Play)",nullptr,&motionBlurInPlay_);
         ImGui::MenuItem("Ambient Occlusion",nullptr,&ambientOcclusionEnabled_);
+        ImGui::MenuItem("Screen-Space Reflections",nullptr,&reflectionsEnabled_);
         ImGui::MenuItem("Orthographic", nullptr, &orthographic_);
         if (ImGui::MenuItem("Focus Selection", "F")) focusSelection();
         ImGui::EndMenu();
@@ -3132,6 +3151,7 @@ void Editor::alignViewToCamera(std::size_t instance, std::size_t index, const Ca
     auto* node = sceneNodes_[instance][index];
     // A cut: the history shows another view.
     taaReset_ = true;
+    historyReady_ = false;
     // The camera looks along the node's -Z; the view keeps its distance to what it orbits.
     const auto position = node->_getDerivedPositionUpdated();
     const auto forward = node->_getDerivedOrientationUpdated() * Ogre::Vector3::NEGATIVE_UNIT_Z;
@@ -3270,6 +3290,7 @@ void Editor::resizeViewport(unsigned width, unsigned height) {
     viewportHeight_ = height;
     createWorkspaces();
     taaReset_ = true;
+    historyReady_ = false;
 }
 
 void Editor::createWorkspaces() {

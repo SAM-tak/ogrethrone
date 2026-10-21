@@ -110,6 +110,9 @@ public:
     /// Enables/disables temporal anti-aliasing (on by default); smoke checks that compare
     /// frames exactly turn it off.
     void setTemporalAntialiasing(bool enabled);
+    /// Enables/disables screen-space reflections (on by default). They read the previous frame,
+    /// so smoke checks that compare frames exactly turn them off too.
+    void setScreenSpaceReflections(bool enabled) { reflectionsEnabled_ = enabled; }
     /// Shows or hides the procedural sky without modifying scene lights or physics.
     void setSkyboxEnabled(bool enabled);
     /// Bakes the level's global illumination into its project folder once textures have streamed in.
@@ -495,6 +498,10 @@ private:
     /// The ambient occlusion pass materials, and whether occlusion darkens the indirect light.
     Ogre::MaterialPtr ssao_, ssaoBlur_;
     bool ambientOcclusionEnabled_ = true;
+    /// The screen-space reflections pass material, whether reflections are traced, and whether
+    /// the previous frame (TaaHistory, which they read) shows this view.
+    Ogre::MaterialPtr ssr_;
+    bool reflectionsEnabled_ = true, historyReady_ = false;
     bool particleResourcesLoaded_ = false, particlePreview_ = true;
     int particleBlending_ = 1, appliedParticleBlending_ = -1;
     std::set<std::string> particleScripts_;

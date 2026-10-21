@@ -124,6 +124,8 @@ Vulkan の `--smoke-physics` は Forward Clustered が選択されているこ�
 
 ［補足］SSAO（View → Ambient Occlusion、既定オン）。プリパスの直後に、法線と深度から遮蔽を計算する（media/postprocess/Ssao）。法線を軸とする半径 0.5 m の半球に、中心寄りのフィボナッチ螺旋の 12 標本を置き、画素ごとのノイズで回す。深度バッファの面がその点より手前にあれば遮られたとし、半径より遠く離れた面は数えない。次に、深度の近さで重み付けした 5×5 で粒をならす（SsaoBlur）。本パス（use_prepass、キュー 10）では HlmsListener の AmbientOcclusion がこの R8 テクスチャを追加のパステクスチャとしてバインドし、フォークのテンプレートに足したフック custom_ps_posAmbient（間接光の合成直後）で、間接光の拡散と鏡面（envColourD・envColourS）に掛ける。直接光には掛けない。リスナーごとの追加テクスチャの開始スロットは HlmsListenerChain がプロパティ custom_first_texture で渡し、custom_ps_uniformDeclaration ピースは各リスナーの宣言（ssaoTextures、aifTextures）を挿入する。キュー 11 以降（空・パーティクル・吸収体）と半透明には掛からない。
 
+［補足］SSR（View → Screen-Space Reflections、既定オン）。プリパスの後、本パスの前に、法線・粗さ・深度・モーションベクトルと前フレームの画像（TaaHistory、ブルーム前の HDR）から反射を求める（media/postprocess/Ssr）。視線を法線で反射したレイをビュー空間で 32 歩（遠いほど粗く、画素ごとのノイズでずらす）進め、深度バッファの面の後ろ（厚さ 0.3 m ＋ 距離の 5%）に入ったら当たりとし、4 回の二分探索で詰める。当たった点はモーションベクトル（ジッタの変化を除く）で前フレームの位置へ戻して色を取る。アルファは信頼度で、粗さ 0.25〜0.55 で消え、カメラ側へ向かうレイ、画面端、20 m の端で薄れる。結果は OGRE の use_prepass の SSR 入力（setUseDepthPrePass の第 3 引数）として本パスに渡し、HlmsPbs が反射プローブの鏡面の上にアルファで混ぜる。前フレームが別の画（ターゲットの作り直し、ビューが隠れていた、視点の切り替え）のときは使わない。テクスチャを 5 枚読むので、OGRE の標準ルートレイアウト（4 枚）でなく high を頂点・ピクセル両方に指定する。完全一致を比べるスモークは TAA と同様に SSR も切る。粗い面のぼけた反射は未対応（フェードで逃がす）。
+
 ［補足］トーンマップは sRGB 符号化した値を書き、以降の SMAA の中間・ビューポートテクスチャは RGBA8_UNORM（sRGB でない）。ウィンドウ（Vulkan スワップチェーン）は gamma 指定なしで UNORM なので、ImGui はビューポートの値をそのまま写す。以前はビューポートテクスチャが RGBA8_UNORM_SRGB で、ImGui のサンプリングで線形へ戻され、その値が UNORM のウィンドウに書かれていた（画面が本来より暗くガンマも違う）。--capture も Image2::getColourAt（sRGB を線形へ戻す）で同じ暗い値を書いていたため、画面とキャプチャは一致したまま誤っていた。キャプチャはバイトをそのまま書く。この修正で Bistro の露出を全て見直した（内装 −1.5 → −2.9 EV など）。
 
 ［補足］samples/bistro は ORCA の Amazon Lumberyard Bistro（CC BY 4.0）を 7 レベルで再現する。データ（Bistro_v5_2/）は Git 管理外。

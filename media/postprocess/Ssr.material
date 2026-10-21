@@ -1,0 +1,75 @@
+// Screen-space reflections from the editor viewport's depth prepass and previous frame (TDDja/09).
+// It reads five textures, more than OGRE's standard root layout has: both stages use 'high'.
+vertex_program Throne/HighQuad_vs_VK glslvk
+{
+	source Quad_vs.glsl
+	root_layout high
+	default_params
+	{
+		param_named_auto worldViewProj worldviewproj_matrix
+	}
+}
+
+fragment_program Throne/Ssr_ps_VK glslvk
+{
+	source Ssr_ps.glsl
+	root_layout high
+	default_params
+	{
+		param_named projection float4x4 1 0 0 0  0 1 0 0  0 0 1 0  0 0 0 1
+		param_named inverseProjection float4x4 1 0 0 0  0 1 0 0  0 0 1 0  0 0 0 1
+		param_named jitterDelta float2 0 0
+		param_named maxDistance float 20
+		param_named thickness float 0.3
+		param_named strength float 0
+		param_named reverseDepth float 1
+	}
+}
+
+material Throne/Ssr
+{
+	technique
+	{
+		pass
+		{
+			depth_check off
+			depth_write off
+			cull_hardware none
+
+			vertex_program_ref Throne/HighQuad_vs_VK
+			{
+			}
+
+			fragment_program_ref Throne/Ssr_ps_VK
+			{
+			}
+
+			// The normals, the shadow and roughness, the depth, the motion and the previous frame.
+			texture_unit
+			{
+				filtering none
+				tex_address_mode clamp
+			}
+			texture_unit
+			{
+				filtering none
+				tex_address_mode clamp
+			}
+			texture_unit
+			{
+				filtering none
+				tex_address_mode clamp
+			}
+			texture_unit
+			{
+				filtering none
+				tex_address_mode clamp
+			}
+			texture_unit
+			{
+				filtering bilinear
+				tex_address_mode clamp
+			}
+		}
+	}
+}

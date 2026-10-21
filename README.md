@@ -647,7 +647,11 @@ sharp over a moving background. Navigating the editor view never blurs.
 **View → Ambient Occlusion** (on by default) darkens the indirect light (ambient, global
 illumination and reflections, not direct light) where nearby surfaces, within half a
 metre, cover the hemisphere around a surface: screen-space ambient occlusion from the
-depth prepass, smoothed across a depth-aware 5×5 filter. The viewport then
+depth prepass, smoothed across a depth-aware 5×5 filter. **View → Screen-Space
+Reflections** (on by default) traces each glossy surface's reflection through the depth
+buffer (up to 20 m) and shows what it meets as the previous frame drew it, blended over the
+reflection probes by confidence: it fades out on rough surfaces, near the screen's edges
+and for reflections towards the camera, which the screen cannot show. The viewport then
 applies subtle HDR bloom before
 exposure/tone mapping, then OGRE's SMAA 1x High preset to smooth edges. Editor UI is
 composed afterwards. `--capture` waits 16 frames for the history to settle.

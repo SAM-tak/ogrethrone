@@ -158,8 +158,12 @@ int main(int argc, char** argv) {
         ImGui::CreateContext();
         {
             throne::Editor editor(root, *window, *scene, *camera, launcherSmoke?std::filesystem::path{}:project, projectList);
-            // These checks compare frames exactly; temporal anti-aliasing blends each into the next.
-            if (physicsSmoke || navigationSmoke || showcaseSmoke) editor.setTemporalAntialiasing(false);
+            // These checks compare frames exactly; temporal anti-aliasing blends each into the next,
+            // and screen-space reflections show the previous one.
+            if (physicsSmoke || navigationSmoke || showcaseSmoke) {
+                editor.setTemporalAntialiasing(false);
+                editor.setScreenSpaceReflections(false);
+            }
             if (profilePhysics) editor.setEditorVSync(false);
             if (physicsSmoke && (!scene->getForwardPlus() ||
                 scene->getForwardPlus()->getForwardPlusMethod()!=Ogre::ForwardPlusBase::MethodForwardClustered))
