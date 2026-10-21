@@ -1,14 +1,464 @@
 format = "ogrethrone-scene",
-version = 2,
-systems = {},
-nodes = {
-    {id = 1, name = "Ground", parent = 0, components = {transform = {position = {0, 0, 0}, rotation = {0, 0, 0}, scale = {1, 1, 1}}, plane = {width = 24, depth = 24, colour = {0.42, 0.5, 0.36}}, material = {roughness = 0.95}}},
-    {id = 2, name = "Warrior", parent = 0, components = {transform = {position = {-3.416, 0, 0.757}, rotation = {0, 54.4, 0}, scale = {1, 1, 1}}, model = {path = "RPG Characters - Nov 2020/FBX/Warrior.fbx", materials = {{name = "Warrior_Texture", diffuseMap = "RPG Characters - Nov 2020/Textures/Warrior_Texture.png"}, {name = "Warrior_Sword_Texture", diffuseMap = "RPG Characters - Nov 2020/Textures/Warrior_Sword_Texture.png"}}}, animator = {clip = "Sword_Attack", time = 0.00}}},
-    {id = 3, name = "Wizard", parent = 0, components = {transform = {position = {-2.266, 0, -0.336}, rotation = {0, 32.7, 0}, scale = {1, 1, 1}}, model = {path = "RPG Characters - Nov 2020/FBX/Wizard.fbx", materials = {{name = "Wizard_Texture", diffuseMap = "RPG Characters - Nov 2020/Textures/Wizard_Texture.png"}, {name = "Wizard_Staff_Texture", diffuseMap = "RPG Characters - Nov 2020/Textures/Wizard_Staff_Texture.png"}}}, animator = {clip = "Idle_Weapon", time = 0.17}}},
-    {id = 4, name = "Rogue", parent = 0, components = {transform = {position = {-0.793, 0, -0.924}, rotation = {0, 10.9, 0}, scale = {1, 1, 1}}, model = {path = "RPG Characters - Nov 2020/FBX/Rogue.fbx", materials = {{name = "Rogue_Texture", diffuseMap = "RPG Characters - Nov 2020/Textures/Rogue_Texture.png"}, {name = "Rogue_Dagger_Texture", diffuseMap = "RPG Characters - Nov 2020/Textures/Rogue_Dagger_Texture.png"}}}, animator = {clip = "Run", time = 0.34}}},
-    {id = 5, name = "Ranger", parent = 0, components = {transform = {position = {0.793, 0, -0.924}, rotation = {0, -10.9, 0}, scale = {1, 1, 1}}, model = {path = "RPG Characters - Nov 2020/FBX/Ranger.fbx", materials = {{name = "Ranger_Texture", diffuseMap = "RPG Characters - Nov 2020/Textures/Ranger_Texture.png"}, {name = "Ranger_Bow_Texture", diffuseMap = "RPG Characters - Nov 2020/Textures/Ranger_Bow_Texture.png"}}}, animator = {clip = "Walk", time = 0.51}}},
-    {id = 6, name = "Cleric", parent = 0, components = {transform = {position = {2.266, 0, -0.336}, rotation = {0, -32.7, 0}, scale = {1, 1, 1}}, model = {path = "RPG Characters - Nov 2020/FBX/Cleric.fbx", materials = {{name = "Cleric_Texture", diffuseMap = "RPG Characters - Nov 2020/Textures/Cleric_Texture.png"}, {name = "Cleric_Staff_Texture", diffuseMap = "RPG Characters - Nov 2020/Textures/Cleric_Staff_Texture.png"}}}, animator = {clip = "Idle", time = 0.68}}},
-    {id = 7, name = "Monk", parent = 0, components = {transform = {position = {3.416, 0, 0.757}, rotation = {0, -54.4, 0}, scale = {1, 1, 1}}, model = {path = "RPG Characters - Nov 2020/FBX/Monk.fbx", materials = {{name = "Monk_Texture", diffuseMap = "RPG Characters - Nov 2020/Textures/Monk_Texture.png"}}}, animator = {clip = "Attack", time = 0.85}}},
-    {id = 20, name = "Sun", parent = 0, components = {transform = {position = {0, 0, 0}, rotation = {0, 0, 0}, scale = {1, 1, 1}}, light = {type = "Directional", direction = {-0.45, -1, -0.8}, colour = {1, 0.96, 0.9}, power = 3, temperature = 5600, showEmitter = false^}}},
+lighting = {
+    ambientDirection = {
+        0.0,
+        1.0,
+        0.0,
+    },
+    ambientLower = {
+        0.06,
+        0.07,
+        0.09,
+    },
+    ambientUpper = {
+        0.22,
+        0.25,
+        0.3,
+    },
+    defaultSun = false^,
+    environmentScale = 1.0,
+    environmentTemperature = 0.0,
+    exposure = 0.0,
+    sky = true^,
+    toneMapping = true^,
 },
-lighting = {defaultSun = false^, sky = true^, toneMapping = true^},
+nodes = {
+    {
+        components = {
+            material = {
+                emissive = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                fresnel = {
+                    0.04,
+                    0.04,
+                    0.04,
+                },
+                metalness = -1.0,
+                roughness = 0.949999988079071,
+                uvScale = 1.0,
+            },
+            plane = {
+                colour = {
+                    0.42,
+                    0.5,
+                    0.36,
+                },
+                depth = 24.0,
+                width = 24.0,
+            },
+            transform = {
+                position = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                rotation = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
+        },
+        id = 1,
+        name = "Ground",
+        parent = 0,
+    },
+    {
+        components = {
+            animator = {
+                clip = "Sword_Attack",
+                loop = true^,
+                playing = true^,
+                speed = 1.0,
+                time = 0.0,
+            },
+            model = {
+                directXNormals = true^,
+                emission = 1.0,
+                materials = {
+                    {
+                        absorption = {
+                            0.0,
+                            0.0,
+                            0.0,
+                        },
+                        diffuseMap = "RPG Characters - Nov 2020/Textures/Warrior_Texture.png",
+                        name = "Warrior_Texture",
+                        thickness = 0.05000000074505806,
+                    },
+                    {
+                        absorption = {
+                            0.0,
+                            0.0,
+                            0.0,
+                        },
+                        diffuseMap = "RPG Characters - Nov 2020/Textures/Warrior_Sword_Texture.png",
+                        name = "Warrior_Sword_Texture",
+                        thickness = 0.05000000074505806,
+                    },
+                },
+                path = "RPG Characters - Nov 2020/FBX/Warrior.fbx",
+            },
+            transform = {
+                position = {
+                    -3.416,
+                    0.0,
+                    0.757,
+                },
+                rotation = {
+                    0.0,
+                    54.4,
+                    0.0,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
+        },
+        id = 2,
+        name = "Warrior",
+        parent = 0,
+    },
+    {
+        components = {
+            animator = {
+                clip = "Idle_Weapon",
+                loop = true^,
+                playing = true^,
+                speed = 1.0,
+                time = 0.17000000178813934,
+            },
+            model = {
+                directXNormals = true^,
+                emission = 1.0,
+                materials = {
+                    {
+                        absorption = {
+                            0.0,
+                            0.0,
+                            0.0,
+                        },
+                        diffuseMap = "RPG Characters - Nov 2020/Textures/Wizard_Texture.png",
+                        name = "Wizard_Texture",
+                        thickness = 0.05000000074505806,
+                    },
+                    {
+                        absorption = {
+                            0.0,
+                            0.0,
+                            0.0,
+                        },
+                        diffuseMap = "RPG Characters - Nov 2020/Textures/Wizard_Staff_Texture.png",
+                        name = "Wizard_Staff_Texture",
+                        thickness = 0.05000000074505806,
+                    },
+                },
+                path = "RPG Characters - Nov 2020/FBX/Wizard.fbx",
+            },
+            transform = {
+                position = {
+                    -2.266,
+                    0.0,
+                    -0.336,
+                },
+                rotation = {
+                    0.0,
+                    32.7,
+                    0.0,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
+        },
+        id = 3,
+        name = "Wizard",
+        parent = 0,
+    },
+    {
+        components = {
+            animator = {
+                clip = "Run",
+                loop = true^,
+                playing = true^,
+                speed = 1.0,
+                time = 0.3400000035762787,
+            },
+            model = {
+                directXNormals = true^,
+                emission = 1.0,
+                materials = {
+                    {
+                        absorption = {
+                            0.0,
+                            0.0,
+                            0.0,
+                        },
+                        diffuseMap = "RPG Characters - Nov 2020/Textures/Rogue_Texture.png",
+                        name = "Rogue_Texture",
+                        thickness = 0.05000000074505806,
+                    },
+                    {
+                        absorption = {
+                            0.0,
+                            0.0,
+                            0.0,
+                        },
+                        diffuseMap = "RPG Characters - Nov 2020/Textures/Rogue_Dagger_Texture.png",
+                        name = "Rogue_Dagger_Texture",
+                        thickness = 0.05000000074505806,
+                    },
+                },
+                path = "RPG Characters - Nov 2020/FBX/Rogue.fbx",
+            },
+            transform = {
+                position = {
+                    -0.793,
+                    0.0,
+                    -0.924,
+                },
+                rotation = {
+                    0.0,
+                    10.9,
+                    0.0,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
+        },
+        id = 4,
+        name = "Rogue",
+        parent = 0,
+    },
+    {
+        components = {
+            animator = {
+                clip = "Walk",
+                loop = true^,
+                playing = true^,
+                speed = 1.0,
+                time = 0.5099999904632568,
+            },
+            model = {
+                directXNormals = true^,
+                emission = 1.0,
+                materials = {
+                    {
+                        absorption = {
+                            0.0,
+                            0.0,
+                            0.0,
+                        },
+                        diffuseMap = "RPG Characters - Nov 2020/Textures/Ranger_Texture.png",
+                        name = "Ranger_Texture",
+                        thickness = 0.05000000074505806,
+                    },
+                    {
+                        absorption = {
+                            0.0,
+                            0.0,
+                            0.0,
+                        },
+                        diffuseMap = "RPG Characters - Nov 2020/Textures/Ranger_Bow_Texture.png",
+                        name = "Ranger_Bow_Texture",
+                        thickness = 0.05000000074505806,
+                    },
+                },
+                path = "RPG Characters - Nov 2020/FBX/Ranger.fbx",
+            },
+            transform = {
+                position = {
+                    0.793,
+                    0.0,
+                    -0.924,
+                },
+                rotation = {
+                    0.0,
+                    -10.9,
+                    0.0,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
+        },
+        id = 5,
+        name = "Ranger",
+        parent = 0,
+    },
+    {
+        components = {
+            animator = {
+                clip = "Idle",
+                loop = true^,
+                playing = true^,
+                speed = 1.0,
+                time = 0.6800000071525574,
+            },
+            model = {
+                directXNormals = true^,
+                emission = 1.0,
+                materials = {
+                    {
+                        absorption = {
+                            0.0,
+                            0.0,
+                            0.0,
+                        },
+                        diffuseMap = "RPG Characters - Nov 2020/Textures/Cleric_Texture.png",
+                        name = "Cleric_Texture",
+                        thickness = 0.05000000074505806,
+                    },
+                    {
+                        absorption = {
+                            0.0,
+                            0.0,
+                            0.0,
+                        },
+                        diffuseMap = "RPG Characters - Nov 2020/Textures/Cleric_Staff_Texture.png",
+                        name = "Cleric_Staff_Texture",
+                        thickness = 0.05000000074505806,
+                    },
+                },
+                path = "RPG Characters - Nov 2020/FBX/Cleric.fbx",
+            },
+            transform = {
+                position = {
+                    2.266,
+                    0.0,
+                    -0.336,
+                },
+                rotation = {
+                    0.0,
+                    -32.7,
+                    0.0,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
+        },
+        id = 6,
+        name = "Cleric",
+        parent = 0,
+    },
+    {
+        components = {
+            animator = {
+                clip = "Attack",
+                loop = true^,
+                playing = true^,
+                speed = 1.0,
+                time = 0.8500000238418579,
+            },
+            model = {
+                directXNormals = true^,
+                emission = 1.0,
+                materials = {
+                    {
+                        absorption = {
+                            0.0,
+                            0.0,
+                            0.0,
+                        },
+                        diffuseMap = "RPG Characters - Nov 2020/Textures/Monk_Texture.png",
+                        name = "Monk_Texture",
+                        thickness = 0.05000000074505806,
+                    },
+                },
+                path = "RPG Characters - Nov 2020/FBX/Monk.fbx",
+            },
+            transform = {
+                position = {
+                    3.416,
+                    0.0,
+                    0.757,
+                },
+                rotation = {
+                    0.0,
+                    -54.4,
+                    0.0,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
+        },
+        id = 7,
+        name = "Monk",
+        parent = 0,
+    },
+    {
+        components = {
+            light = {
+                castShadows = false^,
+                colour = {
+                    1.0,
+                    0.96,
+                    0.9,
+                },
+                direction = {
+                    -0.45,
+                    -1.0,
+                    -0.8,
+                },
+                enabled = true^,
+                height = 1.0,
+                innerAngle = 30.0,
+                outerAngle = 45.0,
+                power = 3.0,
+                radius = 10.0,
+                showEmitter = false^,
+                temperature = 5600.0,
+                threshold = 0.009999999776482582,
+                twoSided = false^,
+                type = "Directional",
+                width = 1.0,
+            },
+            transform = {
+                position = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                rotation = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
+        },
+        id = 20,
+        name = "Sun",
+        parent = 0,
+    },
+},
+systems = {
+},
+version = 2,

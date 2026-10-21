@@ -1,4 +1,60 @@
 format = "ogrethrone-level",
+rendering = {
+    clustered = true^,
+    debugClusters = false^,
+    grid = true^,
+    maxDistance = 100.0,
+    minDistance = 0.10000000149011612,
+},
+scenes = {
+    {
+        id = 1,
+        position = {
+            0.0,
+            0.0,
+            0.0,
+        },
+        rotation = {
+            0.0,
+            0.0,
+            0.0,
+        },
+        scale = {
+            1.0,
+            1.0,
+            1.0,
+        },
+        scene = "scenes/characters.scene.lton",
+    },
+    {
+        id = 2,
+        position = {
+            0.0,
+            0.0,
+            0.0,
+        },
+        rotation = {
+            0.0,
+            0.0,
+            0.0,
+        },
+        scale = {
+            1.0,
+            1.0,
+            1.0,
+        },
+        scene = "scenes/characters-view.scene.lton",
+    },
+},
+serialExecution = false^,
+stages = {
+    "FetchInput",
+    "UpdateBehaviourSystem",
+    "LateUpdateBehaviourSystem",
+    "Animation",
+    "Box3DStep",
+    "EndOfFrameBehaviourSystem",
+},
+systems = {
+},
 version = 3,
-scenes = {{id = 1, scene = "scenes/characters.scene.lton"}, {id = 2, scene = "scenes/characters-view.scene.lton"}},
-systems = {},
