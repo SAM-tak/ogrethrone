@@ -107,6 +107,9 @@ public:
     void selectRenderer();
     /// Enables/disables shadow casting while preserving direct and ambient lighting.
     void setShadowsEnabled(bool enabled);
+    /// Enables/disables temporal anti-aliasing (on by default); smoke checks that compare
+    /// frames exactly turn it off.
+    void setTemporalAntialiasing(bool enabled);
     /// Shows or hides the procedural sky without modifying scene lights or physics.
     void setSkyboxEnabled(bool enabled);
     /// Bakes the level's global illumination into its project folder once textures have streamed in.
@@ -272,6 +275,9 @@ private:
     void syncTransforms(const LevelExpansion* snapshot = nullptr);
     /// Applies persisted lighting settings, including the Forward+ method.
     void syncLighting(const LevelExpansion& shown);
+    /// Offsets the camera by this frame's sub-pixel jitter and hands the temporal
+    /// anti-aliasing pass its reprojection; the offset is removed after rendering.
+    void jitterCamera();
     /// Moves the sky OGRE made into the queue after opaque geometry.
     void drawSkyAfterOpaque();
     /// Loads one project texture with a project-qualified cache key; masks share an R8 pool.
@@ -473,6 +479,15 @@ private:
     bool skyboxEnabled_ = true;
     Ogre::SceneNode* sunNode_ = nullptr;
     bool shadowsEnabled_ = true;
+    /// Temporal anti-aliasing: whether it is on, whether the history is unusable (new targets,
+    /// a hidden view, TAA just turned on), the position in the jitter sequence, and the
+    /// previous frame's jittered view-projection and jitter (in UV).
+    bool temporalAntialiasing_ = true, taaReset_ = true;
+    unsigned taaIndex_ = 0;
+    Ogre::Matrix4 taaViewProj_ = Ogre::Matrix4::IDENTITY;
+    Ogre::Vector2 taaJitter_ = Ogre::Vector2::ZERO;
+    /// The temporal anti-aliasing pass material, given the reprojection each frame.
+    Ogre::MaterialPtr taa_;
     bool particleResourcesLoaded_ = false, particlePreview_ = true;
     int particleBlending_ = 1, appliedParticleBlending_ = -1;
     std::set<std::string> particleScripts_;

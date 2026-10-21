@@ -394,7 +394,7 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
     resources.addResourceLocation(THRONE_MEDIA_DIR "/gi", "FileSystem", skyGroup);
     root.getHlmsManager()->loadMaterials("IBL.material.json", skyGroup, nullptr, "");
     for (const auto* script : {"Quad.program", "Atmosphere.material", "Sky.material", "DPSM.material", "Copyback.material",
-                               "PccDepthCompressor.material", "Tonemap.material", "Bloom.material", "ThroneSmaa.material",
+                               "PccDepthCompressor.material", "Tonemap.material", "Bloom.material", "Taa.material", "ThroneSmaa.material",
                                "ThroneGi.compositor"}) {
         auto stream = resources.openResource(script, skyGroup);
         Ogre::MaterialManager::getSingleton().parseScript(stream, skyGroup);
@@ -417,17 +417,20 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
     gi_ = std::make_unique<GlobalIllumination>(root, scene, pbs_, pbsListeners_, [this](const std::string& line) { log(line); });
     createShadowNode(root);
     tonemap_ = Ogre::MaterialManager::getSingleton().getByName("Throne/Tonemap", skyGroup);
+    taa_ = Ogre::MaterialManager::getSingleton().getByName("Throne/Taa", skyGroup);
     {
         // A depth prepass draws lit opaque geometry (queue 10) into Depth and a G-buffer of
         // view-space normals, sun shadow/roughness and motion vectors (MotionVectors, the
         // change in UV since the previous frame). The scene then renders in half float:
         // queue 10 into Opaque reusing the prepass (depth read-only), then the other queues
         // below 200. Opaque is copied to Hdr; refractive glass (queue 200 and up) samples
-        // Opaque and its depth while drawing into Hdr. Bloom is combined before tone mapping,
-        // then SMAA filters the LDR scene before ImGui presents it (the UI stays sharp).
+        // Opaque and its depth while drawing into Hdr. Temporal anti-aliasing blends Hdr into
+        // the reprojected history (Taa, copied to TaaHistory for the next frame). Bloom is
+        // combined before tone mapping, then SMAA filters the LDR scene before ImGui presents
+        // it (the UI stays sharp).
         auto* node = compositor->addNodeDefinition("ThroneEditor/ViewportNode");
         node->addTextureSourceName("Viewport", 0, Ogre::TextureDefinitionBase::TEXTURE_INPUT);
-        node->setNumLocalTextureDefinitions(12);
+        node->setNumLocalTextureDefinitions(14);
         node->addTextureDefinition("Depth")->format = Ogre::PFG_D32_FLOAT;
         node->addTextureDefinition("GBufferNormals")->format = Ogre::PFG_R10G10B10A2_UNORM;
         node->addTextureDefinition("GBufferShadowRoughness")->format = Ogre::PFG_RG16_UNORM;
@@ -449,6 +452,13 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
             view->colourAttachments.push_back(attachment);
             view->depthAttachment.textureName = "Depth";
         }
+        for (const auto* name : {"Taa", "TaaHistory"}) {
+            auto* texture = node->addTextureDefinition(name);
+            texture->format = Ogre::PFG_RGBA16_FLOAT;
+            texture->depthBufferId = Ogre::DepthBuffer::POOL_NO_DEPTH;
+        }
+        // The history must survive until the next frame.
+        node->getLocalTextureDefinitionsNonConst().back().textureFlags &= ~Ogre::TextureFlags::DiscardableContent;
         for (const auto* name : {"BloomBright", "BloomHorizontal", "Bloom"}) {
             auto* texture = node->addTextureDefinition(name);
             texture->format = Ogre::PFG_RGBA16_FLOAT;
@@ -460,7 +470,7 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
             texture->format = Ogre::String(name) == "SmaaEdges" ? Ogre::PFG_RG8_UNORM : Ogre::PFG_RGBA8_UNORM;
             texture->depthBufferId = Ogre::DepthBuffer::POOL_NO_DEPTH;
         }
-        node->setNumTargetPass(10);
+        node->setNumTargetPass(12);
         auto* prepass = static_cast<Ogre::CompositorPassSceneDef*>(node->addTargetPass("GBuffer")->addPass(Ogre::PASS_SCENE));
         prepass->mShadowNode = "ThroneEditor/SunShadows";
         prepass->mPrePassMode = Ogre::PrePassCreate;
@@ -519,10 +529,12 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
             pass->mStoreActionDepth = pass->mStoreActionStencil = Ogre::StoreAction::DontCare;
             return pass;
         };
-        quad("BloomBright", "Throne/BloomExtract", {"Hdr"});
+        quad("Taa", "Throne/Taa", {"Hdr", "TaaHistory", "GBufferMotion", "Depth"});
+        quad("TaaHistory", "Ogre/Copy/4xFP32", {"Taa"});
+        quad("BloomBright", "Throne/BloomExtract", {"Taa"});
         quad("BloomHorizontal", "Throne/BloomHorizontal", {"BloomBright"});
         quad("Bloom", "Throne/BloomVertical", {"BloomHorizontal"});
-        quad("Tonemapped", "Throne/Tonemap", {"Hdr", "Bloom"});
+        quad("Tonemapped", "Throne/Tonemap", {"Taa", "Bloom"});
         // Edge detection discards pixels without edges, so clear them every frame.
         // Run weights over the whole target instead of allocating a stencil buffer.
         auto* edges = quad("SmaaEdges", "Throne/SmaaEdgeDetection", {"Tonemapped"});
@@ -844,6 +856,7 @@ Editor::~Editor() {
     // The cubemap sky's material belongs to the resource group destroyed below.
     scene_.setSky(false, Ogre::SceneManager::SkyCubemap, nullptr);
     tonemap_.reset();
+    taa_.reset();
     sky_.reset();
     Ogre::ResourceGroupManager::getSingleton().destroyResourceGroup("ThroneEditorSky");
     root_.getCompositorManager2()->setCompositorPassProvider(nullptr);
@@ -928,7 +941,8 @@ bool Editor::frame(float deltaSeconds, const std::function<void()>& input) {
                 syncTransforms(runtime_ && renderSnapshot_ ? &*renderSnapshot_ : nullptr);
                 updateCamera();
                 scene_.getParticleSystemManager2()->setCameraPosition(camera_.getDerivedPosition());
-            }
+                jitterCamera();
+            } else taaReset_ = true;
             gui_->prepareForRender(&scene_);
             // Scene RGB is already composited. Particle alpha must not blend the viewport again.
             // The pinned ImGui backend creates this per-texture material during prepareForRender.
@@ -943,6 +957,8 @@ bool Editor::frame(float deltaSeconds, const std::function<void()>& input) {
             const auto render = Clock::now();
             Ogre::ControllerManager::getSingleton().setTimeFactor(paused()?0.0f:1.0f);
             running = root_.renderOneFrame(deltaSeconds);
+            // Picking and the gizmo see the camera without jitter.
+            camera_.setFrustumOffset(0, 0);
             measured.renderMs = milliseconds(render, Clock::now());
         }
         // FetchInput has already collected this frame's OS/ImGui/OIS input above.
@@ -1001,6 +1017,58 @@ void Editor::setShadowsEnabled(bool enabled) {
     sun_->setCastShadows(enabled);
     for(auto& render:renderObjects_) if(render.light)
         render.light->setCastShadows(enabled && render.light->getType()==Ogre::Light::LT_DIRECTIONAL);
+}
+
+void Editor::setTemporalAntialiasing(bool enabled) {
+    temporalAntialiasing_ = enabled;
+    taaReset_ = true;
+}
+
+namespace {
+/// The radical inverse of @p index in @p base: a low-discrepancy sequence in [0, 1).
+float halton(unsigned index, unsigned base) {
+    float result = 0, fraction = 1;
+    for (; index; index /= base) result += (fraction /= float(base)) * float(index % base);
+    return result;
+}
+}
+
+void Editor::jitterCamera() {
+    // The clip space the motion vectors use: HlmsPbs flips the projection as the targets need.
+    const bool flip = viewportWorkspace_->getNodeSequence()[0]->getDefinedTexture("GBufferMotion")->requiresTextureFlipping();
+    const auto clip = [&] {
+        auto projection = camera_.getProjectionMatrixWithRSDepth();
+        if (flip)
+            for (int column = 0; column < 4; ++column) projection[1][column] = -projection[1][column];
+        return projection;
+    };
+    const auto steady = clip();
+    // Eight sub-pixel offsets of the Halton (2, 3) sequence, applied as an off-axis shift
+    // (OGRE ignores it for orthographic views, which then get no TAA).
+    const bool on = temporalAntialiasing_ && !orthographic_;
+    if (on) {
+        taaIndex_ = taaIndex_ % 8 + 1;
+        const float x = (halton(taaIndex_, 2) - 0.5f) * 2 / float(viewportWidth_);
+        const float y = (halton(taaIndex_, 3) - 0.5f) * 2 / float(viewportHeight_);
+        const float tanY = std::tan(camera_.getFOVy().valueRadians() * 0.5f) * camera_.getFocalLength();
+        camera_.setFrustumOffset(x * tanY * camera_.getAspectRatio(), y * tanY);
+    }
+    const auto jittered = clip();
+    const auto centre = [](const Ogre::Matrix4& projection) {
+        const auto p = projection * Ogre::Vector4(0, 0, -1, 1);
+        return Ogre::Vector2(p.x / p.w, p.y / p.w);
+    };
+    const auto jitter = (centre(jittered) - centre(steady)) * 0.5f;
+    const auto viewProj = jittered * camera_.getViewMatrix(true);
+    auto params = taa_->getTechnique(0)->getPass(0)->getFragmentProgramParameters();
+    params->setNamedConstant("reproject", taaViewProj_ * viewProj.inverse());
+    params->setNamedConstant("jitter", jitter);
+    params->setNamedConstant("jitterDelta", jitter - taaJitter_);
+    params->setNamedConstant("currentWeight", on && !taaReset_ ? 0.1f : 1.0f);
+    params->setNamedConstant("reverseDepth", root_.getRenderSystem()->isReverseDepth() ? 1.0f : 0.0f);
+    taaViewProj_ = viewProj;
+    taaJitter_ = jitter;
+    taaReset_ = !on;
 }
 
 void Editor::setSkyboxEnabled(bool enabled) {
@@ -2596,6 +2664,8 @@ void Editor::menu() {
         if (ImGui::MenuItem("GI Probes", nullptr, &probes)) gi_->setDebugVisible(probes);
         bool shadows=shadowsEnabled_;
         if(ImGui::MenuItem("Shadows",nullptr,&shadows)) setShadowsEnabled(shadows);
+        bool temporal=temporalAntialiasing_;
+        if(ImGui::MenuItem("Temporal Anti-Aliasing",nullptr,&temporal)) setTemporalAntialiasing(temporal);
         ImGui::MenuItem("Orthographic", nullptr, &orthographic_);
         if (ImGui::MenuItem("Focus Selection", "F")) focusSelection();
         ImGui::EndMenu();
@@ -3018,6 +3088,8 @@ void Editor::updateCamera() {
 void Editor::alignViewToCamera(std::size_t instance, std::size_t index, const CameraComponent& camera) {
     if (instance >= sceneNodes_.size() || index >= sceneNodes_[instance].size()) return;
     auto* node = sceneNodes_[instance][index];
+    // A cut: the history shows another view.
+    taaReset_ = true;
     // The camera looks along the node's -Z; the view keeps its distance to what it orbits.
     const auto position = node->_getDerivedPositionUpdated();
     const auto forward = node->_getDerivedOrientationUpdated() * Ogre::Vector3::NEGATIVE_UNIT_Z;
@@ -3155,6 +3227,7 @@ void Editor::resizeViewport(unsigned width, unsigned height) {
     viewportWidth_ = width;
     viewportHeight_ = height;
     createWorkspaces();
+    taaReset_ = true;
 }
 
 void Editor::createWorkspaces() {

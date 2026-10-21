@@ -635,8 +635,14 @@ of clamping and **Exposure (EV)** scales it in stops; both are the scene's. Tone
 sRGB-encoded colours; the later targets, the viewport texture and the window are
 not sRGB, so ImGui shows the viewport as rendered.
 
-The viewport always applies subtle HDR bloom before exposure/tone mapping, then
-OGRE's SMAA 1x High preset to smooth edges. Editor UI is composed afterwards.
+**View → Temporal Anti-Aliasing** (on by default) jitters the perspective camera by
+sub-pixel offsets of the Halton (2, 3) sequence over eight frames and blends each frame
+into the history of earlier ones, reprojected by the motion vectors (the sky by the
+camera's motion); the history is clipped to the colours around each pixel so that moving
+objects leave no trails. It makes alpha-hashed transparency usable and steadies thin
+geometry; orthographic views get none. The viewport then applies subtle HDR bloom before
+exposure/tone mapping, then OGRE's SMAA 1x High preset to smooth edges. Editor UI is
+composed afterwards. `--capture` waits 16 frames for the history to settle.
 Bloom uses a soft brightness threshold of 1.5 (knee 0.5), a quarter-resolution
 Gaussian blur, and strength 0.08. These defaults are in
 `media/postprocess/Bloom.material` and `Tonemap.material`; SMAA reuses the shaders

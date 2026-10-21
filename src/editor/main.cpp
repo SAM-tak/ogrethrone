@@ -158,6 +158,8 @@ int main(int argc, char** argv) {
         ImGui::CreateContext();
         {
             throne::Editor editor(root, *window, *scene, *camera, launcherSmoke?std::filesystem::path{}:project, projectList);
+            // These checks compare frames exactly; temporal anti-aliasing blends each into the next.
+            if (physicsSmoke || navigationSmoke || showcaseSmoke) editor.setTemporalAntialiasing(false);
             if (profilePhysics) editor.setEditorVSync(false);
             if (physicsSmoke && (!scene->getForwardPlus() ||
                 scene->getForwardPlus()->getForwardPlusMethod()!=Ogre::ForwardPlusBase::MethodForwardClustered))
@@ -254,7 +256,8 @@ int main(int argc, char** argv) {
                 finish();
                 // The level's first Camera node gives the view, as authored for the capture.
                 editor.viewFromFirstCamera();
-                for (int i = 0; i < 4; ++i) editor.frame(1.0f / 60);
+                // Enough frames for temporal anti-aliasing to settle.
+                for (int i = 0; i < 16; ++i) editor.frame(1.0f / 60);
                 editor.captureViewport(std::filesystem::u8path(argc > 3 ? argv[3] : "out/capture.ppm"));
             }
             if (profilePhysics) {
