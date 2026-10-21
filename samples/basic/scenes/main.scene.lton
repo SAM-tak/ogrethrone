@@ -177,6 +177,26 @@ nodes = {
         },
         id = 105248190270967811,
         name = "Fast Rotor Post",
+        overrides = {
+            nodes = {
+                {
+                    behaviour = {
+                        {
+                            data = {
+                                degreesPerSecond = 1360.0,
+                            },
+                            id = 106319652766068737,
+                            script = "scripts/spin.lh",
+                        },
+                    },
+                    path = {
+                        105248190270967814,
+                    },
+                },
+            },
+            systems = {
+            },
+        },
         parent = 0,
         prefab = "prefabs/fast-rotor-post.prefab.lton",
     },
@@ -224,6 +244,37 @@ nodes = {
         },
         id = 106142192565936129,
         name = "Plane",
+        parent = 0,
+    },
+    {
+        components = {
+            camera = {
+                fStop = 0.0,
+                farClip = 10000.0,
+                fieldOfView = 45.0,
+                focusDistance = 10.0,
+                nearClip = 0.10000000149011612,
+            },
+            transform = {
+                position = {
+                    1.1687372,
+                    3.6037903,
+                    2.571013,
+                },
+                rotation = {
+                    -12.032118,
+                    40.68,
+                    -5.629064e-07,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
+        },
+        id = 106322175849308161,
+        name = "Camera",
         parent = 0,
     },
 },
