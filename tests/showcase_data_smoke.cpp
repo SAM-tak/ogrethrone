@@ -67,11 +67,18 @@ int main(int argc,char** argv) {
         for(const char* invalid:{"light = {type = \"Unknown\"}","light = {direction = {0,0,0}}", "light = {innerAngle=60,outerAngle=30}",
             "particles = {definition = \"\"}","particles = {script = \"../escape.particle2\"}","particles = {enabled = 123}",
             "material = {roughness = -1}","material = {reflectionMap = \"../escape.dds\"}",
-            "material = {alpha = \"Blend\"}","material = {opacity = 2}"}) {
+            "material = {alpha = \"Blend\"}","material = {opacity = 2}","camera = {antiAliasing = \"FXAA\"}"}) {
             std::ofstream(temporary/"bad.lton")<<"format=\"ogrethrone-scene\",version=2,nodes={{id=1,name=\"Bad\",parent=0,components={"<<invalid<<"}}},";
             bool rejected=false; try { throne::Scene::load(temporary/"bad.lton"); } catch(const std::exception&) { rejected=true; }
             require(rejected,"Malformed light/material accepted");
         }
+        // A camera keeps its depth of field and anti-aliasing.
+        throne::Scene viewed;
+        auto& eye=viewed.addNode("Eye"); eye.camera.emplace();
+        eye.camera->fStop=2.8f; eye.camera->antiAliasing=throne::AntiAliasing::Smaa;
+        viewed.save(temporary/"camera.lton");
+        const auto camera=throne::Scene::load(temporary/"camera.lton").nodes[0].camera;
+        require(camera && camera->fStop==2.8f && camera->antiAliasing==throne::AntiAliasing::Smaa,"Camera settings lost");
         std::filesystem::remove_all(temporary);
         std::puts("Showcase data passed: all levels, PBS palette, lights, persistence, prefab overrides and validation");
         return 0;

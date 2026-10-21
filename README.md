@@ -116,12 +116,16 @@ effect-free data):
   instances and no overrides of its own: editing a scene's content at the Level
   step writes to that scene's file, so every instance of it shows the change.
 - A **Camera** component keeps a viewpoint: the node's position and orientation (it
-  looks along its local -Z, +Y up), with a field of view, near/far clip distances and
-  depth of field (a focus distance and an f-stop; 0 keeps everything in focus).
-  Its Inspector has **Align View to Camera** (the scene view takes its position,
-  direction and projection; the view has no roll) and **Align Camera to View** (the
-  node's Transform and the component take the view's; one undo step). Levels keep no
-  view of their own; `--capture` looks through the level's first Camera node.
+  looks along its local -Z, +Y up), with a field of view, near/far clip distances,
+  depth of field (a focus distance and an f-stop; 0 keeps everything in focus) and
+  **Anti-Aliasing**: **TAA** (the default), **SMAA** or **None**. Alpha hashing and the
+  noise of SSAO, SSR and depth of field average out only under TAA; orthographic views
+  use SMAA instead. Its Inspector has **Align View to Camera** (the scene view takes its
+  position, direction and field of view; the view has no roll) and **Align Camera to
+  View** (the node's Transform and field of view take the view's; one undo step). The
+  scene view keeps its own clip distances, depth of field and anti-aliasing, edited in
+  the level's Inspector. Levels keep no view of their own; `--capture` looks through the
+  level's first Camera node, with all of its settings.
 
 Levels, scenes and prefabs are named after their files (`main.scene.lton` shows
 as `main [Scene]`; a scene placed twice adds its instance ID). The editor drills
@@ -645,7 +649,7 @@ of clamping and **Exposure (EV)** scales it in stops; both are the scene's. Tone
 sRGB-encoded colours; the later targets, the viewport texture and the window are
 not sRGB, so ImGui shows the viewport as rendered.
 
-**View → Temporal Anti-Aliasing** (on by default) jitters the perspective camera by
+**TAA** (the view's or camera's **Anti-Aliasing**, by default) jitters the perspective camera by
 sub-pixel offsets of the Halton (2, 3) sequence over eight frames and blends each frame
 into the history of earlier ones, reprojected by the motion vectors (the sky by the
 camera's motion); the history is clipped to the colours around each pixel so that moving
@@ -662,15 +666,16 @@ Reflections** (on by default) traces each glossy surface's reflection through th
 buffer (up to 20 m) and shows what it meets as the previous frame drew it, blended over the
 reflection probes by confidence: it fades out on rough surfaces, near the screen's edges
 and for reflections towards the camera, which the screen cannot show. **Depth of field**
-follows the view's focus distance and f-stop (the level's Inspector, or a Camera's via
-Align View to Camera): a thin lens on a 35 mm full-frame sensor of the view's field of
+follows the view's focus distance and f-stop (the level's Inspector; `--capture` takes
+the Camera's): a thin lens on a 35 mm full-frame sensor of the view's field of
 view, gathering each pixel's neighbours whose circle of confusion reaches it (at most 16
 pixels across) without letting the background bleed over a sharp foreground. Transparent
 surfaces write no depth, so they take the focus of what lies behind them. The noise of
 these screen-space passes changes each frame so that temporal anti-aliasing averages it
 away. The viewport then
 applies subtle HDR bloom before
-exposure/tone mapping, then OGRE's SMAA 1x High preset to smooth edges. Editor UI is
+exposure/tone mapping, then, when the view's anti-aliasing is SMAA, OGRE's SMAA 1x High
+preset to smooth edges. Editor UI is
 composed afterwards. `--capture` waits 16 frames for the history to settle.
 Bloom uses a soft brightness threshold of 1.5 (knee 0.5), a quarter-resolution
 Gaussian blur, and strength 0.08. These defaults are in
@@ -864,8 +869,7 @@ license in `third_party/ois/LICENSE.md`.
   are disabled. RapidJSON is pinned for Colibri skins and OGRE materials.
   PBR, Unlit and particle plugins remain
   available. Asset packaging/import tooling is a separate milestone.
-- No TAA, Alpha Hashing configuration, shader warm-up policy, or disk cache
-  persistence is implemented by this bootstrap.
+- No shader warm-up policy or disk cache persistence is implemented by this bootstrap.
 - Apple support is not configured yet. Vulkan-through-portability support must
   be verified separately rather than assumed from the presence of a Vulkan backend.
 

@@ -107,9 +107,10 @@ public:
     void selectRenderer();
     /// Enables/disables shadow casting while preserving direct and ambient lighting.
     void setShadowsEnabled(bool enabled);
-    /// Enables/disables temporal anti-aliasing (on by default); smoke checks that compare
-    /// frames exactly turn it off.
-    void setTemporalAntialiasing(bool enabled);
+    /// Uses @p mode whatever the view's anti-aliasing (TAA by default; Align View to Camera
+    /// takes a Camera's) says. Smoke checks that compare frames exactly force SMAA, as TAA
+    /// blends each frame into the next.
+    void forceAntiAliasing(AntiAliasing mode) { forcedAntiAliasing_ = mode; }
     /// Enables/disables screen-space reflections (on by default). They read the previous frame,
     /// so smoke checks that compare frames exactly turn them off too.
     void setScreenSpaceReflections(bool enabled) { reflectionsEnabled_ = enabled; }
@@ -123,9 +124,9 @@ public:
     void captureViewport(const std::filesystem::path& path);
     /// Opens a project-relative level; returns false if loading fails or Play is active.
     bool openLevel(const std::string& path);
-    /// Sets the view to the first node with a Camera component, in scene-instance and
-    /// hierarchy order, and clears the selection (no outline or gizmo in the picture);
-    /// returns false when the level has none.
+    /// Looks through the first node with a Camera component, in scene-instance and hierarchy
+    /// order: the view takes all its settings, and the selection is cleared (no outline or
+    /// gizmo in the picture); returns false when the level has none.
     bool viewFromFirstCamera();
     /// Selects the viewport's local-light culling algorithm.
     void setForwardClustered(bool enabled) { doc_.world.level.rendering.clustered=enabled; }
@@ -282,6 +283,8 @@ private:
     /// anti-aliasing and motion blur passes their parameters; the offset is removed after
     /// rendering.
     void jitterCamera();
+    /// Draws the anti-aliasing choice; returns whether it changed.
+    bool antiAliasingCombo(AntiAliasing& mode);
     /// Moves the sky OGRE made into the queue after opaque geometry.
     void drawSkyAfterOpaque();
     /// Loads one project texture with a project-qualified cache key; masks share an R8 pool.
@@ -425,10 +428,12 @@ private:
     /// Draws the environment and global illumination of the scene at @p path, written to its file.
     void lightingInspector(const std::string& path);
     /// Sets the view to node @p index of view instance @p instance and its Camera component:
-    /// its position, its direction (without roll) and its projection.
-    void alignViewToCamera(std::size_t instance, std::size_t index, const CameraComponent& camera);
+    /// its position, its direction (without roll) and its field of view; with @p lookThrough,
+    /// also its clip distances, depth of field and anti-aliasing, to show what it shows.
+    void alignViewToCamera(std::size_t instance, std::size_t index, const CameraComponent& camera,
+                           bool lookThrough = false);
     /// Writes the view into the selected node: its Transform's position and rotation (scale
-    /// kept) and its Camera component's projection; one undo step.
+    /// kept) and its Camera component's field of view; one undo step.
     void alignCameraToView();
     /// Lists the nodes and systems @p overrides removes, named from @p expansion
     /// where the overrides' instance is at @p prefix, each with a Restore button.
@@ -483,10 +488,10 @@ private:
     bool skyboxEnabled_ = true;
     Ogre::SceneNode* sunNode_ = nullptr;
     bool shadowsEnabled_ = true;
-    /// Temporal anti-aliasing: whether it is on, whether the history is unusable (new targets,
-    /// a hidden view, TAA just turned on), the position in the jitter sequence, and the
-    /// previous frame's jittered view-projection and jitter (in UV).
-    bool temporalAntialiasing_ = true, taaReset_ = true;
+    /// Temporal anti-aliasing: whether the history is unusable (new targets, a hidden view, TAA
+    /// just turned on), the position in the jitter sequence, and the previous frame's jittered
+    /// view-projection and jitter (in UV).
+    bool taaReset_ = true;
     unsigned taaIndex_ = 0;
     Ogre::Matrix4 taaViewProj_ = Ogre::Matrix4::IDENTITY;
     Ogre::Vector2 taaJitter_ = Ogre::Vector2::ZERO;
@@ -649,6 +654,9 @@ private:
     float viewFieldOfView_ = 45, viewNear_ = .1f, viewFar_ = 10000;
     /// The view's depth of field: the distance in focus, in metres, and the f-number (0: off).
     float viewFocusDistance_ = 10, viewFStop_ = 0;
+    /// The view's anti-aliasing, and the one a check forces instead.
+    AntiAliasing viewAntiAliasing_ = AntiAliasing::Temporal;
+    std::optional<AntiAliasing> forcedAntiAliasing_;
     /// Base fly speed in scene units per second, adjusted by the wheel during flight.
     float flySpeed_ = 5.0f;
     unsigned viewportWidth_ = 0, viewportHeight_ = 0;

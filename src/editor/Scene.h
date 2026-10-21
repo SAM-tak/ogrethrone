@@ -203,6 +203,17 @@ struct ParticleSystemComponent {
 /// A viewpoint (TDDja/07): the node's position and orientation, looking along its local -Z
 /// with +Y up, through a perspective projection. The editor's view can be set from it, or
 /// written into it.
+/// How a camera's picture is anti-aliased.
+enum class AntiAliasing {
+    /// Temporal anti-aliasing: jittered frames blended into a reprojected history. Alpha hashing
+    /// and the screen-space effects' noise rely on it to average out. Orthographic views get SMAA.
+    Temporal,
+    /// SMAA 1x on the tone-mapped picture: no history, so noise stays as it is.
+    Smaa,
+    /// None, for comparison and debugging.
+    None,
+};
+
 struct CameraComponent {
     /// Vertical field of view, in degrees.
     float fieldOfView = 45;
@@ -211,10 +222,11 @@ struct CameraComponent {
     /// Depth of field of a 35 mm full-frame lens of this field of view: the distance in focus,
     /// in metres, and the f-number (0: everything in focus).
     float focusDistance = 10, fStop = 0;
+    AntiAliasing antiAliasing = AntiAliasing::Temporal;
     /// Equality of every field.
     bool operator==(const CameraComponent& other) const {
         return fieldOfView == other.fieldOfView && nearClip == other.nearClip && farClip == other.farClip &&
-               focusDistance == other.focusDistance && fStop == other.fStop;
+               focusDistance == other.focusDistance && fStop == other.fStop && antiAliasing == other.antiAliasing;
     }
     /// Negation of equality.
     bool operator!=(const CameraComponent& other) const { return !(*this == other); }

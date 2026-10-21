@@ -71,6 +71,9 @@ constexpr const char* viewportWorkspaceName = "ThroneEditor/Viewport";
 constexpr const char* windowWorkspaceName = "ThroneEditor/Window";
 constexpr const char* lineMaterial = "ThroneEditor/Lines";
 constexpr std::size_t historyLimit = 100, logLimit = 200;
+/// Execution masks of the viewport's passes: every pass runs with 0x01, then either the SMAA
+/// passes or the plain copy to the viewport.
+constexpr Ogre::uint8 smaaPasses = 0x02, plainPasses = 0x04;
 /// Lit opaque geometry is in queue 10 (OGRE's default), the only queue the depth prepass draws;
 /// then the sky (11), unlit lines and emitters (12, which HlmsUnlit cannot draw in a prepass),
 /// particles (15), absorbing volumes (99) and blended surfaces (200).
@@ -499,7 +502,7 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
             texture->format = Ogre::String(name) == "SmaaEdges" ? Ogre::PFG_RG8_UNORM : Ogre::PFG_RGBA8_UNORM;
             texture->depthBufferId = Ogre::DepthBuffer::POOL_NO_DEPTH;
         }
-        node->setNumTargetPass(19);
+        node->setNumTargetPass(20);
         // @p outputs are further colour targets the material writes after @p target.
         const auto quad = [&](const char* target, const char* material, std::initializer_list<const char*> inputs,
                               std::initializer_list<const char*> outputs = {}) {
@@ -582,11 +585,15 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
         quad("Tonemapped", "Throne/Tonemap", {"Blurred", "Bloom"});
         // Edge detection discards pixels without edges, so clear them every frame.
         // Run weights over the whole target instead of allocating a stencil buffer.
+        // SMAA runs when the view's anti-aliasing asks for it; otherwise the tone-mapped picture
+        // is copied (see the execution masks in jitterCamera).
         auto* edges = quad("SmaaEdges", "Throne/SmaaEdgeDetection", {"Tonemapped"});
         edges->mLoadActionColour[0] = Ogre::LoadAction::Clear;
         edges->setAllClearColours(Ogre::ColourValue(0, 0, 0, 0));
-        quad("SmaaWeights", "Throne/SmaaBlendingWeightCalculation", {"SmaaEdges"});
-        quad("Viewport", "Throne/SmaaNeighborhoodBlending", {"Tonemapped", "SmaaWeights"});
+        edges->mExecutionMask = smaaPasses;
+        quad("SmaaWeights", "Throne/SmaaBlendingWeightCalculation", {"SmaaEdges"})->mExecutionMask = smaaPasses;
+        quad("Viewport", "Throne/SmaaNeighborhoodBlending", {"Tonemapped", "SmaaWeights"})->mExecutionMask = smaaPasses;
+        quad("Viewport", "Ogre/Copy/4xFP32", {"Tonemapped"})->mExecutionMask = plainPasses;
         compositor->addWorkspaceDefinition(viewportWorkspaceName)->connectExternal(0, node->getName(), 0);
     }
     {
@@ -1069,10 +1076,6 @@ void Editor::setShadowsEnabled(bool enabled) {
         render.light->setCastShadows(enabled && render.light->getType()==Ogre::Light::LT_DIRECTIONAL);
 }
 
-void Editor::setTemporalAntialiasing(bool enabled) {
-    temporalAntialiasing_ = enabled;
-    taaReset_ = true;
-}
 
 namespace {
 /// The radical inverse of @p index in @p base: a low-discrepancy sequence in [0, 1).
@@ -1095,7 +1098,11 @@ void Editor::jitterCamera() {
     const auto steady = clip();
     // Eight sub-pixel offsets of the Halton (2, 3) sequence, applied as an off-axis shift
     // (OGRE ignores it for orthographic views, which then get no TAA).
-    const bool on = temporalAntialiasing_ && !orthographic_;
+    // Orthographic views cannot be jittered (OGRE ignores the offset): they get SMAA instead.
+    const auto mode = forcedAntiAliasing_.value_or(viewAntiAliasing_);
+    const bool on = mode == AntiAliasing::Temporal && !orthographic_;
+    const bool smaa = mode == AntiAliasing::Smaa || (mode == AntiAliasing::Temporal && orthographic_);
+    viewportWorkspace_->setExecutionMask(0x01 | (smaa ? smaaPasses : plainPasses));
     if (on) {
         taaIndex_ = taaIndex_ % 8 + 1;
         const float x = (halton(taaIndex_, 2) - 0.5f) * 2 / float(viewportWidth_);
@@ -2761,8 +2768,6 @@ void Editor::menu() {
         if (ImGui::MenuItem("GI Probes", nullptr, &probes)) gi_->setDebugVisible(probes);
         bool shadows=shadowsEnabled_;
         if(ImGui::MenuItem("Shadows",nullptr,&shadows)) setShadowsEnabled(shadows);
-        bool temporal=temporalAntialiasing_;
-        if(ImGui::MenuItem("Temporal Anti-Aliasing",nullptr,&temporal)) setTemporalAntialiasing(temporal);
         ImGui::MenuItem("Motion Blur (Play)",nullptr,&motionBlurInPlay_);
         ImGui::MenuItem("Ambient Occlusion",nullptr,&ambientOcclusionEnabled_);
         ImGui::MenuItem("Screen-Space Reflections",nullptr,&reflectionsEnabled_);
@@ -3185,7 +3190,7 @@ void Editor::updateCamera() {
         camera_.setOrthoWindowHeight(2 * distance_ * std::tan(camera_.getFOVy().valueRadians() / 2));
 }
 
-void Editor::alignViewToCamera(std::size_t instance, std::size_t index, const CameraComponent& camera) {
+void Editor::alignViewToCamera(std::size_t instance, std::size_t index, const CameraComponent& camera, bool lookThrough) {
     if (instance >= sceneNodes_.size() || index >= sceneNodes_[instance].size()) return;
     auto* node = sceneNodes_[instance][index];
     // A cut: the history shows another view.
@@ -3199,10 +3204,15 @@ void Editor::alignViewToCamera(std::size_t instance, std::size_t index, const Ca
     const Ogre::Vector3 offset(std::cos(pitch_) * std::sin(yaw_), std::sin(pitch_), std::cos(pitch_) * std::cos(yaw_));
     target_ = position - offset * distance_;
     viewFieldOfView_ = camera.fieldOfView;
-    viewNear_ = camera.nearClip;
-    viewFar_ = camera.farClip;
-    viewFocusDistance_ = camera.focusDistance;
-    viewFStop_ = camera.fStop;
+    // The view keeps its own clip distances, depth of field and anti-aliasing unless it is to
+    // show exactly what the camera does.
+    if (lookThrough) {
+        viewNear_ = camera.nearClip;
+        viewFar_ = camera.farClip;
+        viewFocusDistance_ = camera.focusDistance;
+        viewFStop_ = camera.fStop;
+        viewAntiAliasing_ = camera.antiAliasing;
+    }
     updateCamera();
 }
 
@@ -3236,10 +3246,6 @@ void Editor::alignCameraToView() {
     writeNode(value, 2 | 4);
     CameraComponent camera = *expanded->node.camera;
     camera.fieldOfView = viewFieldOfView_;
-    camera.nearClip = viewNear_;
-    camera.farClip = viewFar_;
-    camera.focusDistance = viewFocusDistance_;
-    camera.fStop = viewFStop_;
     const auto target = targetOf(selected_.instance, selected_.path);
     if (target.node && target.node->camera) target.node->camera = camera;
     else if (target.overrides) target.overrides->node(target.relative).camera = camera;
@@ -3251,7 +3257,7 @@ bool Editor::viewFromFirstCamera() {
             if (const auto& camera = view_.instances[i].expansion.nodes[k].node.camera) {
                 // As the camera sees it: nothing selected, so no outline or gizmo either.
                 selected_ = {};
-                alignViewToCamera(i, k, *camera);
+                alignViewToCamera(i, k, *camera, true);
                 return true;
             }
     return false;

@@ -740,6 +740,7 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         c.farClip=(std::max)(c.farClip,c.nearClip*1.001f);
         edited|=scalar("Focus Distance",c.focusDistance,.01f,1.0e6f);
         edited|=scalar("F-Stop (0: no depth of field)",c.fStop,0,64);
+        edited|=antiAliasingCombo(c.antiAliasing);
         // The view and the camera, either way; the camera looks along the node's -Z.
         if(ImGui::Button("Align View to Camera")) alignViewToCamera(std::size_t(selected_.instance),std::size_t(&expanded-view_.instances[std::size_t(selected_.instance)].expansion.nodes.data()),c);
         ImGui::SameLine();
@@ -1063,6 +1064,18 @@ void Editor::levelInspector() {
     }
     ImGui::DragFloat("Focus Distance", &viewFocusDistance_, .05f, .01f, 1.0e6f, "%.2f m", ImGuiSliderFlags_AlwaysClamp);
     ImGui::DragFloat("F-Stop", &viewFStop_, .1f, 0, 64, viewFStop_ > 0 ? "f/%.1f" : "off", ImGuiSliderFlags_AlwaysClamp);
+    antiAliasingCombo(viewAntiAliasing_);
+}
+
+bool Editor::antiAliasingCombo(AntiAliasing& mode) {
+    int index = static_cast<int>(mode);
+    const bool changed = ImGui::Combo("Anti-Aliasing", &index, "TAA\0SMAA\0None\0");
+    if (changed) mode = static_cast<AntiAliasing>(index);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("TAA: jittered frames blended over time; alpha hashing and the noise of SSAO, SSR and\n"
+                          "depth of field average out (orthographic views use SMAA).\n"
+                          "SMAA: edges of each frame alone; that noise stays visible.\nNone: for comparison.");
+    return changed;
 }
 
 void Editor::sceneInspector(SceneInstance& instance) {

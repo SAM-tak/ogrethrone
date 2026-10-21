@@ -150,6 +150,13 @@ void readExtraComponents(const LhatTable& table, Node& node) {
         if(c.farClip<=c.nearClip) lton::invalid();
         c.focusDistance=scalar(t,"focusDistance",c.focusDistance,.01f,1.0e6f);
         c.fStop=scalar(t,"fStop",c.fStop,0,64);
+        if(const auto v=lton::field(t,"antiAliasing"); !lhat_is_nil(v)) {
+            const auto mode=lton::string(v);
+            if(mode=="TAA") c.antiAliasing=AntiAliasing::Temporal;
+            else if(mode=="SMAA") c.antiAliasing=AntiAliasing::Smaa;
+            else if(mode=="None") c.antiAliasing=AntiAliasing::None;
+            else lton::invalid();
+        }
     });
     read("model", node.model, [&](const auto& t, auto& c) {
         if(const auto v=lton::field(t,"path"); !lhat_is_nil(v)) c.path=lton::relativePath(v);
@@ -280,6 +287,8 @@ void writeExtraComponents(lton::Writer& out, LhatValue table, const Node& node) 
         out.set(t,"fieldOfView",lhat_real(c.fieldOfView));
         out.set(t,"nearClip",lhat_real(c.nearClip)); out.set(t,"farClip",lhat_real(c.farClip));
         out.set(t,"focusDistance",lhat_real(c.focusDistance)); out.set(t,"fStop",lhat_real(c.fStop));
+        const char* modes[]={"TAA","SMAA","None"};
+        out.set(t,"antiAliasing",out.string(modes[static_cast<int>(c.antiAliasing)]));
     });
     write("model", node.model, [&](auto t,const auto& c) {
         out.set(t,"path",out.string(c.path)); out.set(t,"directXNormals",lhat_bool(c.directXNormals));

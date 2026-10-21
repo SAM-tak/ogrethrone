@@ -161,7 +161,7 @@ int main(int argc, char** argv) {
             // These checks compare frames exactly; temporal anti-aliasing blends each into the next,
             // and screen-space reflections show the previous one.
             if (physicsSmoke || navigationSmoke || showcaseSmoke) {
-                editor.setTemporalAntialiasing(false);
+                editor.forceAntiAliasing(throne::AntiAliasing::Smaa);
                 editor.setScreenSpaceReflections(false);
             }
             if (profilePhysics) editor.setEditorVSync(false);
