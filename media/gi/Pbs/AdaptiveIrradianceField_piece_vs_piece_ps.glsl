@@ -12,7 +12,7 @@
 	vec4 aifTop;
 @end
 
-@piece( custom_ps_uniformDeclaration )
+@piece( aifTextures )
 	vulkan_layout( ogre_t@value(aifTop) ) uniform utexture3D aifTopTex;
 	vulkan_layout( ogre_t@value(aifNodes) ) uniform utexture2D aifNodes;
 	vulkan_layout( ogre_t@value(aifCells) ) uniform utexture2D aifCells;

@@ -492,6 +492,9 @@ private:
     /// The motion blur pass material, and whether it blurs while the game runs.
     Ogre::MaterialPtr motionBlur_;
     bool motionBlurInPlay_ = true;
+    /// The ambient occlusion pass materials, and whether occlusion darkens the indirect light.
+    Ogre::MaterialPtr ssao_, ssaoBlur_;
+    bool ambientOcclusionEnabled_ = true;
     bool particleResourcesLoaded_ = false, particlePreview_ = true;
     int particleBlending_ = 1, appliedParticleBlending_ = -1;
     std::set<std::string> particleScripts_;
@@ -510,6 +513,7 @@ private:
     /// The HlmsPbs listener: motion vectors, then the global illumination's.
     HlmsListenerChain pbsListeners_;
     MotionVectors motionVectors_;
+    std::unique_ptr<AmbientOcclusion> ambientOcclusion_;
     /// The level's baked global illumination, and whether a bake runs.
     std::unique_ptr<GlobalIllumination> gi_;
     bool baking_ = false, revealing_ = false;

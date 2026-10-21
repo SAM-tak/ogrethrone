@@ -1,0 +1,78 @@
+// Screen-space ambient occlusion from the editor viewport's depth prepass (TDDja/09).
+fragment_program Throne/Ssao_ps_VK glslvk
+{
+	source Ssao_ps.glsl
+	default_params
+	{
+		param_named projection float4x4 1 0 0 0  0 1 0 0  0 0 1 0  0 0 0 1
+		param_named inverseProjection float4x4 1 0 0 0  0 1 0 0  0 0 1 0  0 0 0 1
+		param_named radius float 0.5
+		param_named strength float 0
+		param_named reverseDepth float 1
+	}
+}
+
+fragment_program Throne/SsaoBlur_ps_VK glslvk
+{
+	source SsaoBlur_ps.glsl
+	default_params
+	{
+		param_named depthParams float2 0 1
+	}
+}
+
+abstract material Throne/SsaoQuad
+{
+	technique
+	{
+		pass
+		{
+			depth_check off
+			depth_write off
+			cull_hardware none
+
+			vertex_program_ref Ogre/Compositor/Quad_vs
+			{
+			}
+
+			texture_unit
+			{
+				filtering none
+				tex_address_mode clamp
+			}
+			texture_unit
+			{
+				filtering none
+				tex_address_mode clamp
+			}
+		}
+	}
+}
+
+// The normals and the depth.
+material Throne/Ssao : Throne/SsaoQuad
+{
+	technique
+	{
+		pass
+		{
+			fragment_program_ref Throne/Ssao_ps_VK
+			{
+			}
+		}
+	}
+}
+
+// The occlusion and the depth.
+material Throne/SsaoBlur : Throne/SsaoQuad
+{
+	technique
+	{
+		pass
+		{
+			fragment_program_ref Throne/SsaoBlur_ps_VK
+			{
+			}
+		}
+	}
+}

@@ -1,8 +1,11 @@
 #include "editor/PbsExtensions.h"
 #include <CommandBuffer/OgreCbShaderBuffer.h>
+#include <CommandBuffer/OgreCbTexture.h>
 #include <CommandBuffer/OgreCommandBuffer.h>
 #include <OgreCamera.h>
 #include <OgreHlms.h>
+#include <OgreHlmsManager.h>
+#include <OgreHlmsPbsPrerequisites.h>
 #include <OgreRenderPassDescriptor.h>
 #include <OgreRenderQueue.h>
 #include <OgreRootLayout.h>
@@ -35,9 +38,20 @@ void HlmsListenerChain::propertiesMergedPreGenerationStep(Ogre::Hlms* hlms, cons
                                                           const Ogre::PiecesMap renderableCachePieces[Ogre::NumShaderTypes],
                                                           const Ogre::HlmsPropertyVec& properties,
                                                           const Ogre::QueuedRenderable& queuedRenderable, size_t tid) {
-    for (auto& entry : listeners_)
-        entry.listener->propertiesMergedPreGenerationStep(hlms, passCache, renderableCacheProperties, renderableCachePieces,
-                                                          properties, queuedRenderable, tid);
+    // The extra pass textures end HlmsPbs's first set of textures, in the listeners' order.
+    const bool casterPass = hlms->_getProperty(tid, Ogre::HlmsBaseProp::ShadowCaster) != 0;
+    std::vector<Ogre::uint16> counts;
+    int first = hlms->_getProperty(tid, Ogre::PbsProperty::Set0TextureSlotEnd);
+    for (const auto& entry : listeners_) {
+        counts.push_back(entry.listener->getNumExtraPassTextures(properties, casterPass));
+        first -= counts.back();
+    }
+    for (std::size_t i = 0; i < listeners_.size(); ++i) {
+        hlms->_setProperty(tid, firstTexture, first);
+        listeners_[i].listener->propertiesMergedPreGenerationStep(hlms, passCache, renderableCacheProperties,
+                                                                  renderableCachePieces, properties, queuedRenderable, tid);
+        first += counts[i];
+    }
 }
 
 void HlmsListenerChain::preparePassHash(const Ogre::CompositorShadowNode* shadowNode, bool casterPass, bool dualParaboloid,
@@ -99,6 +113,41 @@ float* MotionVectors::preparePassBuffer(const Ogre::CompositorShadowNode*, bool 
     for (std::size_t i = 0; i < 16; ++i) *out++ = float(previous[0][i]);
     previous = current;
     return out;
+}
+
+namespace {
+const Ogre::IdString ambientOcclusion{"custom_ssao"};
+}
+
+AmbientOcclusion::AmbientOcclusion(Ogre::HlmsManager& manager) : manager_(manager) {
+    Ogre::HlmsSamplerblock point;
+    point.mMinFilter = point.mMagFilter = Ogre::FO_POINT;
+    point.mMipFilter = Ogre::FO_NONE;
+    sampler_ = manager.getSamplerblock(point);
+}
+
+AmbientOcclusion::~AmbientOcclusion() { manager_.destroySamplerblock(sampler_); }
+
+Ogre::uint16 AmbientOcclusion::getNumExtraPassTextures(const Ogre::HlmsPropertyVec& properties, bool casterPass) const {
+    return !casterPass && Ogre::Hlms::getProperty(properties, ambientOcclusion) ? 1u : 0u;
+}
+
+void AmbientOcclusion::propertiesMergedPreGenerationStep(Ogre::Hlms* hlms, const Ogre::HlmsCache&, const Ogre::HlmsPropertyVec&,
+                                                         const Ogre::PiecesMap[Ogre::NumShaderTypes], const Ogre::HlmsPropertyVec&,
+                                                         const Ogre::QueuedRenderable&, size_t tid) {
+    if (hlms->_getProperty(tid, Ogre::HlmsBaseProp::ShadowCaster) || !hlms->_getProperty(tid, ambientOcclusion)) return;
+    hlms->_setTextureReg(tid, Ogre::PixelShader, "ssaoTexture", hlms->_getProperty(tid, HlmsListenerChain::firstTexture));
+}
+
+void AmbientOcclusion::preparePassHash(const Ogre::CompositorShadowNode*, bool casterPass, bool,
+                                       Ogre::SceneManager* sceneManager, Ogre::Hlms* hlms) {
+    active_ = !casterPass && texture && sceneManager->getCurrentPrePassMode() == Ogre::PrePassUse;
+    if (active_) hlms->_setProperty(Ogre::Hlms::kNoTid, ambientOcclusion, 1);
+}
+
+void AmbientOcclusion::hlmsTypeChanged(bool casterPass, Ogre::CommandBuffer* commands, const Ogre::HlmsDatablock*, size_t unit) {
+    if (!casterPass && active_)
+        *commands->addCommand<Ogre::CbTexture>() = Ogre::CbTexture(Ogre::uint16(unit), texture, sampler_);
 }
 
 namespace {

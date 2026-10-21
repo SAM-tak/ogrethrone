@@ -122,6 +122,8 @@ Vulkan の `--smoke-physics` は Forward Clustered が選択されているこ�
 
 ［補足］モーションブラー（View → Motion Blur (Play)、既定オン、Play 中のみ）。TAA のパスが 2 つ目の出力 Velocity（RG16F）に、各画素自身の動き（ジッタを除き、空はカメラの再投影）を書く。続くクアッドパス（media/postprocess/MotionBlur）が、その動き × シャッター 0.5（180°、最大 32 ピクセル）に沿って 12 標本を取る。McGuire ら（2012）の再構成フィルタからタイルの段を除いたもの: 標本が手前にあり自分の動きで届くなら、または奥にあり中心の動きが覆うなら数える。そのため動く物は背景にかぶさり、止まった手前の物は動く背景の上でぼけない。深度は投影の z 行 (A, B) で距離 B / (d + A) に直して比べる。標本の位置は画素ごとのノイズでずらし、段差を粒に変える。履歴（TaaHistory）にはブラー前の像を残す。エディターでの視点操作ではぼかさない。
 
+［補足］SSAO（View → Ambient Occlusion、既定オン）。プリパスの直後に、法線と深度から遮蔽を計算する（media/postprocess/Ssao）。法線を軸とする半径 0.5 m の半球に、中心寄りのフィボナッチ螺旋の 12 標本を置き、画素ごとのノイズで回す。深度バッファの面がその点より手前にあれば遮られたとし、半径より遠く離れた面は数えない。次に、深度の近さで重み付けした 5×5 で粒をならす（SsaoBlur）。本パス（use_prepass、キュー 10）では HlmsListener の AmbientOcclusion がこの R8 テクスチャを追加のパステクスチャとしてバインドし、フォークのテンプレートに足したフック custom_ps_posAmbient（間接光の合成直後）で、間接光の拡散と鏡面（envColourD・envColourS）に掛ける。直接光には掛けない。リスナーごとの追加テクスチャの開始スロットは HlmsListenerChain がプロパティ custom_first_texture で渡し、custom_ps_uniformDeclaration ピースは各リスナーの宣言（ssaoTextures、aifTextures）を挿入する。キュー 11 以降（空・パーティクル・吸収体）と半透明には掛からない。
+
 ［補足］トーンマップは sRGB 符号化した値を書き、以降の SMAA の中間・ビューポートテクスチャは RGBA8_UNORM（sRGB でない）。ウィンドウ（Vulkan スワップチェーン）は gamma 指定なしで UNORM なので、ImGui はビューポートの値をそのまま写す。以前はビューポートテクスチャが RGBA8_UNORM_SRGB で、ImGui のサンプリングで線形へ戻され、その値が UNORM のウィンドウに書かれていた（画面が本来より暗くガンマも違う）。--capture も Image2::getColourAt（sRGB を線形へ戻す）で同じ暗い値を書いていたため、画面とキャプチャは一致したまま誤っていた。キャプチャはバイトをそのまま書く。この修正で Bistro の露出を全て見直した（内装 −1.5 → −2.9 EV など）。
 
 ［補足］samples/bistro は ORCA の Amazon Lumberyard Bistro（CC BY 4.0）を 7 レベルで再現する。データ（Bistro_v5_2/）は Git 管理外。

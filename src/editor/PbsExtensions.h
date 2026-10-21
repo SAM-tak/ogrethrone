@@ -19,6 +19,9 @@ namespace throne {
 /// piece (media/pbs) declares their fields in that order too.
 class HlmsListenerChain final : public Ogre::HlmsListener {
 public:
+    /// Set to a listener's first extra pass texture slot while its propertiesMergedPreGenerationStep runs.
+    static inline const Ogre::IdString firstTexture{"custom_first_texture"};
+
     /// Appends @p listener, which must stay alive until removed.
     void add(Ogre::HlmsListener* listener);
     /// Removes @p listener.
@@ -64,6 +67,37 @@ public:
 private:
     /// Each camera's view-projection in its last prepass.
     std::map<const Ogre::Camera*, Ogre::Matrix4> previous_;
+};
+
+/// Screen-space ambient occlusion in the passes that use the depth prepass (TDDja/09): sets
+/// custom_ssao and binds @ref texture, the occlusion computed from the prepass, which the
+/// AmbientOcclusion piece multiplies the indirect light by.
+class AmbientOcclusion final : public Ogre::HlmsListener {
+public:
+    explicit AmbientOcclusion(Ogre::HlmsManager& manager);
+    ~AmbientOcclusion();
+    AmbientOcclusion(const AmbientOcclusion&) = delete;
+    AmbientOcclusion& operator=(const AmbientOcclusion&) = delete;
+
+    /// The occlusion of the current viewport targets; null while there are none.
+    Ogre::TextureGpu* texture = nullptr;
+
+    Ogre::uint16 getNumExtraPassTextures(const Ogre::HlmsPropertyVec& properties, bool casterPass) const override;
+    void propertiesMergedPreGenerationStep(Ogre::Hlms* hlms, const Ogre::HlmsCache& passCache,
+                                           const Ogre::HlmsPropertyVec& renderableCacheProperties,
+                                           const Ogre::PiecesMap renderableCachePieces[Ogre::NumShaderTypes],
+                                           const Ogre::HlmsPropertyVec& properties,
+                                           const Ogre::QueuedRenderable& queuedRenderable, size_t tid) override;
+    void preparePassHash(const Ogre::CompositorShadowNode* shadowNode, bool casterPass, bool dualParaboloid,
+                         Ogre::SceneManager* sceneManager, Ogre::Hlms* hlms) override;
+    void hlmsTypeChanged(bool casterPass, Ogre::CommandBuffer* commandBuffer, const Ogre::HlmsDatablock* datablock,
+                         size_t texUnit) override;
+
+private:
+    Ogre::HlmsManager& manager_;
+    const Ogre::HlmsSamplerblock* sampler_ = nullptr;
+    /// Whether the pass being drawn reads the occlusion.
+    bool active_ = false;
 };
 
 /// HlmsPbs with each object's world matrix of the previous frame, for the motion vectors: in

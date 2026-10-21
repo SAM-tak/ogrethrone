@@ -227,8 +227,8 @@ public:
                                            const Ogre::PiecesMap[Ogre::NumShaderTypes], const Ogre::HlmsPropertyVec&,
                                            const Ogre::QueuedRenderable&, size_t tid) override {
         if (hlms->_getProperty(tid, Ogre::HlmsBaseProp::ShadowCaster) || !hlms->_getProperty(tid, property)) return;
-        // The extra pass textures end PBS's first set of textures.
-        auto unit = hlms->_getProperty(tid, Ogre::PbsProperty::Set0TextureSlotEnd) - 4;
+        // HlmsListenerChain gives each listener its first extra pass texture slot.
+        auto unit = hlms->_getProperty(tid, HlmsListenerChain::firstTexture);
         for (const auto* name : diffuseTextureNames) hlms->_setTextureReg(tid, Ogre::PixelShader, name, unit++);
     }
     void preparePassHash(const Ogre::CompositorShadowNode*, bool casterPass, bool, Ogre::SceneManager*,

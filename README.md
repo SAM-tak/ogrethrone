@@ -643,7 +643,11 @@ objects leave no trails. It makes alpha-hashed transparency usable and steadies 
 geometry; orthographic views get none. **View → Motion Blur (Play)** (on by default)
 smears each pixel along its motion over a 180° shutter while the game runs (up to 32
 pixels): a moving object blurs over the background, while a static foreground stays
-sharp over a moving background. Navigating the editor view never blurs. The viewport then
+sharp over a moving background. Navigating the editor view never blurs.
+**View → Ambient Occlusion** (on by default) darkens the indirect light (ambient, global
+illumination and reflections, not direct light) where nearby surfaces, within half a
+metre, cover the hemisphere around a surface: screen-space ambient occlusion from the
+depth prepass, smoothed across a depth-aware 5×5 filter. The viewport then
 applies subtle HDR bloom before
 exposure/tone mapping, then OGRE's SMAA 1x High preset to smooth edges. Editor UI is
 composed afterwards. `--capture` waits 16 frames for the history to settle.
