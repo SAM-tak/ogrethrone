@@ -1846,6 +1846,12 @@ void Editor::syncTransforms(const LevelExpansion* snapshot) {
             render.material->setTransparency(surface.alpha==AlphaMode::Hash ? surface.opacity : 1.0f,
                                              Ogre::HlmsPbsDatablock::None, true, false);
         }
+        // Translucency is a custom piece named after its content, so equal ones share shaders.
+        if(surface.translucency!=previous.translucency) {
+            const auto piece=surface.translucency.enabled() ? translucencyPiece(surface.translucency) : std::string();
+            render.material->setCustomPieceCodeFromMemory(piece.empty() ? std::string() : "Throne/"+std::to_string(std::hash<std::string>{}(piece)),
+                                                          piece,Ogre::CustomPieceStage::PixelShader);
+        }
         render.surface=surface;
         if(node.light && !render.light) {
             if(!render.lightNode) {

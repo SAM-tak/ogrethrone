@@ -48,6 +48,32 @@ std::string absorptionPiece(const Vec3& absorption, float thickness) {
     return text;
 }
 
+} // namespace
+
+std::string translucencyPiece(const Translucency& t) {
+    // The rename comes before DeclareBRDF; the wrapper, under BRDF's own conditions, after it.
+    constexpr const char* format = R"(@piece( custom_ps_uniformStructDeclaration )
+#define BRDF throneSurfaceBRDF
+@end
+@piece( custom_ps_functions )
+@property( (hlms_normal || hlms_qtangent) && !hlms_prepass && needs_view_dir )
+#undef BRDF
+INLINE midf3 BRDF( midf3 lightDir, midf3 lightDiffuse, midf3 lightSpecular, PixelData pixelData PASSBUF_ARG_DECL )
+{
+	midf3 through = -( lightDir + pixelData.normal * midf_c( %f ) );
+	midf transmitted = pow( saturate( dot( pixelData.viewDir, through ) ), midf_c( %f ) ) * midf_c( %f );
+	return throneSurfaceBRDF( lightDir, lightDiffuse, lightSpecular, pixelData PASSBUF_ARG ) +
+		lightDiffuse * midf3_c( %f, %f, %f ) * transmitted;
+}
+@end
+@end
+)";
+    char text[1024];
+    std::snprintf(text, sizeof text, format, t.distortion, t.power, t.scale, t.colour.x, t.colour.y, t.colour.z);
+    return text;
+}
+
+namespace {
 /// One vertex as the file gives it, before tangents are derived.
 struct Corner {
     float position[3], normal[3], uv[2];
@@ -200,7 +226,10 @@ std::string ModelLibrary::key(const ModelComponent& component, const std::filesy
                (component.alphaHashing ? "#hash" : "");
     for (const auto& m : component.materials)
         key += "#" + m.name + "=" + std::to_string(m.absorption.x) + "," + std::to_string(m.absorption.y) + "," +
-               std::to_string(m.absorption.z) + "/" + std::to_string(m.thickness);
+               std::to_string(m.absorption.z) + "/" + std::to_string(m.thickness) + "/" + std::to_string(m.translucency.colour.x) +
+               "," + std::to_string(m.translucency.colour.y) + "," + std::to_string(m.translucency.colour.z) + "," +
+               std::to_string(m.translucency.distortion) + "," + std::to_string(m.translucency.power) + "," +
+               std::to_string(m.translucency.scale);
     return key;
 }
 
@@ -325,6 +354,8 @@ ModelLibrary::Parsed ModelLibrary::parse(const std::filesystem::path& file, cons
                              (change->absorption.x > 0 || change->absorption.y > 0 || change->absorption.z > 0);
         if (absorbs) material.pieces += absorptionPiece(change->absorption, change->thickness);
         if (!material.orm.empty()) material.pieces += ormPiece;
+        if (!material.blended && change != component.materials.end() && change->translucency.enabled())
+            material.pieces += translucencyPiece(change->translucency);
         material.renderQueue = absorbs ? 99 : material.blended ? 200 : 0;
         out.materials.push_back(std::move(material));
     }

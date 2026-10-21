@@ -56,18 +56,21 @@ int main(int argc,char** argv) {
         auto& layer=instance.overrides.node({id}); layer.light.emplace(); layer.light->width=7; layer.light->type=throne::LightType::AreaLtc;
         layer.material.emplace(); layer.material->metalness=.75f;
         layer.material->alpha=throne::AlphaMode::Hash; layer.material->opacity=.25f;
+        layer.material->translucency.colour={.5f,.8f,.2f}; layer.material->translucency.power=6;
         layer.particles.emplace(); layer.particles->definition="Particle/SpherePBS"; layer.particles->enabled=false;
         holder.save(temporary/"holder.lton");
         throne::Library library(temporary);
         const auto expanded=throne::expand(throne::Scene::load(temporary/"holder.lton"),library);
         require(expanded.errors.empty() && expanded.nodes.size()==1 && expanded.nodes[0].node.light->width==7 &&
             expanded.nodes[0].node.material->metalness==.75f && expanded.nodes[0].node.material->alpha==throne::AlphaMode::Hash &&
-            expanded.nodes[0].node.material->opacity==.25f && !expanded.nodes[0].node.particles->enabled &&
+            expanded.nodes[0].node.material->opacity==.25f && expanded.nodes[0].node.material->translucency.colour.y==.8f &&
+            expanded.nodes[0].node.material->translucency.power==6 && !expanded.nodes[0].node.particles->enabled &&
             expanded.nodes[0].node.particles->definition=="Particle/SpherePBS","Prefab light/material override lost");
         for(const char* invalid:{"light = {type = \"Unknown\"}","light = {direction = {0,0,0}}", "light = {innerAngle=60,outerAngle=30}",
             "particles = {definition = \"\"}","particles = {script = \"../escape.particle2\"}","particles = {enabled = 123}",
             "material = {roughness = -1}","material = {reflectionMap = \"../escape.dds\"}",
-            "material = {alpha = \"Blend\"}","material = {opacity = 2}","camera = {antiAliasing = \"FXAA\"}"}) {
+            "material = {alpha = \"Blend\"}","material = {opacity = 2}","material = {translucency = {colour = {-1,0,0}}}",
+            "material = {translucency = {power = 0}}","camera = {antiAliasing = \"FXAA\"}"}) {
             std::ofstream(temporary/"bad.lton")<<"format=\"ogrethrone-scene\",version=2,nodes={{id=1,name=\"Bad\",parent=0,components={"<<invalid<<"}}},";
             bool rejected=false; try { throne::Scene::load(temporary/"bad.lton"); } catch(const std::exception&) { rejected=true; }
             require(rejected,"Malformed light/material accepted");

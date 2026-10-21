@@ -22,6 +22,13 @@ class TextureGpu;
 }
 
 namespace throne {
+/// The HlmsPbs custom pixel-shader pieces that add @p translucency to every light the surface
+/// receives (directional, point, spot and Forward+): they rename OGRE's BRDF before it is
+/// declared and wrap it under its own name, so every light loop calls the wrapper. Shadows and
+/// attenuation still multiply the result, so a thick surface's own shadow hides it; thin ones
+/// (leaves, paper) lie within the shadow bias. Area lights do not use BRDF and add none.
+std::string translucencyPiece(const Translucency& translucency);
+
 /// Draws model files (FBX, read with ufbx) through OGRE for the Model component
 /// (TDDja/09 8). Each file is read once into shared meshes and PBS materials;
 /// placing it creates one Item per mesh instance under the given node.

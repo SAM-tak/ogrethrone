@@ -312,6 +312,12 @@ with the probability of the alpha times **Opacity**). Hashed surfaces still writ
 need no sorting and cast matching shadows; the hash changes every frame while temporal
 anti-aliasing is on, so TAA averages it into soft edges. Large see-through areas keep some
 grain, so hashing suits cut-outs better than glass.
+**Translucency** (a colour; black, the default, turns it off) adds the light passing through a
+thin surface from behind it, such as leaves, paper, cloth or wax: each directional, point and
+spot light adds its colour times **Scale** times how directly the viewer looks into the light,
+bent by the surface normal (**Distortion**) and focused by **Power**. Shadows still hide it, so
+a thick object's own shadow removes it; thin surfaces lie within the shadow bias. Area lights
+add none. A Model's material changes have the same settings for named opaque materials.
 The other engine stages (Box3DStep, Animation, the Sync barriers) are selectable too;
 their Inspectors currently show only the stage name, reserving the same place for
 future settings.

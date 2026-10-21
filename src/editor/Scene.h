@@ -97,7 +97,6 @@ struct PlanePrimitive {
     std::array<float, 3> colour{0.35f, 0.45f, 0.35f};
     float width = 10, depth = 10;
 };
-/// Authored PBS surface settings; primitive colour supplies the diffuse/base colour.
 /// How a surface uses its alpha (the diffuse map's alpha, times opacity for hashing).
 enum class AlphaMode {
     /// Alpha is ignored.
@@ -110,6 +109,28 @@ enum class AlphaMode {
     Hash,
 };
 
+/// Light passing through a thin surface from behind (leaves, paper, cloth, wax), added to each
+/// light's contribution as Barre-Brisebois and Bouchard's (Frostbite, GDC 2011) approximation:
+/// colour * scale * saturate(dot(V, -(L + N * distortion)))^power.
+struct Translucency {
+    /// The transmitted light's tint; black (the default) turns translucency off.
+    Vec3 colour;
+    /// How far the surface normal bends the light passing through ([0, 1]).
+    float distortion = .2f;
+    /// How tightly the light is focused around the direction away from it.
+    float power = 4;
+    float scale = 1;
+    /// Whether it adds any light.
+    bool enabled() const { return colour.x > 0 || colour.y > 0 || colour.z > 0; }
+    /// Equality of every field.
+    bool operator==(const Translucency& other) const {
+        return colour == other.colour && distortion == other.distortion && power == other.power && scale == other.scale;
+    }
+    /// Negation of equality.
+    bool operator!=(const Translucency& other) const { return !(*this == other); }
+};
+
+/// Authored PBS surface settings; primitive colour supplies the diffuse/base colour.
 struct PbsMaterial {
     float roughness = 0.65f;
     std::array<float,3> fresnel{0.04f,0.04f,0.04f};
@@ -124,6 +145,7 @@ struct PbsMaterial {
     float alphaThreshold = 0.5f;
     /// The alpha of the whole surface, for Hash (multiplied by the diffuse map's).
     float opacity = 1;
+    Translucency translucency;
 };
 /// Supported OGRE light models. Rectangular lights use regular Forward.
 enum class LightType { Directional, Point, Spot, AreaApprox, AreaLtc };
@@ -156,9 +178,12 @@ struct ModelMaterial {
     Vec3 absorption;
     /// Distance through the volume, in metres, along the surface normal.
     float thickness = .05f;
+    /// Light the material passes through from behind (foliage).
+    Translucency translucency;
     /// Equality, to tell when the drawn model must be rebuilt.
     bool operator==(const ModelMaterial& other) const {
-        return name == other.name && absorption == other.absorption && thickness == other.thickness;
+        return name == other.name && absorption == other.absorption && thickness == other.thickness &&
+               translucency == other.translucency;
     }
 };
 

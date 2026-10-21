@@ -680,6 +680,19 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         char text[256]; fill(text,path); bool edited=ImGui::InputText(label,text,sizeof text); track();
         if(edited) path=text; return edited;
     };
+    // Light passing through thin surfaces from behind; black turns it off.
+    const auto translucency=[&](Translucency& t) {
+        bool edited=ImGui::ColorEdit3("Translucency",t.colour.data(),ImGuiColorEditFlags_HDR|ImGuiColorEditFlags_Float); track();
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Light passing through the surface from behind it (leaves, paper, cloth,\n"
+                                                     "wax), in this colour; black turns it off. Shadows still hide it, so it\n"
+                                                     "suits thin surfaces.");
+        if(t.enabled()) {
+            edited|=scalar("Translucency Distortion",t.distortion,0,1);
+            edited|=scalar("Translucency Power",t.power,.1f,256);
+            edited|=scalar("Translucency Scale",t.scale,0,100);
+        }
+        return edited;
+    };
     component("Model",value.model,&SceneNode::model,&NodeOverride::model,[&](auto& c) {
         bool edited=texturePath("File",c.path);
         edited|=ImGui::Checkbox("DirectX normal maps",&c.directXNormals); track();
@@ -697,6 +710,7 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
             edited|=texturePath("Material",m.name);
             edited|=vector("Absorption (1/m)",m.absorption);
             edited|=scalar("Thickness (m)",m.thickness,.0001f,100);
+            edited|=translucency(m.translucency);
             const bool removed=ImGui::SmallButton("Remove Material Change");
             ImGui::PopID();
             if(removed) { c.materials.erase(c.materials.begin()+std::ptrdiff_t(i)); edited=true; }
@@ -731,6 +745,7 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
             edited|=scalar("Opacity",c.opacity,0,1);
             ImGui::TextDisabled("Each pixel is kept with the probability of its alpha;\ntemporal anti-aliasing averages it.");
         }
+        edited|=translucency(c.translucency);
         return edited;
     });
     component("Camera",value.camera,&SceneNode::camera,&NodeOverride::camera,[&](auto& c) {

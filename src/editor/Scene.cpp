@@ -127,6 +127,17 @@ void readCollider(const LhatTable& table, Collider& value) {
     value.restitution = scalar(table, "restitution", value.restitution, 0, 1);
     value.sensor = flag(table, "sensor", value.sensor);
 }
+/// Reads a material's optional translucency table.
+void readTranslucency(const LhatTable& material, Translucency& value) {
+    const auto field = lton::field(material, "translucency");
+    if (lhat_is_nil(field)) return;
+    const auto& table = lton::table(field);
+    if (const auto v = lton::field(table, "colour"); !lhat_is_nil(v)) lton::vector(v, value.colour.data());
+    for (const float c : {value.colour.x, value.colour.y, value.colour.z}) if (!(c >= 0 && c <= 100)) lton::invalid();
+    value.distortion = scalar(table, "distortion", value.distortion, 0, 1);
+    value.power = scalar(table, "power", value.power, .1f, 256);
+    value.scale = scalar(table, "scale", value.scale, 0, 100);
+}
 /// Reads the added built-in components, for nodes and their property overrides.
 template <typename Node>
 void readExtraComponents(const LhatTable& table, Node& node) {
@@ -173,6 +184,7 @@ void readExtraComponents(const LhatTable& table, Node& node) {
                 if(const auto v=lton::field(item,"absorption"); !lhat_is_nil(v)) lton::vector(v,m.absorption.data());
                 m.thickness=scalar(item,"thickness",m.thickness,0.0001f,100);
                 for(const float a:{m.absorption.x,m.absorption.y,m.absorption.z}) if(!(a>=0)) lton::invalid();
+                readTranslucency(item,m.translucency);
                 c.materials.push_back(m);
             }
         }
@@ -190,6 +202,7 @@ void readExtraComponents(const LhatTable& table, Node& node) {
         }
         c.alphaThreshold = scalar(t,"alphaThreshold",c.alphaThreshold,0,1);
         c.opacity = scalar(t,"opacity",c.opacity,0,1);
+        readTranslucency(t,c.translucency);
         for (const auto& entry : {std::pair{"fresnel",&c.fresnel},std::pair{"emissive",&c.emissive}}) {
             if (const auto v=lton::field(t,entry.first); !lhat_is_nil(v)) lton::vector(v,entry.second->data());
             for (float v:*entry.second) if (v<0 || v>(std::string_view(entry.first)=="fresnel"?1.0f:1.0e6f)) lton::invalid();
@@ -271,6 +284,16 @@ void writeCollider(lton::Writer& out, LhatValue table, const Collider& c) {
     out.set(table, "restitution", lhat_real(c.restitution));
     out.set(table, "sensor", lhat_bool(c.sensor));
 }
+/// Writes a material's translucency, when it has any.
+void writeTranslucency(lton::Writer& out, LhatValue material, const Translucency& c) {
+    if (!c.enabled()) return;
+    const auto table = out.table();
+    out.set(table, "colour", out.vector(c.colour.data()));
+    out.set(table, "distortion", lhat_real(c.distortion));
+    out.set(table, "power", lhat_real(c.power));
+    out.set(table, "scale", lhat_real(c.scale));
+    out.set(material, "translucency", table);
+}
 /// Writes the added built-in components, shared with prefab overrides.
 template <typename Node>
 void writeExtraComponents(lton::Writer& out, LhatValue table, const Node& node) {
@@ -301,6 +324,7 @@ void writeExtraComponents(lton::Writer& out, LhatValue table, const Node& node) 
                 out.set(item,"name",out.string(m.name));
                 out.set(item,"absorption",out.vector(m.absorption.data()));
                 out.set(item,"thickness",lhat_real(m.thickness));
+                writeTranslucency(out,item,m.translucency);
                 out.push(list,item);
             }
             out.set(t,"materials",list);
@@ -315,6 +339,7 @@ void writeExtraComponents(lton::Writer& out, LhatValue table, const Node& node) 
             out.set(t,"alpha",out.string(modes[static_cast<int>(c.alpha)]));
             out.set(t,"alphaThreshold",lhat_real(c.alphaThreshold)); out.set(t,"opacity",lhat_real(c.opacity));
         }
+        writeTranslucency(out,t,c.translucency);
         for(const auto& entry:{std::pair{"diffuseMap",&c.diffuseMap},std::pair{"normalMap",&c.normalMap},
             std::pair{"roughnessMap",&c.roughnessMap},std::pair{"specularMap",&c.specularMap},std::pair{"reflectionMap",&c.reflectionMap}})
             if(!entry.second->empty()) out.set(t,entry.first,out.string(*entry.second));
