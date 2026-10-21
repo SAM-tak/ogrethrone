@@ -98,6 +98,18 @@ struct PlanePrimitive {
     float width = 10, depth = 10;
 };
 /// Authored PBS surface settings; primitive colour supplies the diffuse/base colour.
+/// How a surface uses its alpha (the diffuse map's alpha, times opacity for hashing).
+enum class AlphaMode {
+    /// Alpha is ignored.
+    Opaque,
+    /// Cut out where alpha is below a threshold (foliage, fences): hard edges.
+    Test,
+    /// Each pixel kept with the probability of its alpha, so temporal anti-aliasing averages
+    /// it into soft edges or see-through surfaces that still write depth, sort themselves and
+    /// cast matching shadows.
+    Hash,
+};
+
 struct PbsMaterial {
     float roughness = 0.65f;
     std::array<float,3> fresnel{0.04f,0.04f,0.04f};
@@ -107,6 +119,11 @@ struct PbsMaterial {
     /// Project-relative textures; @ogre/ refers to the pinned OGRE sample media.
     std::string diffuseMap, normalMap, roughnessMap, specularMap, reflectionMap;
     float uvScale = 1;
+    AlphaMode alpha = AlphaMode::Opaque;
+    /// The alpha below which Test cuts the surface out.
+    float alphaThreshold = 0.5f;
+    /// The alpha of the whole surface, for Hash (multiplied by the diffuse map's).
+    float opacity = 1;
 };
 /// Supported OGRE light models. Rectangular lights use regular Forward.
 enum class LightType { Directional, Point, Spot, AreaApprox, AreaLtc };
@@ -155,12 +172,15 @@ struct ModelComponent {
     /// Radiance of its emissive maps' full value. Files carry no strength (lamps are 1),
     /// which is dim beside a sun.
     float emission = 1;
+    /// Whether cut-out materials (diffuse maps with alpha) are alpha-hashed instead of
+    /// alpha-tested: soft edges once temporal anti-aliasing averages them.
+    bool alphaHashing = false;
     /// Changes to the file's materials, by material name.
     std::vector<ModelMaterial> materials;
     /// Equality, to tell when the drawn model must be rebuilt.
     bool operator==(const ModelComponent& other) const {
         return path == other.path && directXNormals == other.directXNormals && emission == other.emission &&
-               materials == other.materials;
+               alphaHashing == other.alphaHashing && materials == other.materials;
     }
     /// Negation of equality.
     bool operator!=(const ModelComponent& other) const { return !(*this == other); }

@@ -51,6 +51,22 @@ private:
     mutable std::vector<Entry> listeners_;
 };
 
+/// Hands every pass that is not a shadow caster this frame's noise offset (custom_frame_noise),
+/// which turns the alpha-hash threshold so that temporal anti-aliasing averages hashed surfaces
+/// (media/pbs/AlphaHash).
+class FrameNoise final : public Ogre::HlmsListener {
+public:
+    /// In [0, 1); the editor moves it on every frame while temporal anti-aliasing is on.
+    float value = 0;
+
+    void preparePassHash(const Ogre::CompositorShadowNode* shadowNode, bool casterPass, bool dualParaboloid,
+                         Ogre::SceneManager* sceneManager, Ogre::Hlms* hlms) override;
+    Ogre::uint32 getPassBufferSize(const Ogre::CompositorShadowNode* shadowNode, bool casterPass, bool dualParaboloid,
+                                   Ogre::SceneManager* sceneManager) const override;
+    float* preparePassBuffer(const Ogre::CompositorShadowNode* shadowNode, bool casterPass, bool dualParaboloid,
+                             Ogre::SceneManager* sceneManager, float* passBufferPtr) override;
+};
+
 /// Writes screen-space motion vectors from the depth prepass (TDDja/09): sets custom_motion_vectors
 /// and hands the vertex shader the camera's view-projection of the previous frame, so the
 /// prepass's third target holds, per pixel, the change in UV since then. ThronePbs adds each

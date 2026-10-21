@@ -82,6 +82,30 @@ void HlmsListenerChain::hlmsTypeChanged(bool casterPass, Ogre::CommandBuffer* co
 }
 
 namespace {
+const Ogre::IdString frameNoise{"custom_frame_noise"};
+}
+
+void FrameNoise::preparePassHash(const Ogre::CompositorShadowNode*, bool casterPass, bool, Ogre::SceneManager*,
+                                 Ogre::Hlms* hlms) {
+    if (!casterPass) hlms->_setProperty(Ogre::Hlms::kNoTid, frameNoise, 1);
+}
+
+Ogre::uint32 FrameNoise::getPassBufferSize(const Ogre::CompositorShadowNode*, bool casterPass, bool,
+                                           Ogre::SceneManager*) const {
+    return casterPass ? 0u : 4u * 4u;
+}
+
+float* FrameNoise::preparePassBuffer(const Ogre::CompositorShadowNode*, bool casterPass, bool, Ogre::SceneManager*,
+                                     float* out) {
+    if (casterPass) return out;
+    *out++ = value;
+    *out++ = 0;
+    *out++ = 0;
+    *out++ = 0;
+    return out;
+}
+
+namespace {
 const Ogre::IdString motionVectors{"custom_motion_vectors"};
 
 /// Whether this pass writes the G-buffer, where the motion vectors are.

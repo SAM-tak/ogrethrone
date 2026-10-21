@@ -684,6 +684,10 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         bool edited=texturePath("File",c.path);
         edited|=ImGui::Checkbox("DirectX normal maps",&c.directXNormals); track();
         edited|=ImGui::DragFloat("Emission",&c.emission,.1f,0,100000); track();
+        edited|=ImGui::Checkbox("Alpha-Hashed Cut-Outs",&c.alphaHashing); track();
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Cut-out materials (diffuse maps with alpha) keep each pixel with the\n"
+                                                     "probability of its alpha instead of testing it against 0.5: soft edges\n"
+                                                     "once temporal anti-aliasing averages them.");
         ImGui::TextDisabled("A project-relative FBX file: its meshes and PBS materials.");
         // Changes to named materials of the file: absorbing volumes such as liquids.
         for(std::size_t i=0;i<c.materials.size();) {
@@ -718,7 +722,16 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         edited|=scalar("UV Scale",c.uvScale,.001f,10000);
         edited|=texturePath("Diffuse Map",c.diffuseMap); edited|=texturePath("Normal Map",c.normalMap);
         edited|=texturePath("Roughness Map",c.roughnessMap); edited|=texturePath("Specular Map",c.specularMap);
-        edited|=texturePath("Reflection Cubemap",c.reflectionMap); return edited;
+        edited|=texturePath("Reflection Cubemap",c.reflectionMap);
+        int alpha=static_cast<int>(c.alpha);
+        if(ImGui::Combo("Alpha",&alpha,"Opaque\0Alpha Test\0Alpha Hash\0")) { c.alpha=static_cast<AlphaMode>(alpha); edited=true; }
+        track();
+        if(c.alpha==AlphaMode::Test) edited|=scalar("Alpha Threshold",c.alphaThreshold,0,1);
+        if(c.alpha==AlphaMode::Hash) {
+            edited|=scalar("Opacity",c.opacity,0,1);
+            ImGui::TextDisabled("Each pixel is kept with the probability of its alpha;\ntemporal anti-aliasing averages it.");
+        }
+        return edited;
     });
     component("Camera",value.camera,&SceneNode::camera,&NodeOverride::camera,[&](auto& c) {
         bool edited=scalar("Field of View (deg)",c.fieldOfView,1,170);

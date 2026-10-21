@@ -301,6 +301,13 @@ and never overrides editor Play's checkbox. Standalone game execution is not yet
 implemented; this setting records its presentation preference. A level's rendering
 (Forward Clustered and its depth range, Show Clusters) is in the level's Inspector,
 and the environment and global illumination are in each scene's (below).
+
+A **PBS Material** component chooses how its surface uses alpha (the diffuse map's alpha):
+**Opaque**, **Alpha Test** (cut out below a threshold) or **Alpha Hash** (each pixel kept
+with the probability of the alpha times **Opacity**). Hashed surfaces still write depth,
+need no sorting and cast matching shadows; the hash changes every frame while temporal
+anti-aliasing is on, so TAA averages it into soft edges. Large see-through areas keep some
+grain, so hashing suits cut-outs better than glass.
 The other engine stages (Box3DStep, Animation, the Sync barriers) are selectable too;
 their Inspectors currently show only the stage name, reserving the same place for
 future settings.
@@ -542,7 +549,8 @@ A **Model** component draws a project-relative FBX file, read with the pinned
 [ufbx](https://github.com/ufbx/ufbx) (`third_party/ufbx`) and converted to metres,
 +Y up and right-handed. Each file is read once; its meshes and PBS materials are
 shared by every node placing it. Materials use the metal-rough workflow: a base
-colour map (alpha is opacity and enables alpha testing for DXT5 maps), a normal map
+colour map (alpha is opacity and enables alpha testing for DXT5 maps, or alpha hashing
+with **Alpha-Hashed Cut-Outs**: soft edges on foliage once TAA averages them), a normal map
 (**DirectX normal maps** selects the green direction), an ORM map packed as glTF
 does (occlusion, roughness, metalness in R, G, B) and an emissive map, all repeating
 across their UVs with anisotropic filtering. FBX files carry no emissive strength;

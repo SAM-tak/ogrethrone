@@ -196,7 +196,8 @@ ModelLibrary::~ModelLibrary() {
 }
 
 std::string ModelLibrary::key(const ModelComponent& component, const std::filesystem::path& file) {
-    auto key = file.generic_u8string() + (component.directXNormals ? "#dx" : "#gl") + "#" + std::to_string(component.emission);
+    auto key = file.generic_u8string() + (component.directXNormals ? "#dx" : "#gl") + "#" + std::to_string(component.emission) +
+               (component.alphaHashing ? "#hash" : "");
     for (const auto& m : component.materials)
         key += "#" + m.name + "=" + std::to_string(m.absorption.x) + "," + std::to_string(m.absorption.y) + "," +
                std::to_string(m.absorption.z) + "/" + std::to_string(m.thickness);
@@ -308,6 +309,7 @@ ModelLibrary::Parsed ModelLibrary::parse(const std::filesystem::path& file, cons
         material.opacity = 1.0f - float(source->fbx.transparency_factor.value_real * (clear.x + clear.y + clear.z) / 3);
         material.blended = material.opacity < .99f;
         material.alphaTested = !material.blended && !material.diffuse.empty() && ddsHasAlpha(material.diffuse);
+        material.alphaHashed = material.alphaTested && component.alphaHashing;
         material.colour = vec(source->fbx.diffuse_color.value_vec3);
         material.normal = texture(source->fbx.normal_map.texture);
         // Glass and liquids are smooth dielectrics; their files' ORM maps make them look frosted.
@@ -506,7 +508,11 @@ void ModelLibrary::add(const std::string& key, const Parsed& parsed) {
         else if (auto* base = texture(source.diffuse, Ogre::CommonTextureTypes::Diffuse))
             material->setTexture(Ogre::PBSM_DIFFUSE, base, &tiled);
         else material->setDiffuse(Ogre::Vector3(source.colour.x, source.colour.y, source.colour.z));
-        if (source.alphaTested) {
+        if (source.alphaHashed) {
+            // Kept with the probability of the diffuse alpha; temporal anti-aliasing softens it.
+            material->setAlphaHashing(true);
+            material->setTransparency(1, Ogre::HlmsPbsDatablock::None, true, false);
+        } else if (source.alphaTested) {
             material->setAlphaTest(Ogre::CMPF_GREATER_EQUAL);
             material->setAlphaTestThreshold(0.5f);
         }

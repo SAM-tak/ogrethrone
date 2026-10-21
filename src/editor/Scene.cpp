@@ -155,6 +155,7 @@ void readExtraComponents(const LhatTable& table, Node& node) {
         if(const auto v=lton::field(t,"path"); !lhat_is_nil(v)) c.path=lton::relativePath(v);
         c.directXNormals=flag(t,"directXNormals",c.directXNormals);
         c.emission=scalar(t,"emission",c.emission,0,100000);
+        c.alphaHashing=flag(t,"alphaHashing",c.alphaHashing);
         c.materials.clear();
         if(const auto list=lton::field(t,"materials"); !lhat_is_nil(list)) {
             const auto& items=lton::table(list);
@@ -173,6 +174,15 @@ void readExtraComponents(const LhatTable& table, Node& node) {
         c.roughness = scalar(t,"roughness",c.roughness,0.02f,1);
         c.metalness = scalar(t,"metalness",c.metalness,-1,1);
         c.uvScale = scalar(t,"uvScale",c.uvScale,0.001f,10000);
+        if (const auto v=lton::field(t,"alpha"); !lhat_is_nil(v)) {
+            const auto mode=lton::string(v);
+            if(mode=="Opaque") c.alpha=AlphaMode::Opaque;
+            else if(mode=="Test") c.alpha=AlphaMode::Test;
+            else if(mode=="Hash") c.alpha=AlphaMode::Hash;
+            else lton::invalid();
+        }
+        c.alphaThreshold = scalar(t,"alphaThreshold",c.alphaThreshold,0,1);
+        c.opacity = scalar(t,"opacity",c.opacity,0,1);
         for (const auto& entry : {std::pair{"fresnel",&c.fresnel},std::pair{"emissive",&c.emissive}}) {
             if (const auto v=lton::field(t,entry.first); !lhat_is_nil(v)) lton::vector(v,entry.second->data());
             for (float v:*entry.second) if (v<0 || v>(std::string_view(entry.first)=="fresnel"?1.0f:1.0e6f)) lton::invalid();
@@ -274,6 +284,7 @@ void writeExtraComponents(lton::Writer& out, LhatValue table, const Node& node) 
     write("model", node.model, [&](auto t,const auto& c) {
         out.set(t,"path",out.string(c.path)); out.set(t,"directXNormals",lhat_bool(c.directXNormals));
         out.set(t,"emission",lhat_real(c.emission));
+        if(c.alphaHashing) out.set(t,"alphaHashing",lhat_bool(true));
         if(!c.materials.empty()) {
             const auto list=out.table();
             for(const auto& m:c.materials) {
@@ -290,6 +301,11 @@ void writeExtraComponents(lton::Writer& out, LhatValue table, const Node& node) 
         out.set(t,"roughness",lhat_real(c.roughness)); out.set(t,"metalness",lhat_real(c.metalness));
         out.set(t,"fresnel",out.vector(c.fresnel.data())); out.set(t,"emissive",out.vector(c.emissive.data()));
         out.set(t,"uvScale",lhat_real(c.uvScale));
+        if(c.alpha!=AlphaMode::Opaque) {
+            const char* modes[]={"Opaque","Test","Hash"};
+            out.set(t,"alpha",out.string(modes[static_cast<int>(c.alpha)]));
+            out.set(t,"alphaThreshold",lhat_real(c.alphaThreshold)); out.set(t,"opacity",lhat_real(c.opacity));
+        }
         for(const auto& entry:{std::pair{"diffuseMap",&c.diffuseMap},std::pair{"normalMap",&c.normalMap},
             std::pair{"roughnessMap",&c.roughnessMap},std::pair{"specularMap",&c.specularMap},std::pair{"reflectionMap",&c.reflectionMap}})
             if(!entry.second->empty()) out.set(t,entry.first,out.string(*entry.second));

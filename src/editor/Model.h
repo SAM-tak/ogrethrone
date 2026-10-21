@@ -60,6 +60,8 @@ public:
             float emission = 1;
             float opacity = 1;
             bool alphaTested = false, blended = false;
+            /// A cut-out that is alpha-hashed instead of alpha-tested (ModelComponent::alphaHashing).
+            bool alphaHashed = false;
             /// The custom pixel-shader pieces (ORM channels, absorption) it needs.
             std::string pieces;
             /// The render queue its items draw in (see Part::renderQueue); 99 when it absorbs.

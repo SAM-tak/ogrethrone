@@ -412,6 +412,7 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
     sky_->setSky(&scene_, true);
     drawSkyAfterOpaque();
     models_ = std::make_unique<ModelLibrary>(root, scene, pbs_, [this](const std::string& line) { log(line); });
+    pbsListeners_.add(&frameNoise_);
     pbsListeners_.add(&motionVectors_);
     ambientOcclusion_ = std::make_unique<AmbientOcclusion>(*root.getHlmsManager());
     pbsListeners_.add(ambientOcclusion_.get());
@@ -1128,10 +1129,12 @@ void Editor::jitterCamera() {
     ssr->setNamedConstant("strength", reflectionsEnabled_ && historyReady_ ? 1.0f : 0.0f);
     ssr->setNamedConstant("reverseDepth", root_.getRenderSystem()->isReverseDepth() ? 1.0f : 0.0f);
     historyReady_ = true;
-    // With temporal anti-aliasing, the per-pixel noise of the screen-space passes moves on every
+    // With temporal anti-aliasing, the per-pixel noise of the screen-space passes (and the
+    // alpha-hash threshold, through FrameNoise) moves on every
     // frame (an additive recurrence of the golden ratio), so that it averages away; without, it
     // stays put rather than flicker.
     if (on) taaNoise_ = std::fmod(taaNoise_ + 0.618034f, 1.0f);
+    frameNoise_.value = taaNoise_;
     for (auto* material : {&ssao_, &ssr_, &depthOfField_})
         (*material)->getTechnique(0)->getPass(0)->getFragmentProgramParameters()->setNamedConstant("frameNoise", taaNoise_);
     // A thin lens on a 35 mm full-frame sensor (24 mm high) of this field of view: the circle
@@ -1818,6 +1821,15 @@ void Editor::syncTransforms(const LevelExpansion* snapshot) {
         auto* reflection=surface.reflectionMap.empty() ? environmentReflection()
             : projectTexture(surface.reflectionMap,Ogre::CommonTextureTypes::EnvMap);
         if(render.material->getTexture(Ogre::PBSM_REFLECTION)!=reflection) render.material->setTexture(Ogre::PBSM_REFLECTION,reflection);
+        // Changing these rebuilds the shaders, so only when they change. Hash's opacity is the
+        // material's transparency without blending (HlmsPbs multiplies the diffuse alpha by it).
+        if(surface.alpha!=previous.alpha || surface.alphaThreshold!=previous.alphaThreshold || surface.opacity!=previous.opacity) {
+            render.material->setAlphaTest(surface.alpha==AlphaMode::Test ? Ogre::CMPF_GREATER_EQUAL : Ogre::CMPF_ALWAYS_PASS);
+            render.material->setAlphaTestThreshold(surface.alphaThreshold);
+            render.material->setAlphaHashing(surface.alpha==AlphaMode::Hash);
+            render.material->setTransparency(surface.alpha==AlphaMode::Hash ? surface.opacity : 1.0f,
+                                             Ogre::HlmsPbsDatablock::None, true, false);
+        }
         render.surface=surface;
         if(node.light && !render.light) {
             if(!render.lightNode) {

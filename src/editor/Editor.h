@@ -521,8 +521,10 @@ private:
     const Environment* environment_ = nullptr;
     /// The viewport's exposure and tone-mapping pass material.
     Ogre::MaterialPtr tonemap_;
-    /// The HlmsPbs listener: motion vectors, then the global illumination's.
+    /// The HlmsPbs listener: the frame's noise, motion vectors, ambient occlusion, then the
+    /// global illumination's.
     HlmsListenerChain pbsListeners_;
+    FrameNoise frameNoise_;
     MotionVectors motionVectors_;
     std::unique_ptr<AmbientOcclusion> ambientOcclusion_;
     /// The level's baked global illumination, and whether a bake runs.
