@@ -74,7 +74,8 @@ paths starting with `@ogre/` refer to the pinned OGRE sample media. [`samples/ba
 launch configurations open it or show the launcher.
 
 [`samples/showcase`](samples/showcase) ports the OGRE Forward3D, PBS Materials,
-Area Lights and ParticleFX2 scenes to editable Throne levels. Open the project and
+Area Lights and ParticleFX2 scenes to editable Throne levels, and adds one comparing
+subsurface scattering and translucency. Open the project and
 choose a level
 in **Browser > Levels**. **Lighting** switches Forward3D/Clustered, cluster debug
 and Approx/LTC area-light previews. Light and PBS Material components are editable

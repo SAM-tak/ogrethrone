@@ -48,6 +48,18 @@ int main(int argc,char** argv) {
             require(reopened.rendering.maxDistance==level.rendering.maxDistance && reopened.scenes.size()==level.scenes.size(),
                 "Level rendering settings lost on save");
         }
+        {
+            // The subsurface level compares scattering widths and translucent surfaces.
+            const auto level=throne::Level::load(project.resolve("levels/subsurface.level.lton"));
+            require(level.scenes.size()==2,"Subsurface showcase scenes missing");
+            const auto scene=throne::Scene::load(project.resolve(level.scenes[0].scene));
+            unsigned scattering=0,translucent=0;
+            for(const auto& node:scene.nodes) if(node.material) {
+                scattering+=node.material->subsurfaceWidth>0;
+                translucent+=node.material->translucency.enabled();
+            }
+            require(scattering==4 && translucent==4,"Subsurface showcase materials missing");
+        }
         throne::Prefab prefab;
         auto& root=prefab.addNode("Emitter"); root.light.emplace(); root.material.emplace(); root.particles.emplace(); const auto id=root.id;
         prefab.save(temporary/"light.prefab.lton");

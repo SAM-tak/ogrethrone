@@ -2,6 +2,8 @@
 
 Four editable Throne levels port the scene layouts and lighting from the pinned
 OGRE-Next `Forward3D`, `PbsMaterials`, `AreaApproxLights` and `ParticleFX2` samples.
+A fifth, `subsurface.level.lton`, shows the engine's subsurface scattering and
+translucency.
 
 Open this folder from the project launcher, or run from the repository root:
 
@@ -25,6 +27,12 @@ The project opens **Area Lights**. Click a file in **Browser > Levels** to switc
   rotating Unlit smoke and PBS sphere particles. A marble platform and marker
   reproduce the original ten-second motion. The level's View camera frames the
   larger particle layout; fly closer to inspect individual effects.
+- `subsurface.level.lton`: four skin-coloured spheres lit from the side, with a
+  Subsurface Width of none, 2, 6 and 12 cm (left to right), so the shadow edge softens
+  and reddens; a wax candle (scattering and translucency); a paper lantern glowing from
+  the point light inside it; and three leaves with a light behind them, the right one
+  without translucency for comparison. **View → Subsurface Scattering** toggles the
+  blur. The scattering blurs on screen, so fly closer to see it at its scale.
 
 F5 starts/stops the rotation and particle-platform behaviours. Pause suspends or
 resumes Play. These editor shortcuts replace the standalone samples' function-key controls.
