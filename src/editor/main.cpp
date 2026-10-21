@@ -40,6 +40,7 @@
 #ifdef THRONE_NAVIGATION_SMOKE
 #include "navigation_smoke.h"
 #include "showcase_smoke.h"
+namespace throne { void audioEditorSmoke(Editor&); }
 #endif
 
 namespace {
@@ -79,14 +80,15 @@ int main(int argc, char** argv) {
     }
     const bool physicsSmoke = argc > 1 && std::strcmp(argv[1], "--smoke-physics") == 0;
     const bool profilePhysics = argc > 1 && std::strcmp(argv[1], "--profile-physics") == 0;
-    bool navigationSmoke = false, showcaseSmoke = false, closeSmoke = false, launcherSmoke=false;
+    bool navigationSmoke = false, showcaseSmoke = false, closeSmoke = false, launcherSmoke=false, audioSmoke=false;
 #ifdef THRONE_NAVIGATION_SMOKE
+    audioSmoke=argc>1 && std::strcmp(argv[1],"--smoke-audio")==0;
     showcaseSmoke = argc > 1 && std::strcmp(argv[1], "--smoke-showcases") == 0;
     closeSmoke = argc > 1 && std::strcmp(argv[1], "--smoke-close") == 0;
     navigationSmoke = closeSmoke || (argc > 1 && std::strcmp(argv[1], "--smoke-navigation") == 0);
     launcherSmoke=argc>1 && std::strcmp(argv[1],"--smoke-launcher")==0;
 #endif
-    const bool smoke = launcherSmoke || showcaseSmoke || physicsSmoke || profilePhysics || navigationSmoke || (argc > 1 && std::strcmp(argv[1], "--smoke") == 0);
+    const bool smoke = audioSmoke || launcherSmoke || showcaseSmoke || physicsSmoke || profilePhysics || navigationSmoke || (argc > 1 && std::strcmp(argv[1], "--smoke") == 0);
     // --capture <folder> [file] [level]: opens the project (and the project-relative level,
     // else its main level), saves the settled viewport as PPM and exits. --bake-gi takes
     // the same arguments and first bakes and saves the level's global illumination.
@@ -106,8 +108,8 @@ int main(int argc, char** argv) {
         project = std::filesystem::temp_directory_path() / (showcaseSmoke ? "ogrethrone-showcase-smoke" : profilePhysics ? "ogrethrone-physics-profile" : navigationSmoke ? "ogrethrone-navigation-smoke" :
             physicsSmoke ? "ogrethrone-physics-smoke" : "ogrethrone-smoke");
         std::filesystem::remove_all(project);
-        if (physicsSmoke || profilePhysics || navigationSmoke || showcaseSmoke) {
-            const auto source=std::filesystem::absolute(argc>2?argv[2]:showcaseSmoke?"samples/showcase":"samples/physics");
+        if (audioSmoke || physicsSmoke || profilePhysics || navigationSmoke || showcaseSmoke) {
+            const auto source=std::filesystem::absolute(argc>2?argv[2]:audioSmoke?"samples/audio":showcaseSmoke?"samples/showcase":"samples/physics");
             std::filesystem::copy(source,project,std::filesystem::copy_options::recursive);
             if (physicsSmoke) std::filesystem::create_directories(captures);
         } else throne::Project::create(project.parent_path(), project.filename().u8string());
@@ -157,7 +159,7 @@ int main(int argc, char** argv) {
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
         {
-            throne::Editor editor(root, *window, *scene, *camera, launcherSmoke?std::filesystem::path{}:project, projectList);
+            throne::Editor editor(root, *window, *scene, *camera, launcherSmoke?std::filesystem::path{}:project, projectList, &audio);
             // These checks compare frames exactly; temporal anti-aliasing blends each into the next,
             // and screen-space reflections show the previous one.
             if (physicsSmoke || navigationSmoke || showcaseSmoke) {
@@ -172,6 +174,7 @@ int main(int argc, char** argv) {
             Colibri::ColibriListener guiPlatform;
             Colibri::ColibriManager gui(&guiLog, &guiPlatform);
 #ifdef THRONE_NAVIGATION_SMOKE
+            if(audioSmoke) throne::audioEditorSmoke(editor);
             if (navigationSmoke) throne::navigationSmoke(editor, *window, *camera,project);
             if (showcaseSmoke) throne::showcaseSmoke(editor,*window,*scene,*camera,std::filesystem::absolute(argc>3?argv[3]:"out/showcase-captures"));
             if(launcherSmoke) {

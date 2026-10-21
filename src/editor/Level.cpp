@@ -48,6 +48,7 @@ void Level::save(const std::filesystem::path& path) const {
     const auto schedule = out.table();
     for (const auto& stage : stages) out.push(schedule, out.string(stage));
     out.set(root, "stages", schedule);
+    if(!mixer.empty()) out.set(root,"mixer",out.string(mixer));
     out.set(root, "serialExecution", lhat_bool(serialExecution));
     out.save(root, path);
 }
@@ -56,6 +57,7 @@ Level Level::load(const std::filesystem::path& path) {
     const lton::Document document(path);
     document.expect(levelFormat, levelVersion);
     Level result;
+    if(const auto v=lton::field(document.root(),"mixer"); !lhat_is_nil(v)) result.mixer=lton::relativePath(v);
     if(const auto value=lton::field(document.root(),"rendering"); !lhat_is_nil(value)) {
         const auto& t=lton::table(value); auto& r=result.rendering;
         for(const auto& v:{std::pair{"grid",&r.grid},std::pair{"clustered",&r.clustered},std::pair{"debugClusters",&r.debugClusters}})
@@ -93,6 +95,15 @@ Level Level::load(const std::filesystem::path& path) {
         if (!lhat_is_bool(serial)) lton::invalid();
         result.serialExecution = lhat_as_bool(serial);
     }
+    const bool hasSteam=std::find(result.stages.begin(),result.stages.end(),"SteamAudio")!=result.stages.end();
+    const bool hasSoloud=std::find(result.stages.begin(),result.stages.end(),"SoLoud")!=result.stages.end();
+    if(!hasSteam && !hasSoloud) {
+        const auto at=std::find(result.stages.begin(),result.stages.end(),"Box3DStep");
+        if(at!=result.stages.end()) result.stages.insert(at+1,{"SteamAudio","SoLoud"});
+    }
+    for(const auto& system:result.systems)
+        if(system.name=="SteamAudio" || system.name=="SoLoud")
+            throw std::runtime_error("User System conflicts with audio engine stage: "+system.name);
     try { validateStages(result.stages); } catch (const std::exception&) { lton::invalid(); }
     return result;
 }

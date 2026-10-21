@@ -104,6 +104,9 @@ public:
     static std::vector<std::string> schedule(const World& world, const LevelExpansion& expanded);
     /// True once main.lh has run to its end (Game scope only).
     bool finished() const;
+    using AudioAction = std::function<void(std::size_t, std::size_t, AudioCommand)>;
+    using AudioPlaying = std::function<bool(std::size_t, std::size_t)>;
+    void setAudioCallbacks(AudioAction action, AudioPlaying playing);
     /// Answers Animator.jointPosition (none by default: it answers nil).
     void setJointQuery(JointQuery query);
 

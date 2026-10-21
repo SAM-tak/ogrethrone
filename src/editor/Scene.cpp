@@ -154,6 +154,40 @@ void readExtraComponents(const LhatTable& table, Node& node) {
         if(const auto v=lton::field(t,"script"); !lhat_is_nil(v)) c.script=lton::relativePath(v);
         c.enabled=flag(t,"enabled",c.enabled);
     });
+    read("audioSource", node.audioSource, [&](const auto& t, auto& c) {
+        if(const auto v=lton::field(t,"clip"); !lhat_is_nil(v)) c.clip=lton::relativePath(v);
+        c.enabled=flag(t,"enabled",c.enabled); c.spatial=flag(t,"spatial",c.spatial);
+        c.loop=flag(t,"loop",c.loop); c.autoPlay=flag(t,"autoPlay",c.autoPlay); c.streaming=flag(t,"streaming",c.streaming);
+        c.occlusion=flag(t,"occlusion",c.occlusion); c.transmission=flag(t,"transmission",c.transmission);
+        c.reflections=flag(t,"reflections",c.reflections); c.reflectionVolume=scalar(t,"reflectionVolume",c.reflectionVolume,0,10);
+        c.volume=scalar(t,"volume",c.volume,0,100);
+        c.minDistance=scalar(t,"minDistance",c.minDistance); c.maxDistance=scalar(t,"maxDistance",c.maxDistance);
+        if(const auto v=lton::field(t,"bus"); !lhat_is_nil(v)) {
+            const auto n=lton::integer(v); if(n<=0 || n>UINT32_MAX) lton::invalid();
+            c.bus=static_cast<std::uint32_t>(n);
+        }
+        c.validate();
+    });
+    read("acousticGeometry", node.acousticGeometry, [&](const auto& t, auto& c) {
+        c.enabled=flag(t,"enabled",c.enabled);
+        if(const auto v=lton::field(t,"shape"); !lhat_is_nil(v)) {
+            const auto name=lton::string(v);
+            if(name=="Render") c.shape=AcousticShape::Render;
+            else if(name=="Box") c.shape=AcousticShape::Box;
+            else lton::invalid();
+        }
+        for(const auto& [key,out]:{std::pair{"boxSize",&c.boxSize},std::pair{"absorption",&c.absorption},std::pair{"transmission",&c.transmission}})
+            if(const auto v=lton::field(t,key); !lhat_is_nil(v)) lton::vector(v,out->data());
+        c.scattering=scalar(t,"scattering",c.scattering,0,1); c.validate();
+    });
+    read("audioListener", node.audioListener, [&](const auto& t, auto& c) {
+        c.enabled=flag(t,"enabled",c.enabled);
+        if(const auto v=lton::field(t,"priority"); !lhat_is_nil(v)) {
+            const auto n=lton::integer(v);
+            if(n<std::numeric_limits<int>::min() || n>std::numeric_limits<int>::max()) lton::invalid();
+            c.priority=static_cast<int>(n);
+        }
+    });
     read("animator", node.animator, [&](const auto& t, auto& c) {
         if(const auto v=lton::field(t,"clip"); !lhat_is_nil(v)) c.clip=std::string(lton::string(v));
         c.time=scalar(t,"time",c.time,0,1.0e6f);
@@ -315,6 +349,25 @@ void writeExtraComponents(lton::Writer& out, LhatValue table, const Node& node) 
     write("particles", node.particles, [&](auto t,const auto& c) {
         out.set(t,"definition",out.string(c.definition)); out.set(t,"enabled",lhat_bool(c.enabled));
         if(!c.script.empty()) out.set(t,"script",out.string(c.script));
+    });
+    write("audioSource", node.audioSource, [&](auto t,const auto& c) {
+        c.validate();
+        if(!c.clip.empty()) out.set(t,"clip",out.string(c.clip));
+        out.set(t,"enabled",lhat_bool(c.enabled)); out.set(t,"spatial",lhat_bool(c.spatial));
+        out.set(t,"loop",lhat_bool(c.loop)); out.set(t,"autoPlay",lhat_bool(c.autoPlay)); out.set(t,"streaming",lhat_bool(c.streaming));
+        out.set(t,"occlusion",lhat_bool(c.occlusion)); out.set(t,"transmission",lhat_bool(c.transmission));
+        out.set(t,"reflections",lhat_bool(c.reflections)); out.set(t,"reflectionVolume",lhat_real(c.reflectionVolume));
+        out.set(t,"volume",lhat_real(c.volume)); out.set(t,"minDistance",lhat_real(c.minDistance));
+        out.set(t,"maxDistance",lhat_real(c.maxDistance)); out.set(t,"bus",lhat_integer(c.bus));
+    });
+    write("acousticGeometry", node.acousticGeometry, [&](auto t,const auto& c) {
+        c.validate(); out.set(t,"enabled",lhat_bool(c.enabled));
+        out.set(t,"shape",out.string(c.shape==AcousticShape::Render?"Render":"Box"));
+        out.set(t,"boxSize",out.vector(c.boxSize.data())); out.set(t,"absorption",out.vector(c.absorption.data()));
+        out.set(t,"scattering",lhat_real(c.scattering)); out.set(t,"transmission",out.vector(c.transmission.data()));
+    });
+    write("audioListener", node.audioListener, [&](auto t,const auto& c) {
+        out.set(t,"enabled",lhat_bool(c.enabled)); out.set(t,"priority",lhat_integer(c.priority));
     });
     write("animator", node.animator, [&](auto t,const auto& c) {
         if(!c.clip.empty()) out.set(t,"clip",out.string(c.clip));

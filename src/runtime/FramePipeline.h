@@ -19,8 +19,8 @@ inline int behaviourPhase(const std::string& name) {
 inline constexpr double fixedStep=1.0/60.0;
 /// Engine stages of the simulation column, in their required order. Stages before
 /// EndOfFrameBehaviourSystem, except FetchInput, form the UpdateLoop.
-inline constexpr std::array<const char*,6> simulationStages={
-    "FetchInput",behaviourSystems[0],behaviourSystems[1],"Animation","Box3DStep",behaviourSystems[2]};
+inline constexpr std::array<const char*,8> simulationStages={
+    "FetchInput",behaviourSystems[0],behaviourSystems[1],"Animation","Box3DStep","SteamAudio","SoLoud",behaviourSystems[2]};
 /// The rendering column; it always runs on the calling (main) thread.
 inline constexpr std::array<const char*,3> renderStages={"PreRenderEventSystem","OGRE","PostRenderEventSystem"};
 

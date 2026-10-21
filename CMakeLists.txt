@@ -20,8 +20,9 @@ include(cmake/Dependencies.cmake)
 include(cmake/Audio.cmake)
 
 # Headers are listed too, so that IDEs (CMake Tools) know which target's settings parse them.
-add_library(throne_audio STATIC src/audio/AudioSystem.cpp src/audio/SpatialSound.cpp
-    src/audio/AudioSystem.h src/audio/SpatialSound.h src/audio/SteamAudioMath.h)
+add_library(throne_audio STATIC src/audio/AudioSystem.cpp src/audio/SpatialSound.cpp src/audio/AudioWorld.cpp src/audio/BufferedStream.cpp src/audio/AcousticWorld.cpp src/audio/AcousticWorld.h
+    src/audio/AudioSystem.h src/audio/SpatialSound.h src/audio/SteamAudioMath.h
+    src/audio/AudioWorld.h src/audio/BufferedStream.h src/audio/AudioComponents.h)
 target_include_directories(throne_audio PUBLIC src)
 target_link_libraries(throne_audio PUBLIC throne_soloud throne_steam_audio)
 
@@ -37,13 +38,17 @@ foreach(check IN ITEMS audio acoustics)
     endif()
 endforeach()
 
+add_library(throne_fbx STATIC third_party/ufbx/ufbx.c)
+target_include_directories(throne_fbx PUBLIC third_party/ufbx)
+target_link_libraries(throne_audio PRIVATE throne_fbx)
+
 add_library(throne_runtime STATIC src/runtime/PhysicsWorld.cpp src/runtime/PhysicsWorld.h src/runtime/Box3DMath.h
     src/runtime/AnimationLibrary.cpp src/runtime/AnimationLibrary.h src/runtime/AnimationWorld.cpp src/runtime/AnimationWorld.h
-    src/runtime/FbxSkeleton.cpp src/runtime/FbxSkeleton.h third_party/ufbx/ufbx.c)
+    src/runtime/FbxSkeleton.cpp src/runtime/FbxSkeleton.h)
 # ufbx reads FBX for the Model component and its skeletons; its warnings are its own.
 set_source_files_properties(third_party/ufbx/ufbx.c PROPERTIES COMPILE_OPTIONS "$<IF:$<BOOL:${MSVC}>,/w,-w>")
 target_include_directories(throne_runtime PUBLIC src third_party/ufbx)
-target_link_libraries(throne_runtime PUBLIC box3d::box3d lhat ozz_animation_offline)
+target_link_libraries(throne_runtime PUBLIC box3d::box3d lhat ozz_animation_offline throne_fbx)
 target_compile_features(throne_runtime PUBLIC cxx_std_17)
 
 add_executable(throne_smoke tests/runtime_smoke.cpp)
@@ -60,7 +65,7 @@ if(BUILD_TESTING)
 endif()
 
 # Levels, projects and the project list: the editor's LTON data, without OGRE.
-add_library(throne_data STATIC src/editor/Lton.cpp src/editor/Scene.cpp src/editor/SceneLighting.cpp src/editor/Level.cpp
+add_library(throne_data STATIC src/audio/Mixer.cpp src/audio/Mixer.h src/editor/Lton.cpp src/editor/Scene.cpp src/editor/SceneLighting.cpp src/editor/Level.cpp
     src/editor/Expansion.cpp src/editor/Project.cpp src/editor/PrimitiveGeometry.cpp src/editor/PrimitiveGeometry.h src/runtime/FramePipeline.cpp src/runtime/FramePipeline.h src/editor/Lton.h src/editor/Scene.h src/editor/SceneLighting.h src/editor/Level.h
     src/editor/Expansion.h src/editor/Project.h src/core/Math.h src/core/Ids.h)
 target_include_directories(throne_data PUBLIC src)
@@ -68,6 +73,7 @@ target_include_directories(throne_data PUBLIC src)
 target_include_directories(throne_data PRIVATE "${THRONE_LHAT_SOURCE_DIR}")
 target_link_libraries(throne_data PUBLIC lhat PRIVATE lhatstdlib)
 target_link_libraries(throne_runtime PUBLIC throne_data)
+target_link_libraries(throne_audio PUBLIC throne_data)
 
 add_executable(throne_data_smoke tests/data_smoke.cpp)
 target_link_libraries(throne_data_smoke PRIVATE throne_data)
@@ -102,9 +108,36 @@ if(BUILD_TESTING)
     set_tests_properties(ecs_smoke PROPERTIES TIMEOUT 30)
 endif()
 
+add_executable(throne_audio_world_smoke tests/audio_world_smoke.cpp)
+target_link_libraries(throne_audio_world_smoke PRIVATE throne_audio throne_script)
+target_compile_definitions(throne_audio_world_smoke PRIVATE THRONE_AUDIO_SAMPLE="${PROJECT_SOURCE_DIR}/samples/audio")
+throne_copy_audio_runtime(throne_audio_world_smoke)
+if(BUILD_TESTING)
+    add_test(NAME audio_world_smoke COMMAND throne_audio_world_smoke)
+    set_tests_properties(audio_world_smoke PROPERTIES TIMEOUT 60)
+endif()
+
+add_executable(throne_scene_acoustics_smoke tests/scene_acoustics_smoke.cpp)
+target_link_libraries(throne_scene_acoustics_smoke PRIVATE throne_audio throne_script)
+target_compile_definitions(throne_scene_acoustics_smoke PRIVATE THRONE_UFBX_DATA="${PROJECT_SOURCE_DIR}/third_party/ufbx/data")
+throne_copy_audio_runtime(throne_scene_acoustics_smoke)
+if(BUILD_TESTING)
+    add_test(NAME scene_acoustics_smoke COMMAND throne_scene_acoustics_smoke)
+    set_tests_properties(scene_acoustics_smoke PROPERTIES TIMEOUT 60)
+endif()
+
+add_executable(throne_reflections_smoke tests/reflections_smoke.cpp)
+target_link_libraries(throne_reflections_smoke PRIVATE throne_audio throne_script)
+target_compile_definitions(throne_reflections_smoke PRIVATE THRONE_AUDIO_SAMPLE="${PROJECT_SOURCE_DIR}/samples/audio")
+throne_copy_audio_runtime(throne_reflections_smoke)
+if(BUILD_TESTING)
+    add_test(NAME reflections_smoke COMMAND throne_reflections_smoke)
+    set_tests_properties(reflections_smoke PROPERTIES TIMEOUT 60)
+endif()
+
 if(THRONE_BUILD_GRAPHICS)
     # ImGuizmo is compiled here against the ImGui core that OgreNextImgui builds.
-    add_executable(ogrethrone src/editor/main.cpp src/editor/Editor.cpp src/editor/EditorPanels.cpp
+    add_executable(ogrethrone src/editor/main.cpp src/editor/Editor.cpp src/editor/EditorPanels.cpp src/editor/EditorAudio.cpp
         src/input/OisInput.cpp src/input/OisInput.h
         src/editor/EditorPlatform.cpp src/editor/EditorParticles.cpp src/editor/References.cpp src/editor/Model.cpp src/editor/Environment.cpp src/editor/GlobalIllumination.cpp src/editor/PbsExtensions.cpp src/editor/AdaptiveIrradianceField.cpp src/editor/Tasks.cpp
         third_party/imguizmo/src/ImGuizmo.cpp
@@ -139,7 +172,7 @@ if(THRONE_BUILD_GRAPHICS)
     set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT ogrethrone)
     throne_copy_audio_runtime(ogrethrone)
     if(BUILD_TESTING)
-        target_sources(ogrethrone PRIVATE tests/navigation_smoke.cpp tests/navigation_smoke.h tests/showcase_smoke.cpp tests/showcase_smoke.h)
+        target_sources(ogrethrone PRIVATE tests/audio_editor_smoke.cpp tests/navigation_smoke.cpp tests/navigation_smoke.h tests/showcase_smoke.cpp tests/showcase_smoke.h)
         target_include_directories(ogrethrone PRIVATE tests)
         target_compile_definitions(ogrethrone PRIVATE THRONE_NAVIGATION_SMOKE)
     endif()

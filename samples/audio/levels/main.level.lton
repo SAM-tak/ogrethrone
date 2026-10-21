@@ -1,0 +1,6 @@
+format = "ogrethrone-level", version = 3,
+mixer = "mixers/main.mixer.lton",
+scenes = {{id = 1, scene = "scenes/main.scene.lton"}},
+systems = {},
+stages = {"FetchInput", "UpdateBehaviourSystem", "LateUpdateBehaviourSystem", "Animation", "Box3DStep", "SteamAudio", "SoLoud", "EndOfFrameBehaviourSystem"},
+serialExecution = false^,

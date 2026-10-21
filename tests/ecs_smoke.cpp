@@ -195,12 +195,12 @@ if^ n != nil^ { let^ t:throne.BoxPrimitive|nil^ = n.component(throne.Transform) 
                 static std::mutex mutex;
                 std::lock_guard<std::mutex> lock(mutex);
                 if (!throne::isEngineStage(stage) || throne::behaviourPhase(stage) >= 0 || stage == "FetchInput" ||
-                    stage == "Box3DStep" || stage == "SyncRender") order.push_back(stage);
+                    stage == "Box3DStep" || stage == "SteamAudio" || stage == "SoLoud" || stage == "SyncRender") order.push_back(stage);
             });
             require(simulationOnMain == (serial || !threaded), "Simulation ran on the wrong thread");
             std::vector<std::string> expected{"FetchInput"};
             for (int pass = 0; pass < 3; ++pass)
-                expected.insert(expected.end(), {"UpdateBehaviourSystem", "LateUpdateBehaviourSystem", "Box3DStep"});
+                expected.insert(expected.end(), {"UpdateBehaviourSystem", "LateUpdateBehaviourSystem", "Box3DStep", "SteamAudio", "SoLoud"});
             expected.insert(expected.end(), {"EndOfFrameBehaviourSystem", "SyncRender"});
             require(order == expected, "UpdateLoop passes or the SyncRender join are wrong");
         }

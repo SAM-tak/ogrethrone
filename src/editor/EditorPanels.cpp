@@ -293,6 +293,8 @@ void Editor::systemsPanel() {
                 selected_ = {Selection::Kind::EngineSystem, -1, {}, 0, name};
             if (!ImGui::IsItemHovered()) return;
             if (name == "OGRE") ImGui::SetTooltip("Rendering settings");
+            if (name == "SteamAudio") ImGui::SetTooltip("Updates source directions, distance attenuation, occlusion and transmission");
+            if (name == "SoLoud") ImGui::SetTooltip("Applies playback commands, source settings and audio parameters");
             if (name == "SyncSimulation") ImGui::SetTooltip("Copies the simulation's scene to the render snapshot");
             if (name == "SyncRender") ImGui::SetTooltip("Joins rendering and simulation; the frame ends");
             if (name == renderStages[0]) ImGui::SetTooltip("Runs RenderEvent.prerender on the render snapshot");
@@ -771,6 +773,57 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         if(ImGui::Button("Align Camera to View")) alignCameraToView();
         return edited;
     });
+    component("Audio Source",value.audioSource,&SceneNode::audioSource,&NodeOverride::audioSource,[&](auto& c) {
+        bool edited=texturePath("Clip",c.clip);
+        edited|=ImGui::Checkbox("Enabled",&c.enabled); track();
+        edited|=ImGui::Checkbox("3D",&c.spatial); track();
+        edited|=ImGui::Checkbox("Loop",&c.loop); track();
+        edited|=ImGui::Checkbox("Auto Play",&c.autoPlay); track();
+        edited|=ImGui::Checkbox("Streaming (2D only)",&c.streaming); track();
+        edited|=scalar("Volume",c.volume,0,100);
+        if(c.spatial) {
+            edited|=scalar("Min Distance (m)",c.minDistance,0,999999);
+            edited|=scalar("Max Distance (m)",c.maxDistance,.001f,1.0e6f);
+            c.maxDistance=(std::max)(c.maxDistance,c.minDistance+.001f);
+            edited|=ImGui::Checkbox("Occlusion",&c.occlusion); track();
+            ImGui::BeginDisabled(!c.occlusion);
+            edited|=ImGui::Checkbox("Transmission",&c.transmission); track();
+            ImGui::EndDisabled();
+            edited|=ImGui::Checkbox("Reflections / reverb",&c.reflections); track();
+            edited|=ImGui::DragFloat("Reflection volume",&c.reflectionVolume,.01f,0,10,"%.3f",clamp); track();
+            ImGui::TextDisabled("Mono, preloaded clips only");
+        }
+        const auto found=doc_.mixers.find(doc_.world.level.mixer);
+        if(found!=doc_.mixers.end()) {
+            std::string current="Master";
+            for(const auto& bus:found->second.buses) if(bus.id==c.bus) current=bus.name;
+            if(ImGui::BeginCombo("Output Bus",current.c_str())) {
+                for(const auto& bus:found->second.buses) if(ImGui::Selectable(bus.name.c_str(),bus.id==c.bus)) {
+                    checkpoint(); c.bus=bus.id; edited=true;
+                }
+                ImGui::EndCombo();
+            }
+        } else {
+            int bus=static_cast<int>((std::min)(c.bus,std::uint32_t(INT_MAX)));
+            if(ImGui::InputInt("Output Bus ID",&bus)) { c.bus=static_cast<std::uint32_t>((std::max)(1,bus)); edited=true; } track();
+        }
+        return edited;
+    });
+    component("Acoustic Geometry",value.acousticGeometry,&SceneNode::acousticGeometry,&NodeOverride::acousticGeometry,[&](auto& c) {
+        bool edited=ImGui::Checkbox("Enabled",&c.enabled); track();
+        int shape=static_cast<int>(c.shape);
+        edited|=ImGui::Combo("Shape",&shape,"Render Geometry\0Box Proxy\0"); track(); c.shape=static_cast<AcousticShape>(shape);
+        if(c.shape==AcousticShape::Box) edited|=vector("Box Size (m)",c.boxSize,.001f);
+        else ImGui::TextDisabled("Uses this node's primitives and FBX rest geometry");
+        edited|=ImGui::DragFloat3("Absorption (low/mid/high)",c.absorption.data(),.01f,0,1,"%.3f",clamp); track();
+        edited|=scalar("Scattering",c.scattering,0,1);
+        edited|=ImGui::DragFloat3("Transmission (low/mid/high)",c.transmission.data(),.01f,0,1,"%.3f",clamp); track();
+        return edited;
+    });
+    component("Audio Listener",value.audioListener,&SceneNode::audioListener,&NodeOverride::audioListener,[&](auto& c) {
+        bool edited=ImGui::Checkbox("Enabled",&c.enabled); track();
+        edited|=ImGui::InputInt("Priority",&c.priority); track(); return edited;
+    });
     component("Animator",value.animator,&SceneNode::animator,&NodeOverride::animator,[&](auto& c) {
         // The clips of the node's model, once it has been read; otherwise the name as typed.
         const auto* skeleton=value.model ? animations_.find(value.model->path) : nullptr;
@@ -1047,6 +1100,9 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
             if(!own->model && ImGui::Selectable("Model")) checkpoint(),own->model.emplace();
             if(!own->camera && ImGui::Selectable("Camera")) checkpoint(),own->camera.emplace();
             if(!own->animator && ImGui::Selectable("Animator")) checkpoint(),own->animator.emplace();
+            if(!own->audioSource && ImGui::Selectable("Audio Source")) checkpoint(),own->audioSource.emplace();
+            if(!own->audioListener && ImGui::Selectable("Audio Listener")) checkpoint(),own->audioListener.emplace();
+            if(!own->acousticGeometry && ImGui::Selectable("Acoustic Geometry")) checkpoint(),own->acousticGeometry.emplace();
             if(!own->material && ImGui::Selectable("PBS Material")) checkpoint(),own->material.emplace();
             if(!own->light && ImGui::Selectable("Light")) checkpoint(),own->light.emplace();
             if(!own->boxCollider && ImGui::Selectable("Box Collider")) checkpoint(),own->boxCollider.emplace();
@@ -1069,6 +1125,19 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
 }
 
 void Editor::levelInspector() {
+    ImGui::SeparatorText("Audio");
+    char mixer[256]; fill(mixer,doc_.world.level.mixer);
+    if(ImGui::InputText("Mixer",mixer,sizeof mixer,ImGuiInputTextFlags_EnterReturnsTrue)) {
+        try {
+            const std::string path=mixer;
+            if(path.empty()) { checkpoint(); doc_.world.level.mixer.clear(); }
+            else { openMixer(path); checkpoint(); doc_.world.level.mixer=path; }
+        } catch(const std::exception& e) { log(e.what()); }
+    }
+    if(!doc_.world.level.mixer.empty() && ImGui::Button("Edit Mixer")) {
+        try { openMixer(doc_.world.level.mixer); } catch(const std::exception& e) { log(e.what()); }
+    }
+
     ImGui::TextUnformatted(std::filesystem::u8path(levelPath_).filename().u8string().c_str());
     ImGui::SeparatorText("Rendering");
     auto& rendering=doc_.world.level.rendering;
@@ -1113,6 +1182,10 @@ void Editor::levelInspector() {
     ImGui::DragFloat("Focus Distance", &viewFocusDistance_, .05f, .01f, 1.0e6f, "%.2f m", ImGuiSliderFlags_AlwaysClamp);
     ImGui::DragFloat("F-Stop", &viewFStop_, .1f, 0, 64, viewFStop_ > 0 ? "f/%.1f" : "off", ImGuiSliderFlags_AlwaysClamp);
     antiAliasingCombo(viewAntiAliasing_);
+    ImGui::SeparatorText("Scene View Audio Listener (not saved)");
+    ImGui::Checkbox("Enabled##SceneViewAudioListener",&viewAudioListener_);
+    ImGui::TextDisabled("Follows Scene View Camera; highest priority during Play.");
+    if(ImGui::IsItemHovered()) ImGui::SetTooltip("While Scene View is visible, overrides every scene listener.\nDisable to use scene AudioListener priorities.");
 }
 
 bool Editor::antiAliasingCombo(AntiAliasing& mode) {

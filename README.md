@@ -777,6 +777,34 @@ scene coordinate conversion, typed script access and component/prefab persistenc
 
 ## Audio
 
+Scene audio is integrated through `AudioSource` / `AudioListener` components and
+`SteamAudio` then `SoLoud` stages after `Box3DStep` inside the fixed UpdateLoop.
+The backend audio callback independently processes PCM and output. Play owns the
+voices; Pause preserves positions and Stop releases them. See
+[samples/audio](samples/audio/README.md) for the Kenney CC0 demo, Mixer editor,
+script APIs and headless/device checks, and [the audio design](TDDja/14-audio.md).
+The level's optional `mixer` path selects a `*.mixer.lton` bus tree. Browser > Mixers
+creates/opens these assets; the Mixer panel edits gain, mute and routing with
+Save and Undo/Redo. Unspecified mixers use Master alone. Spatial playback uses
+mono preloads; 2D supports mono/stereo preloads and buffered streaming. Highest
+Listener priority wins, with scene/hierarchy order breaking ties. In editor Play,
+the visible Scene View camera takes precedence while Level Inspector > Scene View
+Audio Listener is enabled (default); disabling it restores scene priorities. No Listener
+silences 3D playback without stopping its clock. `AcousticGeometry` adds explicit
+acoustic participation independently of colliders: use a node's primitives/FBX
+rest geometry or an invisible Box proxy, with per-band absorption/transmission
+and scattering. Steam Audio raycasts occlusion and transmission in the simulation
+stage; direct-path results reach the audio callback as one coherent snapshot.
+Moving geometry updates instance transforms; geometry/material edits rebuild only
+the affected mesh. Source `occlusion`/`transmission` switches can bypass these
+paths. Opt-in source `reflections` adds simulated early reflections and reverberation:
+a dedicated worker traces immutable scene snapshots at up to 10 Hz; the callback
+convolves the resulting one-second, first-order Ambisonics IR and decodes it using
+the current Listener orientation. Reflections share the source bus and have a
+separate `reflectionVolume`. The fixed budget covers 16 sources, 4096 rays and 16
+bounces. Baking remains future work.
+
+
 SoLoud is pinned as a submodule. The parent builds its mixer, WAV/Ogg Vorbis/MP3
 (also FLAC) decoders, Wav/WavStream sources, miniaudio device backend, and null
 backend. Synthesizers, OpenAL, SDL and optional module players are not built.
@@ -805,10 +833,11 @@ miniaudio backend has global device state. Keep the system alive longer than its
 sound sources. Standard SoLoud Wav/WavStream sources handle stereo BGM and UI audio.
 
 `SpatialSound` preloads a mono clip, applies Steam Audio direct-path effects and
-HRTF, and supplies stereo PCM to SoLoud. Direction is fixed in listener coordinates;
+HRTF, and supplies stereo PCM to SoLoud. Direction starts in listener coordinates and can be updated during playback;
 direct parameters can be supplied from Steam Audio simulation results. Each voice
 has independent effect state, handles arbitrary requested buffer lengths, and
-drains its HRTF tail. Looping repeats from the start. Play it through `play()`,
+drains its HRTF and convolution tails. Imported mono clips are resampled to the
+engine's 48 kHz rate outside the callback. Looping repeats from the start. Play it through `play()`,
 not `play3d()`, to avoid duplicate panning/attenuation. Keep the source alive while
 playing; destroying it stops its voices.
 
@@ -839,10 +868,13 @@ An optional device check plays a short, quiet spatialized tone:
 ./out/build/windows-clang-ninja/bin/Debug/throne_audio_smoke.exe --device
 ```
 
-This is an audio bootstrap. Moving-source/listener updates, OGRE/Box3D acoustic
-mesh export, acoustic material authoring, reflection buses in the runtime mixer,
-background simulation jobs and baking tools are not implemented yet. Reflection
-simulation/rendering is currently exercised by the diagnostic test only.
+Scene geometry/material authoring, moving sources/listeners and asynchronous
+reflection simulation are integrated into the editor. `scene_acoustics_smoke`
+checks direct propagation and `reflections_smoke` checks wet PCM, post-source
+reverb tails, absorption, concurrent IR publication and lifecycle/routing.
+The sample includes an enclosed room with the moving Kenney source's reflections
+enabled. Independent reflection sends, longer IRs/quality controls, baking,
+Doppler and OneShot are future work.
 
 ## Linux
 

@@ -1,5 +1,6 @@
 #pragma once
 #include "input/OisInput.h"
+#include "audio/AudioWorld.h"
 
 #include "editor/EditorPlatform.h"
 #include "editor/Expansion.h"
@@ -77,7 +78,7 @@ public:
     /// @param project Project folder to open at once; empty to show the launcher.
     /// @param projectList File holding the known projects; empty to keep the list in memory only.
     Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene, Ogre::Camera& camera,
-           const std::filesystem::path& project, std::filesystem::path projectList);
+           const std::filesystem::path& project, std::filesystem::path projectList, AudioSystem* audio = nullptr);
     /// Removes workspaces, scene objects and editor resources.
     ~Editor();
     Editor(const Editor&) = delete;
@@ -151,6 +152,9 @@ public:
     EditorPlatform& platform() { return platform_; }
 
 private:
+#ifdef THRONE_NAVIGATION_SMOKE
+    friend void audioEditorSmoke(Editor& editor);
+#endif
     /// What to do once unsaved changes are resolved.
     enum class Leave { Exit, CloseProject };
     /// A known project as the launcher lists it.
@@ -205,6 +209,7 @@ private:
     /// Everything the editor edits; one undo step is a copy of it.
     struct Document {
         World world;
+        std::map<std::string, MixerDefinition> mixers;
         /// Project-wide game output settings participate in Save and Undo with the document.
         GameRendering gameRendering;
         /// Prefabs opened for editing (TDDja/06 6), by path; saved with the level.
@@ -457,6 +462,9 @@ private:
     void rendererInspector();
     /// Draws the Browser panel: the project's levels, scenes and prefabs.
     void browser();
+    void audioBrowser();
+    void mixerPanel();
+    void openMixer(const std::string& path);
     /// Draws the Console panel: the log, and an L^ prompt below it.
     void console();
     /// The runtime console lines run on: the playing one, or else one of the
@@ -634,6 +642,10 @@ private:
     /// Completed render snapshot from the preceding frame.
     std::optional<LevelExpansion> renderSnapshot_;
     std::unique_ptr<PhysicsWorld> physics_;
+    AudioSystem* audioDevice_ = nullptr;
+    std::unique_ptr<AudioWorld> audioWorld_;
+    std::string mixerPath_;
+    char newMixerPath_[256] = "mixers/main.mixer.lton";
     /// Which system fields refer to each node of view_; rebuilt with it.
     References references_;
     /// view_'s node structure (instance, path, parent) when the render objects were built.
@@ -668,6 +680,8 @@ private:
     /// The view's projection: vertical field of view in degrees, and clip distances. Not saved;
     /// a Camera node keeps a view (alignViewToCamera(), alignCameraToView()).
     float viewFieldOfView_ = 45, viewNear_ = .1f, viewFar_ = 10000;
+    /// Editor-only listener, following the view camera; not part of the saved level.
+    bool viewAudioListener_ = true;
     /// The view's depth of field: the distance in focus, in metres, and the f-number (0: off).
     float viewFocusDistance_ = 10, viewFStop_ = 0;
     /// The view's anti-aliasing, and the one a check forces instead.

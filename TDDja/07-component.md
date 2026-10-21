@@ -259,3 +259,7 @@ for^ _^, node in^ throne.query("Transform", "BoxPrimitive") { ... }
 - Script Component を廃止。ユーザー定義 Component／System は C/C++ を前提に今後設計する。
 
 - スクリプトによる System 型定義を廃止。`node.component(type)` は型付きアクセスとして提供し、未付加なら `nil^` を返す。
+
+## 音声 Component と実行の段
+
+AudioSource／AudioListener と Mixer は [14-audio.md](14-audio.md) による。UpdateLoop の Box3DStep の後へ SteamAudio、SoLoud をこの順で追加する。両方ともシミュレーション列の固定エンジン処理とする。

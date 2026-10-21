@@ -31,6 +31,8 @@ struct RenderingSettings {
 /// no scene nodes of its own. Independent of OGRE and the simulation world.
 struct Level : SystemSet {
     RenderingSettings rendering;
+    /// Project-relative *.mixer.lton; empty uses the built-in Master.
+    std::string mixer;
     /// Scene instances loaded when the level starts, in order.
     std::vector<SceneInstance> scenes;
     std::uint32_t nextSceneId = 1;

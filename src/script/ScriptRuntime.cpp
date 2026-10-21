@@ -139,6 +139,18 @@ template <> struct ComponentBinding<AnimatorComponent> {
     static constexpr const char* name = "Animator";
     static constexpr auto member = &SceneNode::animator;
 };
+template <> struct ComponentBinding<AudioSourceComponent> {
+    static constexpr const char* name="AudioSource";
+    static constexpr auto member=&SceneNode::audioSource;
+};
+template <> struct ComponentBinding<AudioListenerComponent> {
+    static constexpr const char* name="AudioListener";
+    static constexpr auto member=&SceneNode::audioListener;
+};
+template <> struct ComponentBinding<AcousticGeometryComponent> {
+    static constexpr const char* name="AcousticGeometry";
+    static constexpr auto member=&SceneNode::acousticGeometry;
+};
 #undef THRONE_BIND_COMPONENT
 
 /// Returns a number argument as a double, accepting integers and reals.
@@ -178,6 +190,8 @@ struct ScriptRuntime::State {
     std::filesystem::path root;
     Log log;
     ScriptRuntime::JointQuery jointQuery;
+    ScriptRuntime::AudioAction audioAction;
+    ScriptRuntime::AudioPlaying audioPlaying;
     Program program{nullptr, &lhat_program_free};
     // Declared after the program so that it is disposed first.
     Machine machine{nullptr, &lhat_machine_dispose};
@@ -533,7 +547,7 @@ THRONE_HOST(typedComponent, {
     get(&SceneNode::capsule); get(&SceneNode::plane); get(&SceneNode::boxCollider);
     get(&SceneNode::sphereCollider); get(&SceneNode::capsuleCollider); get(&SceneNode::planeCollider);
     get(&SceneNode::rigidBody); get(&SceneNode::material); get(&SceneNode::light); get(&SceneNode::particles);
-    get(&SceneNode::animator);
+    get(&SceneNode::animator); get(&SceneNode::audioSource); get(&SceneNode::audioListener); get(&SceneNode::acousticGeometry);
     if (!matched) lhat_machine_panic_text(machine, "Expected a built-in component type");
 })
 /// Reads Vec3 @p value into @p out, clamped to [@p low, @p high]; panics when not finite.
@@ -604,6 +618,71 @@ THRONE_HOST(primitiveColourSet, {
     if (!s.writable(machine)) return;
     if (auto* c=s.component(machine,arguments[0],s.componentTags.at(ComponentBinding<T>::name),ComponentBinding<T>::member))
         finite(machine,vec3(s,arguments[1]),0,1,c->colour.data());
+})
+template <typename T, auto Member>
+THRONE_HOST(audioBool, {
+    if(auto* c=s.component(machine,arguments[0],s.componentTags.at(ComponentBinding<T>::name),ComponentBinding<T>::member))
+        answers[0]=lhat_bool(c->*Member), *count=1;
+})
+template <typename T, auto Member>
+THRONE_HOST(audioSetBool, {
+    if(!s.writable(machine)) return;
+    if(auto* c=s.component(machine,arguments[0],s.componentTags.at(ComponentBinding<T>::name),ComponentBinding<T>::member))
+        c->*Member=lhat_as_bool(arguments[1]);
+})
+template <typename T, auto Member>
+THRONE_HOST(audioNumber, {
+    if(auto* c=s.component(machine,arguments[0],s.componentTags.at(ComponentBinding<T>::name),ComponentBinding<T>::member)) {
+        if constexpr(std::is_integral_v<std::decay_t<decltype(c->*Member)>>) answers[0]=lhat_integer(c->*Member);
+        else answers[0]=lhat_real(c->*Member);
+        *count=1;
+    }
+})
+template <auto Member>
+THRONE_HOST(acousticSetVector, {
+    if(!s.writable(machine)) return;
+    if(auto* c=s.component(machine,arguments[0],s.componentTags.at("AcousticGeometry"),&SceneNode::acousticGeometry))
+        finite(machine,vec3(s,arguments[1]),0,1,(c->*Member).data());
+})
+THRONE_HOST(acousticSetScattering, {
+    if(!s.writable(machine)) return;
+    const auto value=number(arguments[1]);
+    if(!std::isfinite(value)) { lhat_machine_panic_text(machine,"Scattering must be finite"); return; }
+    if(auto* c=s.component(machine,arguments[0],s.componentTags.at("AcousticGeometry"),&SceneNode::acousticGeometry)) c->scattering=float(std::clamp(value,0.0,1.0));
+})
+template <int Which>
+THRONE_HOST(audioSetNumber, {
+    if(!s.writable(machine)) return;
+    const auto value=number(arguments[1]);
+    if(!std::isfinite(value)) { lhat_machine_panic_text(machine,"Audio property must be finite"); return; }
+    if constexpr(Which==2) {
+        if(value<std::numeric_limits<int>::min() || value>std::numeric_limits<int>::max() || value!=std::floor(value)) {
+            lhat_machine_panic_text(machine,"Listener priority must be an integer"); return;
+        }
+        if(auto* c=s.component(machine,arguments[0],s.componentTags.at("AudioListener"),&SceneNode::audioListener)) c->priority=static_cast<int>(value);
+    } else {
+        if constexpr(Which==1) if(value<1 || value>UINT32_MAX || value!=std::floor(value)) {
+            lhat_machine_panic_text(machine,"Bus ID must be a positive 32-bit integer"); return;
+        }
+        if(auto* c=s.component(machine,arguments[0],s.componentTags.at("AudioSource"),&SceneNode::audioSource)) {
+            if constexpr(Which==0) c->volume=static_cast<float>(std::clamp(value,0.0,100.0));
+            else if constexpr(Which==3) c->reflectionVolume=static_cast<float>(std::clamp(value,0.0,10.0));
+            else c->bus=static_cast<std::uint32_t>(value);
+        }
+    }
+})
+template <AudioCommand Command>
+THRONE_HOST(audioCommand, {
+    if(!s.writable(machine)) return;
+    if(!s.component(machine,arguments[0],s.componentTags.at("AudioSource"),&SceneNode::audioSource)) return;
+    if(!s.audioAction) { lhat_machine_panic_text(machine,"Audio is not attached to this runtime"); return; }
+    const auto bits=reinterpret_cast<std::uintptr_t>(lhat_hostdata_pointer(arguments[0],s.componentTags.at("AudioSource")));
+    s.audioAction(std::size_t(bits>>32)-1,std::size_t(bits&0xFFFFFFFFu),Command);
+})
+THRONE_HOST(audioPlaying, {
+    if(!s.component(machine,arguments[0],s.componentTags.at("AudioSource"),&SceneNode::audioSource)) return;
+    const auto bits=reinterpret_cast<std::uintptr_t>(lhat_hostdata_pointer(arguments[0],s.componentTags.at("AudioSource")));
+    answers[0]=lhat_bool(s.audioPlaying && s.audioPlaying(std::size_t(bits>>32)-1,std::size_t(bits&0xFFFFFFFFu))); *count=1;
 })
 /// Animator.clip().
 THRONE_HOST(animatorClip, {
@@ -826,6 +905,9 @@ void query(LhatMachine* machine, void* context, const LhatValue* arguments, std:
                 if(name=="Light") present=bool(node.light);
                 if(name=="ParticleSystem") present=bool(node.particles);
                 if(name=="Animator") present=bool(node.animator);
+                if(name=="AudioSource") present=bool(node.audioSource);
+                if(name=="AudioListener") present=bool(node.audioListener);
+                if(name=="AcousticGeometry") present=bool(node.acousticGeometry);
                 matches=matches && present;
             }
             if (!matches) continue;
@@ -851,7 +933,7 @@ bool registerThrone(LhatProgram* program, State& s) {
     if (!s.vec3 || !s.sceneNode || !s.system || !s.transform || !s.box) return false;
     s.componentTags["Transform"]=s.transform;
     s.componentTags["BoxPrimitive"]=s.box;
-    for(const char* name:{"SpherePrimitive","CapsulePrimitive","PlanePrimitive","BoxCollider","SphereCollider","CapsuleCollider","PlaneCollider","RigidBody","PbsMaterial","Light","ParticleSystem","Animator"}) {
+    for(const char* name:{"SpherePrimitive","CapsulePrimitive","PlanePrimitive","BoxCollider","SphereCollider","CapsuleCollider","PlaneCollider","RigidBody","PbsMaterial","Light","ParticleSystem","Animator","AudioSource","AudioListener","AcousticGeometry"}) {
         auto* tag=lhat_register_hostdata_type(program,moduleName,name);
         if(!tag) return false;
         s.componentTags[name]=tag;
@@ -938,6 +1020,41 @@ bool registerThrone(LhatProgram* program, State& s) {
         {"RigidBody", "setLinearVelocity", "p^self^, throne.Vec3;", componentSetVector<RigidBody, &RigidBody::linearVelocity>},
         {"RigidBody", "angularVelocity", "f^self^ -> throne.Vec3;", componentVector<RigidBody, &RigidBody::angularVelocity>},
         {"RigidBody", "setAngularVelocity", "p^self^, throne.Vec3;", componentSetVector<RigidBody, &RigidBody::angularVelocity>},
+        {"SceneNode","audioSource","f^self^ -> throne.AudioSource|nil^;",nodeComponent<AudioSourceComponent,&SceneNode::audioSource>},
+        {"SceneNode","audioListener","f^self^ -> throne.AudioListener|nil^;",nodeComponent<AudioListenerComponent,&SceneNode::audioListener>},
+        {"SceneNode","acousticGeometry","f^self^ -> throne.AcousticGeometry|nil^;",nodeComponent<AcousticGeometryComponent,&SceneNode::acousticGeometry>},
+        {"AcousticGeometry","enabled","f^self^ -> bool^;",audioBool<AcousticGeometryComponent,&AcousticGeometryComponent::enabled>},
+        {"AcousticGeometry","setEnabled","p^self^, bool^;",audioSetBool<AcousticGeometryComponent,&AcousticGeometryComponent::enabled>},
+        {"AcousticGeometry","absorption","f^self^ -> throne.Vec3;",componentVector<AcousticGeometryComponent,&AcousticGeometryComponent::absorption>},
+        {"AcousticGeometry","setAbsorption","p^self^, throne.Vec3;",acousticSetVector<&AcousticGeometryComponent::absorption>},
+        {"AcousticGeometry","transmission","f^self^ -> throne.Vec3;",componentVector<AcousticGeometryComponent,&AcousticGeometryComponent::transmission>},
+        {"AcousticGeometry","setTransmission","p^self^, throne.Vec3;",acousticSetVector<&AcousticGeometryComponent::transmission>},
+        {"AcousticGeometry","scattering","f^self^ -> number^;",componentScalar<AcousticGeometryComponent,&AcousticGeometryComponent::scattering>},
+        {"AcousticGeometry","setScattering","p^self^, number^;",acousticSetScattering},
+        {"AudioSource","occlusion","f^self^ -> bool^;",audioBool<AudioSourceComponent,&AudioSourceComponent::occlusion>},
+        {"AudioSource","setOcclusion","p^self^, bool^;",audioSetBool<AudioSourceComponent,&AudioSourceComponent::occlusion>},
+        {"AudioSource","reflections","f^self^ -> bool^;",audioBool<AudioSourceComponent,&AudioSourceComponent::reflections>},
+        {"AudioSource","setReflections","p^self^, bool^;",audioSetBool<AudioSourceComponent,&AudioSourceComponent::reflections>},
+        {"AudioSource","reflectionVolume","f^self^ -> number^;",audioNumber<AudioSourceComponent,&AudioSourceComponent::reflectionVolume>},
+        {"AudioSource","setReflectionVolume","p^self^, number^;",audioSetNumber<3>},
+        {"AudioSource","transmission","f^self^ -> bool^;",audioBool<AudioSourceComponent,&AudioSourceComponent::transmission>},
+        {"AudioSource","setTransmission","p^self^, bool^;",audioSetBool<AudioSourceComponent,&AudioSourceComponent::transmission>},
+        {"AudioSource","play","p^self^;",audioCommand<AudioCommand::Play>},
+        {"AudioSource","pause","p^self^;",audioCommand<AudioCommand::Pause>},
+        {"AudioSource","stop","p^self^;",audioCommand<AudioCommand::Stop>},
+        {"AudioSource","playing","f^self^ -> bool^;",audioPlaying},
+        {"AudioSource","volume","f^self^ -> number^;",audioNumber<AudioSourceComponent,&AudioSourceComponent::volume>},
+        {"AudioSource","setVolume","p^self^, number^;",audioSetNumber<0>},
+        {"AudioSource","bus","f^self^ -> number^;",audioNumber<AudioSourceComponent,&AudioSourceComponent::bus>},
+        {"AudioSource","setBus","p^self^, number^;",audioSetNumber<1>},
+        {"AudioSource","loop","f^self^ -> bool^;",audioBool<AudioSourceComponent,&AudioSourceComponent::loop>},
+        {"AudioSource","setLoop","p^self^, bool^;",audioSetBool<AudioSourceComponent,&AudioSourceComponent::loop>},
+        {"AudioSource","enabled","f^self^ -> bool^;",audioBool<AudioSourceComponent,&AudioSourceComponent::enabled>},
+        {"AudioSource","setEnabled","p^self^, bool^;",audioSetBool<AudioSourceComponent,&AudioSourceComponent::enabled>},
+        {"AudioListener","enabled","f^self^ -> bool^;",audioBool<AudioListenerComponent,&AudioListenerComponent::enabled>},
+        {"AudioListener","setEnabled","p^self^, bool^;",audioSetBool<AudioListenerComponent,&AudioListenerComponent::enabled>},
+        {"AudioListener","priority","f^self^ -> number^;",audioNumber<AudioListenerComponent,&AudioListenerComponent::priority>},
+        {"AudioListener","setPriority","p^self^, number^;",audioSetNumber<2>},
         {"SceneNode", "animator", "f^self^ -> throne.Animator|nil^;", nodeComponent<AnimatorComponent, &SceneNode::animator>},
         {"Animator", "clip", "f^self^ -> string^;", animatorClip},
         {"Animator", "setClip", "p^self^, string^;", animatorSetClip},
@@ -1466,6 +1583,9 @@ ScriptRuntime::~ScriptRuntime() = default;
 
 bool ScriptRuntime::finished() const { return state_->finished; }
 
+void ScriptRuntime::setAudioCallbacks(AudioAction action, AudioPlaying playing) {
+    state_->audioAction=std::move(action); state_->audioPlaying=std::move(playing);
+}
 void ScriptRuntime::setJointQuery(JointQuery query) { state_->jointQuery = std::move(query); }
 
 ScriptRuntime::ConsoleAnswer ScriptRuntime::evaluate(const std::string& line) {
@@ -1495,6 +1615,8 @@ void ScriptRuntime::dropInput() {
 std::vector<std::string> ScriptRuntime::schedule(const World& world, const LevelExpansion& expanded) {
     auto stages = world.level.stages;
     const auto add = [&](const System& system) {
+        if(system.name=="SteamAudio" || system.name=="SoLoud")
+            throw ScriptError("User System conflicts with audio engine stage: "+system.name);
         if (isEngineStage(system.name) || std::find(stages.begin(), stages.end(), system.name) != stages.end()) return;
         stages.insert(std::find(stages.begin(), stages.end(), behaviourSystems[0]), system.name);
     };

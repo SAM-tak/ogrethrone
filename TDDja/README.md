@@ -19,6 +19,7 @@ Ogre Throne の設計に関する文書を置く。
 | [11-input.md](11-input.md) | OGRE のウィンドウ作成、OIS による入力デバイスの基盤 | 初期セットアップ実装済み |
 | [12-adaptive-irradiance-field.md](12-adaptive-irradiance-field.md) | 場面全体を覆う適応的な照度場（Adaptive Irradiance Field、角を共有する八分木） | 段階 2（焼き込みと参照）実装済み・検証中 |
 | [13-scene-lighting.md](13-scene-lighting.md) | 環境と GI をシーン単位で持つ（焼き込み、複数シーンの表示） | 段階 1 実装済み |
+| [14-audio.md](14-audio.md) | シーン音源・リスナー、Mixer、Kenney 検証サンプル | 実装済み |
 
 ## 記法
 

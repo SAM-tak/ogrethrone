@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/Math.h"
+#include "audio/AudioComponents.h"
 #include "editor/Lton.h"
 #include "editor/SceneLighting.h"
 #include "runtime/FramePipeline.h"
@@ -325,6 +326,9 @@ struct NodeOverride {
     std::optional<ModelComponent> model;
     std::optional<CameraComponent> camera;
     std::optional<AnimatorComponent> animator;
+    std::optional<AudioSourceComponent> audioSource;
+    std::optional<AudioListenerComponent> audioListener;
+    std::optional<AcousticGeometryComponent> acousticGeometry;
     std::optional<BoxCollider> boxCollider;
     std::optional<SphereCollider> sphereCollider;
     std::optional<CapsuleCollider> capsuleCollider;
@@ -416,6 +420,9 @@ struct SceneNode {
     std::optional<ModelComponent> model;
     std::optional<CameraComponent> camera;
     std::optional<AnimatorComponent> animator;
+    std::optional<AudioSourceComponent> audioSource;
+    std::optional<AudioListenerComponent> audioListener;
+    std::optional<AcousticGeometryComponent> acousticGeometry;
     std::optional<BoxCollider> boxCollider;
     std::optional<SphereCollider> sphereCollider;
     std::optional<CapsuleCollider> capsuleCollider;
@@ -439,6 +446,9 @@ inline void applyExtraComponents(SceneNode& node, const NodeOverride& layer) {
     if (node.model && layer.model) node.model = layer.model;
     if (node.camera && layer.camera) node.camera = layer.camera;
     if (node.animator && layer.animator) node.animator = layer.animator;
+    if (node.audioSource && layer.audioSource) node.audioSource = layer.audioSource;
+    if (node.audioListener && layer.audioListener) node.audioListener = layer.audioListener;
+    if (node.acousticGeometry && layer.acousticGeometry) node.acousticGeometry = layer.acousticGeometry;
     if (node.material && layer.material) node.material = layer.material;
     if (node.light && layer.light) node.light = layer.light;
     if (node.sphere && layer.sphere) node.sphere = layer.sphere;

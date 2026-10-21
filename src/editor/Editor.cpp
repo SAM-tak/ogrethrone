@@ -341,12 +341,13 @@ void dockSpace() {
 }
 
 Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene, Ogre::Camera& camera,
-               const std::filesystem::path& project, std::filesystem::path projectList)
+               const std::filesystem::path& project, std::filesystem::path projectList, AudioSystem* audio)
     : root_(root), window_(window), scene_(scene), camera_(camera), unlit_(unlitHlms(root)), pbs_(pbsHlms(root)),
       platform_(window), input_(window), gui_(std::make_unique<Ogre::ImguiManager>()),
       guiPass_(std::make_unique<Ogre::CompositorPassImguiProvider>(gui_.get())),
       projects_(projectList.empty() ? ProjectList() : ProjectList::load(projectList)),
       projectListFile_(std::move(projectList)) {
+    audioDevice_=audio;
     preferencesFile_=projectListFile_.empty()?std::filesystem::path{}:projectListFile_.parent_path()/"editor.lton";
     preferences_=EditorPreferences::load(preferencesFile_);
     auto& io = ImGui::GetIO();
@@ -882,6 +883,14 @@ void Editor::play() {
         runtime_->setJointQuery([this](std::size_t instance, std::size_t node, std::string_view joint, float matrix[16]) {
             return animation_.jointMatrix(instance, node, joint, matrix);
         });
+        if(audioDevice_) {
+            const auto& path=doc_.world.level.mixer;
+            const auto mixer=path.empty()?MixerDefinition{}:
+                (doc_.mixers.count(path)?doc_.mixers.at(path):MixerDefinition::load(project_->resolve(path)));
+            audioWorld_=std::make_unique<AudioWorld>(*audioDevice_,project_->root,mixer,[this](const std::string& line){log(line);});
+            runtime_->setAudioCallbacks([this](std::size_t i,std::size_t n,AudioCommand command){audioWorld_->command(i,n,command);},
+                [this](std::size_t i,std::size_t n){return audioWorld_->playing(i,n);});
+        }
         physics_=std::make_unique<PhysicsWorld>();
         physics_->setSerial(doc_.world.level.serialExecution);
         physics_->load(view_);
@@ -895,6 +904,7 @@ void Editor::play() {
         renderEvents_.reset();
         runtime_.reset();
         physics_.reset();
+        audioWorld_.reset();
         log(std::string("Play refused:\n") + error.what());
     }
 }
@@ -904,6 +914,7 @@ void Editor::stop() {
     if (consoleMore_ == runtime_.get()) consoleMore_ = nullptr;
     renderEvents_.reset();
     runtime_.reset();
+    audioWorld_.reset();
     physics_.reset();
     renderSnapshot_.reset();
     clearParticles();
@@ -913,6 +924,7 @@ void Editor::stop() {
 void Editor::togglePause() {
     if (!runtime_) return;
     paused_ = !paused_;
+    if(audioWorld_) audioWorld_->setPaused(paused_);
     log(paused_ ? "Pause" : "Resume");
 }
 
@@ -923,6 +935,7 @@ Editor::~Editor() {
     consoleIdle_.reset();
     renderEvents_.reset();
     runtime_.reset();
+    audioWorld_.reset();
     shutdownLog.logMessage("Shutdown: releasing physics world and workers");
     physics_.reset();
     renderSnapshot_.reset();
@@ -1000,6 +1013,7 @@ bool Editor::frame(float deltaSeconds, const std::function<void()>& input) {
     inspector();
     viewport();
     browser();
+    mixerPanel();
     console();
     fileDialog();
     tasks_.draw();
@@ -1013,13 +1027,27 @@ bool Editor::frame(float deltaSeconds, const std::function<void()>& input) {
     measured.uiMs = milliseconds(frameStart, Clock::now());
     bool running = true;
     if (physics_) physics_->setSerial(doc_.world.level.serialExecution);
+    // Read OGRE only on the main thread, after navigation/Inspector edits. Workers
+    // receive a value snapshot; even INT_MAX scene priorities cannot override it.
+    std::optional<AudioWorld::ListenerPose> sceneViewListener;
+    if(viewAudioListener_ && viewportVisible_) {
+        updateCamera();
+        const auto rotation=camera_.getDerivedOrientation();
+        sceneViewListener=AudioWorld::ListenerPose{fromOgre(camera_.getDerivedPosition()),
+            fromOgre(rotation*Ogre::Vector3::UNIT_X),fromOgre(rotation*Ogre::Vector3::UNIT_Y),
+            fromOgre(rotation*Ogre::Vector3::NEGATIVE_UNIT_Z)};
+    }
     // Simulation stages may run on the worker thread: they touch view_, physics_ and their
     // own timing fields only. The main thread reads view_ only at the Sync barriers.
-    const auto engine = [&](const std::string& stage) {
+    const auto engine = [&,sceneViewListener](const std::string& stage) {
         const auto start = Clock::now();
         if (stage == "Box3DStep") {
             if (physics_) physics_->step(view_);
             measured.physicsMs += milliseconds(start, Clock::now());
+        } else if (stage == "SteamAudio") {
+            if(audioWorld_) audioWorld_->spatialStep(view_,sceneViewListener);
+        } else if (stage == "SoLoud") {
+            if(audioWorld_) audioWorld_->step(view_);
         } else if (stage == "Animation") {
             if (runtime_) animation_.step(view_, float(fixedStep));
         } else if (stage == "SyncSimulation") {
@@ -1057,6 +1085,11 @@ bool Editor::frame(float deltaSeconds, const std::function<void()>& input) {
         // FetchInput has already collected this frame's OS/ImGui/OIS input above.
     };
     try {
+        if(audioWorld_) {
+            const auto& path=doc_.world.level.mixer;
+            if(path.empty()) audioWorld_->setMixer(MixerDefinition{});
+            else if(doc_.mixers.count(path)) audioWorld_->setMixer(doc_.mixers.at(path));
+        }
         FrameTimes times;
         if (paused()) engine("OGRE");
         else if (runtime_) times = runtime_->update(deltaSeconds, engine);
@@ -2291,6 +2324,9 @@ void assign(NodeOverride& into, const NodeOverride& from) {
     if (from.model) into.model = from.model;
     if (from.camera) into.camera = from.camera;
     if (from.animator) into.animator = from.animator;
+    if (from.audioSource) into.audioSource = from.audioSource;
+    if (from.audioListener) into.audioListener = from.audioListener;
+    if (from.acousticGeometry) into.acousticGeometry = from.acousticGeometry;
     if (from.material) into.material = from.material;
     if (from.light) into.light = from.light;
     if (from.sphere) into.sphere = from.sphere;
@@ -2736,6 +2772,10 @@ bool Editor::open() {
         Document loaded;
         loaded.gameRendering=doc_.gameRendering;
         loaded.world.level = Level::load(project_->resolve(levelPath_));
+        if(!loaded.world.level.mixer.empty()) {
+            try { loaded.mixers.emplace(loaded.world.level.mixer,MixerDefinition::load(project_->resolve(loaded.world.level.mixer))); }
+            catch(const std::exception& e) { log(e.what()); }
+        }
         for (const auto& instance : loaded.world.level.scenes) {
             if (loaded.world.scenes.count(instance.scene)) continue;
             const auto file = project_->resolve(instance.scene);
@@ -2776,6 +2816,7 @@ bool Editor::save() {
     try {
         for (const auto& [scenePath, scene] : doc_.world.scenes) scene.save(project_->resolve(scenePath));
         for (const auto& [prefabPath, prefab] : doc_.prefabs) prefab.save(project_->resolve(prefabPath));
+        for(const auto& [path,mixer]:doc_.mixers) mixer.save(project_->resolve(path));
         doc_.world.level.save(project_->resolve(levelPath_));
         auto project=*project_;
         project.rendering=doc_.gameRendering;
@@ -3141,6 +3182,7 @@ void Editor::browser() {
             };
             files("Scenes", "scenes", ".scene.lton", newScenePath_, sizeof newScenePath_, Context::Kind::Scene);
             files("Prefabs", "prefabs", ".prefab.lton", newPrefabPath_, sizeof newPrefabPath_, Context::Kind::Prefab);
+            audioBrowser();
             ImGui::EndTabBar();
         }
     }

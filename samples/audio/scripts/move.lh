@@ -1,0 +1,14 @@
+module^ samples.audio.move
+import^ throne
+public^let^ Behaviour = def^{
+    self^{ direction = 1 },
+    update = p^self^, node:throne.SceneNode, dt:number^ {
+        let^ t = node.transform()
+        if^ t != nil^ {
+            let^ p = t.position()
+            if^ p.x > 5 { self^.direction := -1 }
+            if^ p.x < -5 { self^.direction := 1 }
+            t.setPosition(p + throne.vec3(self^.direction * dt * 2, 0, 0))
+        }
+    },
+}
