@@ -2,6 +2,7 @@
 #include "editor/Level.h"
 #include "editor/Project.h"
 #include "editor/Scene.h"
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -271,6 +272,41 @@ int main() {
         rerun.systems[0].instance != throne::NodePath{yard.nodes[0].id} ||
         rerun.removedSystems.at({{yard.nodes[0].id}, 1}) != "Spinner" || extra < 0x80000000u)
         return fail("An instance did not remove and add systems");
+    if (!rerun.unused.empty()) return fail("Overrides in use were listed as unused");
+
+    // Overrides of what the prefab no longer has are listed, and subtract() removes them.
+    auto& stale = yard.nodes[0].overrides;
+    const auto kept = stale;
+    const auto gone = throne::newNodeId();
+    stale.node({gone}).name = "Gone";
+    stale.node({lid}).light = throne::LightComponent{};
+    stale.removed.push_back({gone});
+    stale.removedSystems.push_back({{}, 999});
+    stale.fieldsOf({}, 999, 0).fields["speed"] = 1.0;
+    const auto unused = throne::expand(yard, library).unused;
+    if (unused.size() != 5 ||
+        std::any_of(unused.begin(), unused.end(), [&](const auto& entry) { return entry.instance != throne::NodePath{yard.nodes[0].id}; }))
+        return fail("Overrides of what the prefab no longer has were not listed");
+    for (const auto& entry : unused) stale.subtract(entry.piece);
+    if (stale.nodes.size() != kept.nodes.size() || !stale.nodes[0].scale || stale.nodes[0].light || !stale.removed.empty() ||
+        stale.removedSystems.size() != 1 || !stale.systems.empty() || !throne::expand(yard, library).unused.empty())
+        return fail("Removing unused overrides took more or less than them");
+
+    // A variant's own stale overrides are its own, not those of its instances; those
+    // inside a prefab that cannot be read are kept out of the list, as they may apply again.
+    throne::Prefab faded;
+    faded.base = "prefabs/crate.prefab.lton";
+    faded.overrides.node({gone}).name = "Gone";
+    faded.save(directory / "prefabs/faded.prefab.lton");
+    throne::Scene porch;
+    porch.addNode("Faded").prefab = "prefabs/faded.prefab.lton";
+    porch.addNode("Missing").prefab = "prefabs/missing.prefab.lton";
+    porch.nodes[1].overrides.node({gone}).name = "Gone";
+    const auto onPorch = throne::expand(porch, library);
+    const auto fadedAlone = throne::expand(faded, library, "prefabs/faded.prefab.lton");
+    if (!onPorch.unused.empty() || !onPorch.unsure({porch.nodes[1].id, gone}) || fadedAlone.unused.size() != 1 ||
+        !fadedAlone.unused[0].instance.empty())
+        return fail("Unused overrides were attributed to the wrong owner, or listed inside a missing prefab");
 
     throne::Prefab loop, twoRoots, rootInstance;
     const auto loopRoot = loop.addNode("Root").id;

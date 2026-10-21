@@ -241,6 +241,10 @@ private:
         NodePath relative;
         /// When @p node was added by an instance, the overrides holding it.
         Overrides* addedTo = nullptr;
+        /// The instance nodes whose overrides @p overrides and @p addedTo are; nullptr
+        /// for a variant's own, which have no prefab to apply them to.
+        SceneNode* holder = nullptr;
+        SceneNode* addedBy = nullptr;
     };
     /// Where an edit of one system is written: the system itself, or field overrides.
     struct SystemTarget {
@@ -249,6 +253,9 @@ private:
         NodePath instance;
         /// When @p system was added by an instance, the overrides holding it.
         Overrides* addedTo = nullptr;
+        /// As in NodeTarget.
+        SceneNode* holder = nullptr;
+        SceneNode* addedBy = nullptr;
     };
     /// A script's editable fields, refreshed when the file changes.
     struct CachedFields {
@@ -363,9 +370,9 @@ private:
     /// Handles node @p id (of view instance @p instance) dropped on prefab @p file: an instance of that prefab
     /// applies its overrides to it; any other node asks to replace it.
     void dropOnPrefab(int instance, NodeId id, const std::string& file);
-    /// Writes the overrides of instance node @p id (of view instance @p instance) into its prefab, saved at once,
-    /// and clears them.
-    void applyOverrides(int instance, NodeId id);
+    /// Writes @p piece, part of (or all) the overrides of instance node @p holder, into its prefab,
+    /// saved at once, and removes it from them (TDDja/06 4.1).
+    void applyOverrides(SceneNode& holder, Overrides piece);
     /// Replaces instance node @p id of the file view instance @p instance shows with plain nodes holding what
     /// it shows, nested instances included, and copies its systems into the file
     /// (TDDja/06 7). Nodes keep their IDs unless the file already uses one;
@@ -449,9 +456,11 @@ private:
     /// Writes the view into the selected node: its Transform's position and rotation (scale
     /// kept) and its Camera component's field of view; one undo step.
     void alignCameraToView();
-    /// Lists the nodes and systems @p overrides removes, named from @p expansion
-    /// where the overrides' instance is at @p prefix, each with a Restore button.
-    void removedList(Overrides& overrides, const Expansion& expansion, const NodePath& prefix);
+    /// Lists the nodes and systems @p overrides removes, named from @p expansion where the
+    /// overrides' instance is at @p prefix, each with Restore, and Apply when @p apply;
+    /// then the parts that change nothing, each with Remove. Returns a removal to apply.
+    std::optional<Overrides> overridesList(Overrides& overrides, const Expansion& expansion, const NodePath& prefix,
+                                           bool apply);
     /// Draws the selected system's behaviour and their fields.
     void systemInspector(const System& system);
     /// Draws the rendered scene and handles camera and picking input.

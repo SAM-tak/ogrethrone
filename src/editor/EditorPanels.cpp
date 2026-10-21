@@ -117,7 +117,7 @@ void Editor::scenePanel() {
             ImGui::TextColored(variantColour, "Variant of %s", content()->base.c_str());
             ImGui::SameLine();
             if (ImGui::SmallButton("Open Base")) enter({Context::Kind::Prefab, content()->base});
-            if (!view_.instances.empty()) removedList(content()->overrides, view_.instances[0].expansion, {});
+            if (!view_.instances.empty()) overridesList(content()->overrides, view_.instances[0].expansion, {}, false);
         }
         // Into an instance (at the level, a selected scene instance or a node in one)
         // these add overrides; see insert().
@@ -593,8 +593,25 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
 
     auto value = expanded.node;
     unsigned changed = 0;
-    // Draws one property, coloured when overridden, with Revert next to it.
-    const auto property = [&](unsigned bit, bool overridden, auto&& widget, auto&& revert) {
+    // Overrides to write into an instance's prefab, once nothing here points into them.
+    std::optional<std::pair<SceneNode*, Overrides>> applying;
+    // Reverts or applies one overridden property, given as a member of NodeOverride.
+    const auto revertOrApply = [&](auto member, const char* revert, const char* apply) {
+        if (ImGui::SmallButton(revert)) {
+            checkpoint();
+            (layer->*member).reset();
+        }
+        if (!target.holder) return;
+        ImGui::SameLine();
+        if (ImGui::SmallButton(apply)) {
+            Overrides piece;
+            piece.node(target.relative).*member = layer->*member;
+            applying.emplace(target.holder, std::move(piece));
+        }
+    };
+    // Draws one property, coloured when overridden, with Revert and Apply next to it.
+    const auto property = [&](unsigned bit, auto member, auto&& widget) {
+        const bool overridden = layer && (layer->*member).has_value();
         if (overridden) ImGui::PushStyleColor(ImGuiCol_Text, overriddenColour);
         if (widget()) changed |= bit;
         if (overridden) ImGui::PopStyleColor();
@@ -602,18 +619,15 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         if (overridden) {
             ImGui::SameLine();
             ImGui::PushID(static_cast<int>(bit));
-            if (ImGui::SmallButton("Revert")) {
-                checkpoint();
-                revert();
-            }
+            revertOrApply(member, "Revert", "Apply");
             ImGui::PopID();
         }
     };
     constexpr auto clamp = ImGuiSliderFlags_AlwaysClamp;
     char name[256];
     fill(name, value.name);
-    property(1, layer && layer->name, [&] { return ImGui::InputText("Name", name, sizeof name) && name[0] && (value.name = name, true); },
-             [&] { layer->name.reset(); });
+    property(1, &NodeOverride::name,
+             [&] { return ImGui::InputText("Name", name, sizeof name) && name[0] && (value.name = name, true); });
     // Components, one section each. A plain node the edited file holds can add and
     // remove them; elsewhere only their properties change (as overrides).
     auto* own = target.node && target.node->prefab.empty() ? target.node : nullptr;
@@ -621,19 +635,15 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
     constexpr auto open = ImGuiTreeNodeFlags_DefaultOpen;
     if (auto& transform = value.transform;
         transform && ImGui::CollapsingHeader("Transform", own ? &keepTransform : nullptr, open)) {
-        property(2, layer && layer->position,
-                 [&] { return ImGui::DragFloat3("Position", transform->position.data(), 0.05f, -1.0e6f, 1.0e6f, "%.3f", clamp); },
-                 [&] { layer->position.reset(); });
-        property(4, layer && layer->rotation,
-                 [&] { return ImGui::DragFloat3("Rotation", transform->rotation.data(), 0.5f, -1.0e6f, 1.0e6f, "%.1f", clamp); },
-                 [&] { layer->rotation.reset(); });
-        property(8, layer && layer->scale,
-                 [&] { return ImGui::DragFloat3("Scale", transform->scale.data(), 0.01f, 0.001f, 1.0e6f, "%.3f", clamp); },
-                 [&] { layer->scale.reset(); });
+        property(2, &NodeOverride::position,
+                 [&] { return ImGui::DragFloat3("Position", transform->position.data(), 0.05f, -1.0e6f, 1.0e6f, "%.3f", clamp); });
+        property(4, &NodeOverride::rotation,
+                 [&] { return ImGui::DragFloat3("Rotation", transform->rotation.data(), 0.5f, -1.0e6f, 1.0e6f, "%.1f", clamp); });
+        property(8, &NodeOverride::scale,
+                 [&] { return ImGui::DragFloat3("Scale", transform->scale.data(), 0.01f, 0.001f, 1.0e6f, "%.3f", clamp); });
     }
     if (auto& box = value.box; box && ImGui::CollapsingHeader("Box Primitive", own ? &keepBox : nullptr, open))
-        property(16, layer && layer->colour, [&] { return ImGui::ColorEdit3("Colour", box->colour.data()); },
-                 [&] { layer->colour.reset(); });
+        property(16, &NodeOverride::colour, [&] { return ImGui::ColorEdit3("Colour", box->colour.data()); });
     if (changed) writeNode(value, changed);
     if (own && (!keepTransform || !keepBox)) {
         checkpoint();
@@ -658,25 +668,22 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         edited|=scalar("Restitution",c.restitution,0,1);
         edited|=ImGui::Checkbox("Sensor",&c.sensor); track(); return edited;
     };
-    const auto componentSection = [&](const char* label, bool removable, bool overridden,
-                                      auto fields, auto remove, auto revert) {
+    const auto componentSection = [&](const char* label, bool removable, auto member, auto fields, auto remove) {
         ImGui::PushID(label);
         bool keep=true;
         if (ImGui::CollapsingHeader(label,removable?&keep:nullptr,open)) fields();
         if (!keep) { checkpoint(); remove(); }
-        if (overridden && ImGui::Button("Revert Component")) {
-            checkpoint(); revert();
-        }
+        if (layer && (layer->*member).has_value()) revertOrApply(member, "Revert Component", "Apply Component");
         ImGui::PopID();
     };
     // Components inherited from a prefab permit value overrides, but not removal.
     const auto component = [&](const char* label, auto& shown, auto member, auto overrideMember, auto fields) {
         if (!shown) return;
-        componentSection(label,own!=nullptr,layer && (layer->*overrideMember).has_value(),[&] {
+        componentSection(label,own!=nullptr,overrideMember,[&] {
             if (!fields(*shown)) return;
             if (own) own->*member=shown;
             else if(target.overrides) target.overrides->node(target.relative).*overrideMember=shown;
-        },[&] { (own->*member).reset(); },[&] { (layer->*overrideMember).reset(); });
+        },[&] { (own->*member).reset(); });
     };
     const auto texturePath=[&](const char* label,std::string& path) {
         char text[256]; fill(text,path); bool edited=ImGui::InputText(label,text,sizeof text); track();
@@ -1008,7 +1015,7 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
     const auto attachmentSection = [&](const char* title, const char* symbol, std::vector<Behaviour> SceneNode::*list,
                                        std::optional<std::vector<Behaviour>> NodeOverride::*replaced) {
         if ((value.*list).empty() && !(layer && layer->*replaced)) return;
-        componentSection(title,true,layer && (layer->*replaced).has_value(),[&] {
+        componentSection(title,true,replaced,[&] {
             ImGui::Indent();
             auto attachments = value.*list;
             bool attachmentsChanged = false;
@@ -1040,7 +1047,7 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         },[&] {
             if (own) (own->*list).clear();
             else if (target.overrides) target.overrides->node(target.relative).*replaced = std::vector<Behaviour>{};
-        },[&] { (layer->*replaced).reset(); });
+        });
     };
     attachmentSection("Behaviour", "Behaviour", &SceneNode::behaviour, &NodeOverride::behaviour);
     attachmentSection("Render Event", "RenderEvent", &SceneNode::renderEvent, &NodeOverride::renderEvent);
@@ -1068,14 +1075,24 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         if (target.node && !target.addedTo) {
             ImGui::SameLine();
             if (ImGui::Button("Unpack")) unpack(selected_.instance, target.node->id);
+        }
+        const auto& expansion = view_.instances[selected_.instance].expansion;
+        if (target.node && target.holder == target.node) {
             // Writes every override of this instance into the prefab (as dropping it on the file does).
             ImGui::SameLine();
             ImGui::BeginDisabled(target.node->overrides.empty());
-            if (ImGui::Button("Apply")) applyOverrides(selected_.instance, target.node->id);
+            if (ImGui::Button("Apply All")) applying.emplace(target.node, target.node->overrides);
+            ImGui::SameLine();
+            if (ImGui::Button("Revert All")) {
+                checkpoint();
+                target.node->overrides = {};
+            }
             ImGui::EndDisabled();
+            if (expansion.unsure(selected_.path))
+                ImGui::TextWrapped("The prefab cannot be read: its overrides are kept until it can be again.");
+            if (auto piece = overridesList(*target.overrides, expansion, selected_.path, true))
+                applying.emplace(target.node, std::move(*piece));
         }
-        if (target.node && target.overrides)
-            removedList(*target.overrides, view_.instances[selected_.instance].expansion, selected_.path);
     }
     if (own || target.overrides || target.node) ImGui::Separator();
     if ((own || target.overrides) && ImGui::BeginCombo("##add", "Add Component")) {
@@ -1121,7 +1138,18 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         if (!target.addedTo && ImGui::Button("Duplicate")) duplicate();
         if (!target.addedTo) ImGui::SameLine();
         if (ImGui::Button("Delete")) erase();
+        // A node an instance added joins the prefab.
+        if (target.addedBy) {
+            ImGui::SameLine();
+            if (ImGui::Button("Apply")) {
+                Overrides piece;
+                for (const auto& entry : target.addedTo->added)
+                    if (entry.node.id == target.node->id) piece.added.push_back(entry);
+                applying.emplace(target.addedBy, std::move(piece));
+            }
+        }
     }
+    if (applying) applyOverrides(*applying->first, std::move(applying->second));
 }
 
 void Editor::levelInspector() {
@@ -1223,36 +1251,65 @@ void Editor::sceneInspector(SceneInstance& instance) {
     lightingInspector(instance.scene);
 }
 
-void Editor::removedList(Overrides& overrides, const Expansion& expansion, const NodePath& prefix) {
-    std::optional<std::size_t> restored;
-    for (std::size_t i = 0; i < overrides.removed.size(); ++i) {
-        auto where = prefix;
-        where.insert(where.end(), overrides.removed[i].begin(), overrides.removed[i].end());
-        const auto name = expansion.removed.find(where);
-        ImGui::PushID(static_cast<int>(i));
-        ImGui::TextColored(overriddenColour, "Removed %s", name != expansion.removed.end() ? name->second.c_str() : "(gone)");
+std::optional<Overrides> Editor::overridesList(Overrides& overrides, const Expansion& expansion, const NodePath& prefix,
+                                               bool apply) {
+    std::optional<Overrides> applied;
+    std::vector<Overrides> dropped;
+    // Restore and Apply for one removal; one that names nothing is listed below instead.
+    const auto removal = [&](const char* label, const std::string* name, Overrides piece) {
+        if (!name) return;
+        ImGui::TextColored(overriddenColour, "%s %s", label, name->c_str());
         ImGui::SameLine();
-        if (ImGui::SmallButton("Restore")) restored = i;
+        if (ImGui::SmallButton("Restore")) dropped.push_back(piece);
+        if (!apply) return;
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Apply")) applied = std::move(piece);
+    };
+    int id = 0;
+    for (const auto& path : overrides.removed) {
+        auto where = prefix;
+        where.insert(where.end(), path.begin(), path.end());
+        const auto name = expansion.removed.find(where);
+        Overrides piece;
+        piece.removed.push_back(path);
+        ImGui::PushID(id++);
+        removal("Removed", name != expansion.removed.end() ? &name->second : nullptr, std::move(piece));
         ImGui::PopID();
     }
-    std::optional<std::size_t> restoredSystem;
-    for (std::size_t i = 0; i < overrides.removedSystems.size(); ++i) {
-        const auto& entry = overrides.removedSystems[i];
+    for (const auto& entry : overrides.removedSystems) {
         auto where = prefix;
         where.insert(where.end(), entry.instance.begin(), entry.instance.end());
         const auto name = expansion.removedSystems.find({where, entry.system});
-        ImGui::PushID(static_cast<int>(overrides.removed.size() + i));
-        ImGui::TextColored(overriddenColour, "Removed system %s",
-                           name != expansion.removedSystems.end() ? name->second.c_str() : "(gone)");
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Restore")) restoredSystem = i;
+        Overrides piece;
+        piece.removedSystems.push_back(entry);
+        ImGui::PushID(id++);
+        removal("Removed system", name != expansion.removedSystems.end() ? &name->second : nullptr, std::move(piece));
         ImGui::PopID();
     }
-    if (!restored && !restoredSystem) return;
-    checkpoint();
-    if (restored) overrides.removed.erase(overrides.removed.begin() + static_cast<std::ptrdiff_t>(*restored));
-    if (restoredSystem)
-        overrides.removedSystems.erase(overrides.removedSystems.begin() + static_cast<std::ptrdiff_t>(*restoredSystem));
+    // Overrides of what the prefab no longer has stay until removed here (TDDja/06 4.2).
+    std::vector<const UnusedOverride*> unused;
+    for (const auto& entry : expansion.unused)
+        if (entry.instance == prefix) unused.push_back(&entry);
+    if (!unused.empty()) {
+        ImGui::TextDisabled("Overrides of what the prefab no longer has:");
+        if (unused.size() > 1) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Remove All"))
+                for (const auto* entry : unused) dropped.push_back(entry->piece);
+        }
+        for (const auto* entry : unused) {
+            ImGui::PushID(id++);
+            ImGui::TextDisabled("%s", entry->label.c_str());
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Remove")) dropped.push_back(entry->piece);
+            ImGui::PopID();
+        }
+    }
+    if (!dropped.empty()) {
+        checkpoint();
+        for (const auto& piece : dropped) overrides.subtract(piece);
+    }
+    return applied;
 }
 
 void Editor::systemInspector(const System& shown) {
@@ -1288,6 +1345,8 @@ void Editor::systemInspector(const System& shown) {
     };
 
     std::optional<std::size_t> remove;
+    // A field override to write into the instance's prefab, once nothing here points into it.
+    std::optional<Overrides> applying;
     for (std::size_t k = 0; k < shown.behaviour.size(); ++k) {
         const auto& behaviour = shown.behaviour[k];
         ImGui::PushID(static_cast<int>(k));
@@ -1391,6 +1450,14 @@ void Editor::systemInspector(const System& shown) {
                         checkpoint();
                         if (auto* fields = layer(k)) fields->erase(info.name);
                     }
+                    if (target.holder) {
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("Apply")) {
+                            Overrides piece;
+                            piece.systems.push_back({target.instance, selected_.system, k, {{info.name, (*layer(k))[info.name]}}});
+                            applying = std::move(piece);
+                        }
+                    }
                 }
                 ImGui::PopID();
             }
@@ -1398,6 +1465,7 @@ void Editor::systemInspector(const System& shown) {
         }
         ImGui::PopID();
     }
+    if (applying) applyOverrides(*target.holder, std::move(*applying));
     if (!target.system) return;
     if (remove) {
         checkpoint();
@@ -1410,6 +1478,15 @@ void Editor::systemInspector(const System& shown) {
     }
     ImGui::SameLine();
     if (ImGui::Button("Delete System")) erase();
+    // A system an instance added joins the prefab.
+    if (target.addedBy) {
+        ImGui::SameLine();
+        if (ImGui::Button("Apply")) {
+            Overrides piece;
+            piece.addedSystems.push_back(*target.system);
+            applyOverrides(*target.addedBy, std::move(piece));
+        }
+    }
 }
 
 const Editor::CachedFields& Editor::fieldsOf(const std::string& script, const std::string& symbol) {

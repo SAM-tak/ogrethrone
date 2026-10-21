@@ -1355,9 +1355,13 @@ Editor::NodeTarget Editor::fileTarget(int instance, const NodePath& path) {
     if (path.size() == 1) {
         target.node = own;
         // An instance gives its root only a name and transform; the rest are overrides.
-        if (!own->prefab.empty()) target.overrides = &own->overrides;
+        if (!own->prefab.empty()) {
+            target.overrides = &own->overrides;
+            target.holder = own;
+        }
     } else {
         target.overrides = &own->overrides;
+        target.holder = own;
         target.relative.assign(path.begin() + 1, path.end());
     }
     return target;
@@ -1374,11 +1378,13 @@ Editor::NodeTarget Editor::targetOf(int instance, const NodePath& path) {
         target.relative.erase(target.relative.begin());
         if (target.relative.empty()) {
             target.addedTo = target.overrides;
+            target.addedBy = target.holder;
             target.node = &it->node;
             target.overrides = it->node.prefab.empty() ? nullptr : &it->node.overrides;
         } else {
             target.overrides = &it->node.overrides;
         }
+        target.holder = target.overrides ? &it->node : nullptr;
     }
     return target;
 }
@@ -1398,6 +1404,7 @@ Editor::SystemTarget Editor::systemTarget() {
         target.system = file->findSystem(selected_.system);
     } else if (auto* own = file->findNode(selected_.path[0])) {
         target.overrides = &own->overrides;
+        target.holder = own;
         target.instance.assign(selected_.path.begin() + 1, selected_.path.end());
     }
     // A system an instance added is edited in place, inside that instance's overrides
@@ -1409,7 +1416,9 @@ Editor::SystemTarget Editor::systemTarget() {
             if (it != added.end()) {
                 target.system = &*it;
                 target.addedTo = target.overrides;
+                target.addedBy = target.holder;
                 target.overrides = nullptr;
+                target.holder = nullptr;
             }
             break;
         }
@@ -1418,6 +1427,7 @@ Editor::SystemTarget Editor::systemTarget() {
                                      [&](const AddedNode& each) { return each.node.id == target.instance[0]; });
         if (it == nodes.end()) break;
         target.overrides = &it->node.overrides;
+        target.holder = &it->node;
         target.instance.erase(target.instance.begin());
     }
     return target;
@@ -2311,54 +2321,16 @@ void Editor::prefabify(int instance, NodeId id, std::string file) {
 
 void Editor::dropOnPrefab(int instance, NodeId id, const std::string& file) {
     auto* edited = fileOf(instance);
-    const auto* node = edited ? edited->findNode(id) : nullptr;
+    auto* node = edited ? edited->findNode(id) : nullptr;
     if (!node) return;
-    if (node->prefab == file) applyOverrides(instance, id);
+    if (node->prefab == file) applyOverrides(*node, node->overrides);
     else replacing_ = Replace{instance, id, file};
 }
 
 namespace {
 /// Copies the properties @p from sets into @p into.
 void assign(NodeOverride& into, const NodeOverride& from) {
-    if (from.particles) into.particles = from.particles;
-    if (from.model) into.model = from.model;
-    if (from.camera) into.camera = from.camera;
-    if (from.animator) into.animator = from.animator;
-    if (from.audioSource) into.audioSource = from.audioSource;
-    if (from.audioListener) into.audioListener = from.audioListener;
-    if (from.acousticGeometry) into.acousticGeometry = from.acousticGeometry;
-    if (from.material) into.material = from.material;
-    if (from.light) into.light = from.light;
-    if (from.sphere) into.sphere = from.sphere;
-    if (from.capsule) into.capsule = from.capsule;
-    if (from.plane) into.plane = from.plane;
-    if (from.boxCollider) into.boxCollider = from.boxCollider;
-    if (from.sphereCollider) into.sphereCollider = from.sphereCollider;
-    if (from.capsuleCollider) into.capsuleCollider = from.capsuleCollider;
-    if (from.planeCollider) into.planeCollider = from.planeCollider;
-    if (from.rigidBody) into.rigidBody = from.rigidBody;
-
-    if (from.name) into.name = from.name;
-    if (from.position) into.position = from.position;
-    if (from.rotation) into.rotation = from.rotation;
-    if (from.scale) into.scale = from.scale;
-    if (from.colour) into.colour = from.colour;
-    if (from.behaviour) into.behaviour = from.behaviour;
-    if (from.renderEvent) into.renderEvent = from.renderEvent;
-}
-
-/// Writes the properties @p from sets into @p into's components, where it has them.
-void assign(SceneNode& into, const NodeOverride& from) {
-    applyExtraComponents(into, from);
-    if (from.name) into.name = *from.name;
-    if (from.behaviour) into.behaviour = *from.behaviour;
-    if (from.renderEvent) into.renderEvent = *from.renderEvent;
-    if (auto& transform = into.transform) {
-        if (from.position) transform->position = *from.position;
-        if (from.rotation) transform->rotation = *from.rotation;
-        if (from.scale) transform->scale = *from.scale;
-    }
-    if (into.box && from.colour) into.box->colour = *from.colour;
+    forEachProperty([](const char*, auto& kept, const auto& set) { if (set) kept = set; }, into, from);
 }
 
 /// Adds @p from on top of the overrides @p into already has.
@@ -2373,13 +2345,11 @@ void merge(Overrides& into, const Overrides& from) {
 }
 }
 
-void Editor::applyOverrides(int instance, NodeId id) {
-    auto* edited = fileOf(instance);
-    auto* node = edited ? edited->findNode(id) : nullptr;
-    if (!node || node->prefab.empty() || node->overrides.empty()) return;
+void Editor::applyOverrides(SceneNode& holder, Overrides piece) {
+    if (holder.prefab.empty() || piece.empty()) return;
     Prefab prefab;
     try {
-        prefab = doc_.prefabs.count(node->prefab) ? doc_.prefabs[node->prefab] : library_.prefab(node->prefab);
+        prefab = doc_.prefabs.count(holder.prefab) ? doc_.prefabs[holder.prefab] : library_.prefab(holder.prefab);
     } catch (const std::exception& error) {
         log(error.what());
         return;
@@ -2387,14 +2357,13 @@ void Editor::applyOverrides(int instance, NodeId id) {
     // A variant keeps them as its own overrides; a prefab writes them into its nodes,
     // or into the overrides of its own instances for what lies deeper.
     if (prefab.variant()) {
-        merge(prefab.overrides, node->overrides);
+        merge(prefab.overrides, piece);
     } else {
-        Overrides deeper;
-        for (const auto& entry : node->overrides.nodes) {
+        for (const auto& entry : piece.nodes) {
             auto* target = entry.path.empty() ? &prefab.nodes.front() : prefab.findNode(entry.path[0]);
             if (!target) continue;
             if (entry.path.size() <= 1) {
-                assign(*target, entry);
+                applyOverride(*target, entry);
             } else {
                 auto inner = entry;
                 inner.path.erase(inner.path.begin());
@@ -2402,7 +2371,7 @@ void Editor::applyOverrides(int instance, NodeId id) {
             }
         }
         // Added nodes join the prefab, or the overrides of its instance they were added inside.
-        for (auto entry : node->overrides.added) {
+        for (auto entry : piece.added) {
             if (entry.parent.size() > 1) {
                 if (auto* target = prefab.findNode(entry.parent[0])) {
                     entry.parent.erase(entry.parent.begin());
@@ -2414,13 +2383,13 @@ void Editor::applyOverrides(int instance, NodeId id) {
             if (prefab.findNode(entry.node.parent)) prefab.nodes.push_back(std::move(entry.node));
         }
         // Added systems join the prefab's; removed ones leave it, or the instance they come from.
-        for (const auto& system : node->overrides.addedSystems) {
+        for (const auto& system : piece.addedSystems) {
             auto& made = prefab.addSystem(system.name);
             const auto madeId = made.id;
             made = system;
             made.id = madeId;
         }
-        for (const auto& entry : node->overrides.removedSystems) {
+        for (const auto& entry : piece.removedSystems) {
             if (entry.instance.empty()) {
                 prefab.removeSystem(entry.system);
             } else if (auto* target = prefab.findNode(entry.instance[0])) {
@@ -2428,14 +2397,14 @@ void Editor::applyOverrides(int instance, NodeId id) {
             }
         }
         // Removed nodes leave the prefab, or join the removals of its instance they lie in.
-        for (const auto& path : node->overrides.removed) {
+        for (const auto& path : piece.removed) {
             if (path.size() == 1) {
                 prefab.removeNode(path[0]);
             } else if (auto* target = prefab.findNode(path[0])) {
                 target->overrides.removed.emplace_back(path.begin() + 1, path.end());
             }
         }
-        for (const auto& entry : node->overrides.systems) {
+        for (const auto& entry : piece.systems) {
             if (entry.instance.empty()) {
                 if (auto* system = prefab.findSystem(entry.system); system && entry.behaviour < system->behaviour.size())
                     for (const auto& [name, value] : entry.fields) system->behaviour[entry.behaviour].data[name] = value;
@@ -2447,17 +2416,17 @@ void Editor::applyOverrides(int instance, NodeId id) {
         }
     }
     try {
-        prefab.save(project_->resolve(node->prefab));
+        prefab.save(project_->resolve(holder.prefab));
     } catch (const std::exception& error) {
-        log("Could not write " + node->prefab + ": " + error.what());
+        log("Could not write " + holder.prefab + ": " + error.what());
         return;
     }
     auto before = doc_;
-    if (doc_.prefabs.count(node->prefab)) doc_.prefabs[node->prefab] = prefab;
-    library_.forget(node->prefab);
-    node->overrides = {};
+    if (doc_.prefabs.count(holder.prefab)) doc_.prefabs[holder.prefab] = prefab;
+    library_.forget(holder.prefab);
+    holder.overrides.subtract(piece);
     commit(std::move(before));
-    log("Applied the overrides to " + node->prefab);
+    log("Applied the overrides to " + holder.prefab);
 }
 
 void Editor::unpack(int instance, NodeId id) {

@@ -337,6 +337,9 @@ struct NodeOverride {
 
     /// Replacement attachment lists, including field edits, additions and removals.
     std::optional<std::vector<Behaviour>> behaviour, renderEvent;
+
+    /// Whether no property is set.
+    bool empty() const;
 };
 
 /// Field values an instance gives one behaviour of a system in its prefab.
@@ -377,6 +380,9 @@ struct Overrides {
     NodeOverride& node(const NodePath& path);
     /// Returns the field override for that behaviour, adding an empty one when there is none.
     FieldOverride& fieldsOf(const NodePath& instance, std::uint32_t system, std::size_t behaviour);
+    /// Removes what @p piece overrides: its properties, field values, and added or
+    /// removed nodes and systems (matched by path and ID). Emptied entries go too.
+    void subtract(const Overrides& piece);
 };
 
 /// The Transform component (TDDja/07 3): placement relative to the nearest ancestor
@@ -440,26 +446,43 @@ struct SceneNode {
     Overrides overrides;
 };
 
-/// Copies only overrides of components that the target already owns.
-inline void applyExtraComponents(SceneNode& node, const NodeOverride& layer) {
-    if (node.particles && layer.particles) node.particles = layer.particles;
-    if (node.model && layer.model) node.model = layer.model;
-    if (node.camera && layer.camera) node.camera = layer.camera;
-    if (node.animator && layer.animator) node.animator = layer.animator;
-    if (node.audioSource && layer.audioSource) node.audioSource = layer.audioSource;
-    if (node.audioListener && layer.audioListener) node.audioListener = layer.audioListener;
-    if (node.acousticGeometry && layer.acousticGeometry) node.acousticGeometry = layer.acousticGeometry;
-    if (node.material && layer.material) node.material = layer.material;
-    if (node.light && layer.light) node.light = layer.light;
-    if (node.sphere && layer.sphere) node.sphere = layer.sphere;
-    if (node.capsule && layer.capsule) node.capsule = layer.capsule;
-    if (node.plane && layer.plane) node.plane = layer.plane;
-    if (node.boxCollider && layer.boxCollider) node.boxCollider = layer.boxCollider;
-    if (node.sphereCollider && layer.sphereCollider) node.sphereCollider = layer.sphereCollider;
-    if (node.capsuleCollider && layer.capsuleCollider) node.capsuleCollider = layer.capsuleCollider;
-    if (node.planeCollider && layer.planeCollider) node.planeCollider = layer.planeCollider;
-    if (node.rigidBody && layer.rigidBody) node.rigidBody = layer.rigidBody;
+/// Calls @p visit(name, each.member...) for every component an override replaces whole
+/// (all but Transform and BoxPrimitive), on SceneNodes and NodeOverrides alike.
+template <class F, class... T> void forEachComponent(F&& visit, T&... each) {
+    visit("Particle System", each.particles...);
+    visit("Model", each.model...);
+    visit("Camera", each.camera...);
+    visit("Animator", each.animator...);
+    visit("Audio Source", each.audioSource...);
+    visit("Audio Listener", each.audioListener...);
+    visit("Acoustic Geometry", each.acousticGeometry...);
+    visit("PBS Material", each.material...);
+    visit("Light", each.light...);
+    visit("Sphere Primitive", each.sphere...);
+    visit("Capsule Primitive", each.capsule...);
+    visit("Plane Primitive", each.plane...);
+    visit("Box Collider", each.boxCollider...);
+    visit("Sphere Collider", each.sphereCollider...);
+    visit("Capsule Collider", each.capsuleCollider...);
+    visit("Plane Collider", each.planeCollider...);
+    visit("RigidBody", each.rigidBody...);
 }
+
+/// Calls @p visit(name, each.member...) for every property of NodeOverrides.
+template <class F, class... T> void forEachProperty(F&& visit, T&... each) {
+    visit("Name", each.name...);
+    visit("Position", each.position...);
+    visit("Rotation", each.rotation...);
+    visit("Scale", each.scale...);
+    visit("Colour", each.colour...);
+    visit("Behaviour", each.behaviour...);
+    visit("Render Event", each.renderEvent...);
+    forEachComponent(visit, each...);
+}
+
+/// Writes the properties @p layer sets into @p node. Component properties go only where
+/// the node has the component; those that do not are returned, at @p layer's path.
+NodeOverride applyOverride(SceneNode& node, const NodeOverride& layer);
 
 /// A node an instance adds to what it instantiates (TDDja/06 4). Its path is the
 /// instance's followed by its ID, wherever its parent is.

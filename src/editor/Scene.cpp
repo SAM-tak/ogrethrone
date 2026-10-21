@@ -552,6 +552,70 @@ FieldOverride& Overrides::fieldsOf(const NodePath& instance, std::uint32_t syste
     return systems.back();
 }
 
+void Overrides::subtract(const Overrides& piece) {
+    for (const auto& part : piece.nodes) {
+        const auto it = std::find_if(nodes.begin(), nodes.end(), [&](const NodeOverride& each) { return each.path == part.path; });
+        if (it == nodes.end()) continue;
+        forEachProperty([](const char*, auto& kept, const auto& gone) { if (gone) kept.reset(); }, *it, part);
+        if (it->empty()) nodes.erase(it);
+    }
+    for (const auto& part : piece.systems) {
+        const auto it = std::find_if(systems.begin(), systems.end(), [&](const FieldOverride& each) {
+            return each.instance == part.instance && each.system == part.system && each.behaviour == part.behaviour;
+        });
+        if (it == systems.end()) continue;
+        for (const auto& [name, value] : part.fields) it->fields.erase(name);
+        if (it->fields.empty()) systems.erase(it);
+    }
+    const auto listed = [](const auto& list, auto&& same) { return std::any_of(list.begin(), list.end(), same); };
+    added.erase(std::remove_if(added.begin(), added.end(), [&](const AddedNode& entry) {
+        return listed(piece.added, [&](const AddedNode& each) { return each.node.id == entry.node.id && each.parent == entry.parent; });
+    }), added.end());
+    removed.erase(std::remove_if(removed.begin(), removed.end(), [&](const NodePath& path) {
+        return listed(piece.removed, [&](const NodePath& each) { return each == path; });
+    }), removed.end());
+    addedSystems.erase(std::remove_if(addedSystems.begin(), addedSystems.end(), [&](const System& system) {
+        return listed(piece.addedSystems, [&](const System& each) { return each.id == system.id; });
+    }), addedSystems.end());
+    removedSystems.erase(std::remove_if(removedSystems.begin(), removedSystems.end(), [&](const RemovedSystem& entry) {
+        return listed(piece.removedSystems,
+                      [&](const RemovedSystem& each) { return each.instance == entry.instance && each.system == entry.system; });
+    }), removedSystems.end());
+}
+
+bool NodeOverride::empty() const {
+    bool set = false;
+    forEachProperty([&](const char*, const auto& value) { set |= value.has_value(); }, *this);
+    return !set;
+}
+
+NodeOverride applyOverride(SceneNode& node, const NodeOverride& layer) {
+    NodeOverride unused{layer.path};
+    if (layer.name) node.name = *layer.name;
+    if (layer.behaviour) node.behaviour = *layer.behaviour;
+    if (layer.renderEvent) node.renderEvent = *layer.renderEvent;
+    if (auto& transform = node.transform) {
+        if (layer.position) transform->position = *layer.position;
+        if (layer.rotation) transform->rotation = *layer.rotation;
+        if (layer.scale) transform->scale = *layer.scale;
+    } else {
+        unused.position = layer.position;
+        unused.rotation = layer.rotation;
+        unused.scale = layer.scale;
+    }
+    if (node.box) {
+        if (layer.colour) node.box->colour = *layer.colour;
+    } else {
+        unused.colour = layer.colour;
+    }
+    forEachComponent([](const char*, auto& component, const auto& value, auto& left) {
+        if (!value) return;
+        if (component) component = value;
+        else left = value;
+    }, node, layer, unused);
+    return unused;
+}
+
 LhatValue writeOverrides(lton::Writer& out, const Overrides& overrides) {
     const auto root = out.table();
     const auto nodes = out.table();

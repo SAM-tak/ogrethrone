@@ -57,6 +57,17 @@ struct ExpandedSystem {
     bool added = false;
 };
 
+/// Part of an instance's overrides that found nothing to change: what it names is no
+/// longer in the prefab. Kept until the user removes it (TDDja/06 4.2).
+struct UnusedOverride {
+    /// The instance whose overrides hold it (a variant's own: empty).
+    NodePath instance;
+    /// The part, as Overrides::subtract() takes it.
+    Overrides piece;
+    /// What it is, for the Inspector.
+    std::string label;
+};
+
 /// A scene or prefab with its prefab instances expanded (TDDja/06 5).
 struct Expansion {
     static constexpr std::size_t npos = static_cast<std::size_t>(-1);
@@ -71,12 +82,19 @@ struct Expansion {
     /// Names of the systems overrides removed, by the instance's path followed by
     /// the override's instance path, and the system's ID.
     std::map<std::pair<NodePath, std::uint32_t>, std::string> removedSystems;
+    /// Overrides of the expanded content and its instances that change nothing. Those
+    /// inside an instance that could not be expanded are not listed: they may apply again.
+    std::vector<UnusedOverride> unused;
+    /// Instances that could not be expanded, so they show as plain nodes.
+    std::vector<NodePath> broken;
 
     /// Index of the node at @p path (see NodePath), or npos. Each ID is looked for
     /// below the node found for the one before it; the first match in order wins.
     std::size_t find(const NodePath& path) const;
     /// Depth-first node indices, parents first and siblings in their stored order.
     std::vector<std::size_t> hierarchy() const;
+    /// Whether @p path lies in (or is) a broken instance, so what it names may come back.
+    bool unsure(const NodePath& path) const;
 };
 
 /// Expands @p content; a variant expands its base, the base's root at the empty

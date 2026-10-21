@@ -150,7 +150,15 @@ Instance places the prefab named next to it, creating one with a root node when
 the file does not exist yet; double-click the new instance node to fill the prefab.
 A node's Inspector lists the system fields that refer to it (Referenced by);
 clicking one selects that system.
-Apply in the Inspector writes all of an instance's overrides into its prefab.
+Each override has an Apply button beside its Revert (a property, a component, a
+Behaviour list, a system field, a removal, or a node or system the instance added):
+it writes that override into the prefab, saving it at once, and removes it from the
+instance. The instance's Inspector has Apply All and Revert All for all of them.
+When the prefab no longer has what an override names (a node, a system, or a
+component), the override is listed in grey under the instance with a Remove button
+(and Remove All). These overrides are never removed automatically, so a prefab that is
+broken for a while (a branch switch, an undone deletion) does not lose them. The
+overrides of an instance whose prefab cannot be read are kept, but not listed.
 Unpack in the Inspector replaces an instance with plain nodes holding what it
 shows, nested instances included, and copies its systems into the file.
 Dragging a node onto the Browser's Prefabs tab saves it as
