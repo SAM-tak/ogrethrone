@@ -556,7 +556,7 @@ void Overrides::subtract(const Overrides& piece) {
     for (const auto& part : piece.nodes) {
         const auto it = std::find_if(nodes.begin(), nodes.end(), [&](const NodeOverride& each) { return each.path == part.path; });
         if (it == nodes.end()) continue;
-        forEachProperty([](const char*, auto& kept, const auto& gone) { if (gone) kept.reset(); }, *it, part);
+        forEachProperty([](const char*, auto& kept, const auto& gone) { unset(kept, gone); }, *it, part);
         if (it->empty()) nodes.erase(it);
     }
     for (const auto& part : piece.systems) {
@@ -583,6 +583,94 @@ void Overrides::subtract(const Overrides& piece) {
     }), removedSystems.end());
 }
 
+bool AttachmentOverride::empty() const {
+    return !script && !enabled && !priority && data.empty() &&
+           std::none_of(phasePriorities.begin(), phasePriorities.end(), [](const auto& phase) { return phase.has_value(); });
+}
+
+void AttachmentOverride::applyTo(Behaviour& behaviour) const {
+    if (script) behaviour.script = *script;
+    if (enabled) behaviour.enabled = *enabled;
+    if (priority) behaviour.priority = *priority;
+    for (int phase = 0; phase < 3; ++phase)
+        if (phasePriorities[phase]) behaviour.phasePriorities[phase] = *phasePriorities[phase];
+    for (const auto& [name, value] : data) behaviour.data[name] = value;
+}
+
+AttachmentOverride& AttachmentsOverride::change(NodeId id) {
+    for (auto& entry : changed)
+        if (entry.id == id) return entry;
+    changed.push_back({id});
+    return changed.back();
+}
+
+void AttachmentsOverride::merge(const AttachmentsOverride& from) {
+    const auto addedOne = [&](NodeId id) {
+        return std::find_if(added.begin(), added.end(), [&](const Behaviour& each) { return each.id == id; });
+    };
+    // A change or removal of an attachment this override adds goes to the attachment itself.
+    for (const auto& entry : from.changed) {
+        if (const auto it = addedOne(entry.id); it != added.end()) {
+            entry.applyTo(*it);
+            continue;
+        }
+        auto& into = change(entry.id);
+        if (entry.script) into.script = entry.script;
+        if (entry.enabled) into.enabled = entry.enabled;
+        if (entry.priority) into.priority = entry.priority;
+        for (int phase = 0; phase < 3; ++phase)
+            if (entry.phasePriorities[phase]) into.phasePriorities[phase] = entry.phasePriorities[phase];
+        for (const auto& [name, value] : entry.data) into.data[name] = value;
+    }
+    added.insert(added.end(), from.added.begin(), from.added.end());
+    for (const auto id : from.removed) {
+        if (const auto it = addedOne(id); it != added.end()) {
+            added.erase(it);
+            continue;
+        }
+        changed.erase(std::remove_if(changed.begin(), changed.end(), [&](const AttachmentOverride& each) { return each.id == id; }),
+                      changed.end());
+        removed.push_back(id);
+    }
+}
+
+void AttachmentsOverride::subtract(const AttachmentsOverride& piece) {
+    for (const auto& part : piece.changed) {
+        const auto it = std::find_if(changed.begin(), changed.end(), [&](const AttachmentOverride& each) { return each.id == part.id; });
+        if (it == changed.end()) continue;
+        if (part.script) it->script.reset();
+        if (part.enabled) it->enabled.reset();
+        if (part.priority) it->priority.reset();
+        for (int phase = 0; phase < 3; ++phase)
+            if (part.phasePriorities[phase]) it->phasePriorities[phase].reset();
+        for (const auto& [name, value] : part.data) it->data.erase(name);
+        if (it->empty()) changed.erase(it);
+    }
+    added.erase(std::remove_if(added.begin(), added.end(), [&](const Behaviour& each) {
+        return std::any_of(piece.added.begin(), piece.added.end(), [&](const Behaviour& gone) { return gone.id == each.id; });
+    }), added.end());
+    removed.erase(std::remove_if(removed.begin(), removed.end(), [&](NodeId id) {
+        return std::find(piece.removed.begin(), piece.removed.end(), id) != piece.removed.end();
+    }), removed.end());
+}
+
+AttachmentsOverride AttachmentsOverride::apply(std::vector<Behaviour>& list) const {
+    AttachmentsOverride unused;
+    const auto find = [&](NodeId id) {
+        return std::find_if(list.begin(), list.end(), [&](const Behaviour& each) { return each.id == id; });
+    };
+    for (const auto id : removed) {
+        if (const auto it = find(id); it != list.end()) list.erase(it);
+        else unused.removed.push_back(id);
+    }
+    for (const auto& entry : changed) {
+        if (const auto it = find(entry.id); it != list.end()) entry.applyTo(*it);
+        else unused.changed.push_back(entry);
+    }
+    list.insert(list.end(), added.begin(), added.end());
+    return unused;
+}
+
 bool NodeOverride::empty() const {
     bool set = false;
     forEachProperty([&](const char*, const auto& value) { set |= value.has_value(); }, *this);
@@ -592,8 +680,8 @@ bool NodeOverride::empty() const {
 NodeOverride applyOverride(SceneNode& node, const NodeOverride& layer) {
     NodeOverride unused{layer.path};
     if (layer.name) node.name = *layer.name;
-    if (layer.behaviour) node.behaviour = *layer.behaviour;
-    if (layer.renderEvent) node.renderEvent = *layer.renderEvent;
+    unused.behaviour = layer.behaviour.apply(node.behaviour);
+    unused.renderEvent = layer.renderEvent.apply(node.renderEvent);
     if (auto& transform = node.transform) {
         if (layer.position) transform->position = *layer.position;
         if (layer.rotation) transform->rotation = *layer.rotation;
@@ -636,8 +724,8 @@ LhatValue writeOverrides(lton::Writer& out, const Overrides& overrides) {
             out.set(item, "box", box);
         }
         writeExtraComponents(out, item, entry);
-        if (entry.behaviour) out.set(item, "behaviour", writeBehaviourList(out, *entry.behaviour));
-        if (entry.renderEvent) out.set(item, "renderEvent", writeBehaviourList(out, *entry.renderEvent));
+        if (entry.behaviour.has_value()) out.set(item, "behaviour", writeAttachmentsOverride(out, entry.behaviour));
+        if (entry.renderEvent.has_value()) out.set(item, "renderEvent", writeAttachmentsOverride(out, entry.renderEvent));
         out.push(nodes, item);
     }
     out.set(root, "nodes", nodes);
@@ -700,10 +788,8 @@ Overrides readOverrides(LhatValue value) {
             }
             if (const auto box = lton::field(item, "box"); !lhat_is_nil(box))
                 readOptional(lton::table(box), "colour", entry.colour);
-            if (const auto value = lton::field(item, "behaviour"); !lhat_is_nil(value))
-                entry.behaviour = readBehaviourList(value);
-            if (const auto value = lton::field(item, "renderEvent"); !lhat_is_nil(value))
-                entry.renderEvent = readBehaviourList(value);
+            entry.behaviour = readAttachmentsOverride(lton::field(item, "behaviour"));
+            entry.renderEvent = readAttachmentsOverride(lton::field(item, "renderEvent"));
             if (!lhat_is_nil(lton::field(item, "scripts"))) lton::invalid();
             overrides.nodes.push_back(std::move(entry));
         }
@@ -929,6 +1015,8 @@ std::vector<Behaviour> readBehaviourList(LhatValue value) {
         Behaviour behaviour;
         if (!lhat_is_nil(lton::field(item,"fields"))) lton::invalid();
         behaviour.script = lton::relativePath(lton::field(item, "script"));
+        // Without an ID, its place in the list: a prefab's attachment keeps the ID overrides find it by.
+        behaviour.id = i + 1;
         if(const auto value=lton::field(item,"id");!lhat_is_nil(value)) behaviour.id=nodeId(value);
         if(!identities.insert(behaviour.id).second) lton::invalid();
         if(const auto value=lton::field(item,"enabled");!lhat_is_nil(value)) {
@@ -949,6 +1037,79 @@ std::vector<Behaviour> readBehaviourList(LhatValue value) {
         result.push_back(std::move(behaviour));
     }
     return result;
+}
+
+// A priority override is a number, or false^ for the script's default.
+LhatValue writeAttachmentsOverride(lton::Writer& out, const AttachmentsOverride& overrides) {
+    const auto root = out.table();
+    if (!overrides.changed.empty()) {
+        const auto changed = out.table();
+        for (const auto& entry : overrides.changed) {
+            const auto item = out.table();
+            out.set(item, "id", lhat_integer(static_cast<LhatInteger>(entry.id)));
+            if (entry.script) out.set(item, "script", out.string(*entry.script));
+            if (entry.enabled) out.set(item, "enabled", lhat_bool(*entry.enabled));
+            const auto priority = [&](const char* key, const std::optional<std::optional<double>>& value) {
+                if (!value) return;
+                if (*value && !std::isfinite(**value)) lton::invalid();
+                out.set(item, key, *value ? lhat_real(**value) : lhat_bool(false));
+            };
+            priority("priority", entry.priority);
+            for (int phase = 0; phase < 3; ++phase)
+                priority((std::string(behaviourMethods[phase]) + "Priority").c_str(), entry.phasePriorities[phase]);
+            if (!entry.data.empty()) out.set(item, "data", writeFields(out, entry.data));
+            out.push(changed, item);
+        }
+        out.set(root, "changed", changed);
+    }
+    if (!overrides.added.empty()) out.set(root, "added", writeBehaviourList(out, overrides.added));
+    if (!overrides.removed.empty()) {
+        const auto removed = out.table();
+        for (const auto id : overrides.removed) out.push(removed, lhat_integer(static_cast<LhatInteger>(id)));
+        out.set(root, "removed", removed);
+    }
+    return root;
+}
+
+AttachmentsOverride readAttachmentsOverride(LhatValue value) {
+    AttachmentsOverride overrides;
+    if (lhat_is_nil(value)) return overrides;
+    const auto& root = lton::table(value);
+    if (const auto changed = lton::field(root, "changed"); !lhat_is_nil(changed)) {
+        const auto& list = lton::table(changed);
+        for (std::size_t i = 0, count = lton::sequence(list); i < count; ++i) {
+            const auto& item = lton::table(lton::at(list, i));
+            AttachmentOverride entry;
+            entry.id = nodeId(lton::field(item, "id"));
+            if (const auto script = lton::field(item, "script"); !lhat_is_nil(script)) entry.script = lton::relativePath(script);
+            if (const auto enabled = lton::field(item, "enabled"); !lhat_is_nil(enabled)) {
+                if (!lhat_is_bool(enabled)) lton::invalid();
+                entry.enabled = lhat_as_bool(enabled);
+            }
+            const auto priority = [&](const char* key, std::optional<std::optional<double>>& into) {
+                const auto value = lton::field(item, key);
+                if (lhat_is_nil(value)) return;
+                if (lhat_is_bool(value)) {
+                    if (lhat_as_bool(value)) lton::invalid();
+                    into.emplace();
+                    return;
+                }
+                into = lton::number(value);
+                if (!std::isfinite(**into)) lton::invalid();
+            };
+            priority("priority", entry.priority);
+            for (int phase = 0; phase < 3; ++phase)
+                priority((std::string(behaviourMethods[phase]) + "Priority").c_str(), entry.phasePriorities[phase]);
+            entry.data = readFields(lton::field(item, "data"));
+            overrides.changed.push_back(std::move(entry));
+        }
+    }
+    overrides.added = readBehaviourList(lton::field(root, "added"));
+    if (const auto removed = lton::field(root, "removed"); !lhat_is_nil(removed)) {
+        const auto& list = lton::table(removed);
+        for (std::size_t i = 0, count = lton::sequence(list); i < count; ++i) overrides.removed.push_back(nodeId(lton::at(list, i)));
+    }
+    return overrides;
 }
 
 LhatValue writeSystems(lton::Writer& out, const std::vector<System>& systems) {

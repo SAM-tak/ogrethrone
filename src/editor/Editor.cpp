@@ -2330,7 +2330,7 @@ void Editor::dropOnPrefab(int instance, NodeId id, const std::string& file) {
 namespace {
 /// Copies the properties @p from sets into @p into.
 void assign(NodeOverride& into, const NodeOverride& from) {
-    forEachProperty([](const char*, auto& kept, const auto& set) { if (set) kept = set; }, into, from);
+    forEachProperty([](const char*, auto& kept, const auto& set) { overlay(kept, set); }, into, from);
 }
 
 /// Adds @p from on top of the overrides @p into already has.

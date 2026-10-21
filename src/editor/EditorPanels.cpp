@@ -593,8 +593,10 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
 
     auto value = expanded.node;
     unsigned changed = 0;
-    // Overrides to write into an instance's prefab, once nothing here points into them.
+    // Overrides to write into an instance's prefab, or to take out of target.overrides,
+    // once nothing here points into them.
     std::optional<std::pair<SceneNode*, Overrides>> applying;
+    std::optional<Overrides> reverting;
     // Reverts or applies one overridden property, given as a member of NodeOverride.
     const auto revertOrApply = [&](auto member, const char* revert, const char* apply) {
         if (ImGui::SmallButton(revert)) {
@@ -920,19 +922,38 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         if(value.planeCollider && c.type==BodyType::Dynamic) ImGui::TextWrapped("PlaneCollider requires Static or Kinematic motion.");
         return edited;
     });
-    const auto editAttachment = [&](Behaviour& behaviour, const char* symbol) {
+    // Edits one attachment; @p owned when it is not the prefab's. For the prefab's, @p change is
+    // this instance's override of it: what it sets is coloured, with @p item(part) drawing Revert and Apply.
+    const auto editAttachment = [&](Behaviour& behaviour, const char* symbol, bool owned, const AttachmentOverride* change,
+                                    auto&& item) {
         bool changed = false;
+        // Draws one setting, coloured when overridden, then Revert and Apply for it.
+        const auto setting = [&](const char* id, bool overridden, auto&& widget, auto&& part) {
+            ImGui::PushID(id);
+            if (overridden) ImGui::PushStyleColor(ImGuiCol_Text, overriddenColour);
+            widget();
+            if (overridden) ImGui::PopStyleColor();
+            if (overridden) {
+                AttachmentOverride piece{change->id};
+                part(piece);
+                item(std::move(piece));
+            }
+            ImGui::PopID();
+        };
             char buffer[512];
-            fill(buffer, behaviour.script);
-            changed |= ImGui::InputText("Script", buffer, sizeof buffer);
-            behaviour.script = buffer;
-            track();
+            setting("script", change && change->script, [&] {
+                fill(buffer, behaviour.script);
+                changed |= ImGui::InputText("Script", buffer, sizeof buffer);
+                behaviour.script = buffer;
+                track();
+            }, [&](AttachmentOverride& part) { part.script = change->script; });
             const auto& cached = fieldsOf(behaviour.script, symbol);
-            changed|=ImGui::Checkbox("Enabled",&behaviour.enabled); track();
+            setting("enabled", change && change->enabled, [&] {
+                changed|=ImGui::Checkbox("Enabled",&behaviour.enabled); track();
+            }, [&](AttachmentOverride& part) { part.enabled = change->enabled; });
             // RenderEvent attachments have no priority overrides.
             if (std::string_view(symbol) == "Behaviour") {
                 const auto priority=[&](const char* label,std::optional<double>& value,double inherited) {
-                    ImGui::PushID(label);
                     bool overridden=value.has_value();
                     if(ImGui::Checkbox("Override",&overridden)) { value=overridden?std::optional<double>(inherited):std::nullopt; changed=true; }
                     track(); ImGui::SameLine();
@@ -941,112 +962,202 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
                         if(ImGui::InputDouble(label,&number) && std::isfinite(number)) { value=number; changed=true; }
                         track();
                     } else ImGui::TextDisabled("%s: %.9g (inherited)",label,inherited);
-                    ImGui::PopID();
                 };
                 if (ImGui::TreeNode("Priority")) {
-                    priority("Priority",behaviour.priority,cached.behaviour.defaults.priority);
+                    setting("Priority", change && change->priority, [&] {
+                        priority("Priority",behaviour.priority,cached.behaviour.defaults.priority);
+                    }, [&](AttachmentOverride& part) { part.priority = change->priority; });
                     for(int phase=0;phase<3;++phase) {
                         auto inherited=behaviour; inherited.phasePriorities[phase].reset();
-                        priority((std::string(behaviourMethods[phase])+" priority").c_str(),behaviour.phasePriorities[phase],
-                                 effectivePriority(inherited,cached.behaviour.defaults,phase));
+                        const auto label=std::string(behaviourMethods[phase])+" priority";
+                        setting(label.c_str(), change && change->phasePriorities[phase], [&] {
+                            priority(label.c_str(),behaviour.phasePriorities[phase],effectivePriority(inherited,cached.behaviour.defaults,phase));
+                        }, [&](AttachmentOverride& part) { part.phasePriorities[phase] = change->phasePriorities[phase]; });
                     }
                     ImGui::TreePop();
                 }
             }
             if (!cached.error.empty()) ImGui::TextWrapped("%s", cached.error.c_str());
             for (const auto& info : cached.fields) {
-                ImGui::PushID(info.name.c_str());
                 auto found = behaviour.data.find(info.name);
                 FieldValue field = found != behaviour.data.end() && found->second.index() == info.defaultValue.index()
                     ? found->second : info.defaultValue;
                 bool edited = false;
-                if (info.kind == FieldKind::Number) {
-                    float number = static_cast<float>(std::get<double>(field));
-                    edited = ImGui::DragFloat(info.name.c_str(), &number, 0.1f);
-                    field = double(number);
-                } else if (info.kind == FieldKind::Bool) {
-                    bool flag = std::get<bool>(field);
-                    edited = ImGui::Checkbox(info.name.c_str(), &flag);
-                    field = flag;
-                } else if (info.kind == FieldKind::String) {
-                    fill(buffer, std::get<std::string>(field));
-                    edited = ImGui::InputText(info.name.c_str(), buffer, sizeof buffer);
-                    field = std::string(buffer);
-                } else if (ImGui::BeginCombo(info.name.c_str(), "Select node")) {
-                    if (ImGui::Selectable("(none)")) field = NodeRef{}, edited = true;
-                    for (std::size_t i = 0; i < view_.instances.size(); ++i)
-                        for (const auto& node : view_.instances[i].expansion.nodes) {
-                            ImGui::PushID(static_cast<int>(i));
-                            const auto label = node.node.name + "##" + std::to_string(node.node.id);
-                            if (ImGui::Selectable(label.c_str()) && !node.path.empty()) {
-                                auto base = expanded.path;
-                                if (!base.empty() && !expanded.root) base.pop_back();
-                                auto path = node.path;
-                                std::uint32_t scene = view_.instances[i].id;
-                                if (static_cast<int>(i) == selected_.instance && path.size() >= base.size() &&
-                                    std::equal(base.begin(), base.end(), path.begin())) {
-                                    path = after(path, base.size());
-                                    if (path.empty()) path = {node.root};
-                                    scene = 0;
-                                } else if (!scene) continue;
-                                field = NodeRef{scene, path.front(), after(path, 1)};
-                                edited = true;
+                setting(info.name.c_str(), change && change->data.count(info.name), [&] {
+                    if (info.kind == FieldKind::Number) {
+                        float number = static_cast<float>(std::get<double>(field));
+                        edited = ImGui::DragFloat(info.name.c_str(), &number, 0.1f);
+                        field = double(number);
+                    } else if (info.kind == FieldKind::Bool) {
+                        bool flag = std::get<bool>(field);
+                        edited = ImGui::Checkbox(info.name.c_str(), &flag);
+                        field = flag;
+                    } else if (info.kind == FieldKind::String) {
+                        fill(buffer, std::get<std::string>(field));
+                        edited = ImGui::InputText(info.name.c_str(), buffer, sizeof buffer);
+                        field = std::string(buffer);
+                    } else if (ImGui::BeginCombo(info.name.c_str(), "Select node")) {
+                        if (ImGui::Selectable("(none)")) field = NodeRef{}, edited = true;
+                        for (std::size_t i = 0; i < view_.instances.size(); ++i)
+                            for (const auto& node : view_.instances[i].expansion.nodes) {
+                                ImGui::PushID(static_cast<int>(i));
+                                const auto label = node.node.name + "##" + std::to_string(node.node.id);
+                                if (ImGui::Selectable(label.c_str()) && !node.path.empty()) {
+                                    auto base = expanded.path;
+                                    if (!base.empty() && !expanded.root) base.pop_back();
+                                    auto path = node.path;
+                                    std::uint32_t scene = view_.instances[i].id;
+                                    if (static_cast<int>(i) == selected_.instance && path.size() >= base.size() &&
+                                        std::equal(base.begin(), base.end(), path.begin())) {
+                                        path = after(path, base.size());
+                                        if (path.empty()) path = {node.root};
+                                        scene = 0;
+                                    } else if (!scene) continue;
+                                    field = NodeRef{scene, path.front(), after(path, 1)};
+                                    edited = true;
+                                }
+                                ImGui::PopID();
                             }
-                            ImGui::PopID();
-                        }
-                    ImGui::EndCombo();
-                }
-                track();
+                        ImGui::EndCombo();
+                    }
+                    track();
+                }, [&](AttachmentOverride& part) { part.data[info.name] = change->data.at(info.name); });
                 if (edited) behaviour.data[info.name] = field, changed = true;
-                if (found != behaviour.data.end()) {
+                // Reset returns the attachment's own field to the script's default.
+                if (owned && found != behaviour.data.end()) {
+                    ImGui::PushID(info.name.c_str());
                     ImGui::SameLine();
                     if (ImGui::SmallButton("Reset")) {
                         checkpoint();
                         behaviour.data.erase(info.name);
                         changed = true;
                     }
+                    ImGui::PopID();
                 }
-                ImGui::PopID();
             }
         return changed;
     };
     // Behaviour and RenderEvent use the same component section as the other built-in components.
-    // Work on a copy so edits never invalidate the expansion being displayed.
+    // Work on a copy so edits never invalidate the expansion being displayed. Inside an
+    // instance, an attachment of the prefab is changed by overrides, field by field (TDDja/07 4);
+    // one the instance added is edited where the overrides hold it.
     const auto attachmentSection = [&](const char* title, const char* symbol, std::vector<Behaviour> SceneNode::*list,
-                                       std::optional<std::vector<Behaviour>> NodeOverride::*replaced) {
-        if ((value.*list).empty() && !(layer && layer->*replaced)) return;
-        componentSection(title,true,replaced,[&] {
+                                       AttachmentsOverride NodeOverride::*layered) {
+        const auto* overrides = layer ? &(layer->*layered) : nullptr;
+        if ((value.*list).empty() && !(overrides && overrides->has_value())) return;
+        const auto edit = [&]() -> AttachmentsOverride& { return target.overrides->node(target.relative).*layered; };
+        // Revert (or Restore) and Apply for one part of this list's overrides.
+        const auto item = [&](AttachmentsOverride part, const char* revert) {
+            Overrides piece;
+            piece.node(target.relative).*layered = std::move(part);
+            ImGui::SameLine();
+            if (ImGui::SmallButton(revert)) reverting = piece;
+            if (!target.holder) return;
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Apply")) applying.emplace(target.holder, std::move(piece));
+        };
+        const auto addedHere = [&](NodeId id) {
+            return overrides && std::any_of(overrides->added.begin(), overrides->added.end(), [&](const Behaviour& each) { return each.id == id; });
+        };
+        componentSection(title,true,layered,[&] {
             ImGui::Indent();
-            auto attachments = value.*list;
+            const auto& shown = value.*list;
+            auto attachments = shown;
             bool attachmentsChanged = false;
             for (std::size_t k = 0; k < attachments.size(); ++k) {
                 auto& behaviour = attachments[k];
+                const bool added = addedHere(behaviour.id);
+                const AttachmentOverride* change = nullptr;
+                if (overrides)
+                    for (const auto& entry : overrides->changed)
+                        if (entry.id == behaviour.id) change = &entry;
                 ImGui::PushID(static_cast<int>(k));
                 bool keep = true;
-                if (ImGui::CollapsingHeader((behaviour.script + "###attachment").c_str(), &keep, open))
-                    attachmentsChanged |= editAttachment(behaviour, symbol);
+                if (added || change) ImGui::PushStyleColor(ImGuiCol_Text, overriddenColour);
+                const bool shownOpen = ImGui::CollapsingHeader((behaviour.script + "###attachment").c_str(), &keep, open);
+                if (added || change) ImGui::PopStyleColor();
+                if (added) {
+                    AttachmentsOverride part;
+                    part.added.push_back(behaviour);
+                    item(std::move(part), "Revert");
+                }
+                if (shownOpen && editAttachment(behaviour, symbol, own || added, change, [&](AttachmentOverride part) {
+                        AttachmentsOverride parts;
+                        parts.changed.push_back(std::move(part));
+                        item(std::move(parts), "Revert");
+                    })) {
+                    if (own || added) {
+                        attachmentsChanged = true;
+                    } else if (target.overrides) {
+                        // Only what differs from the prefab's attachment becomes an override.
+                        const auto& before = shown[k];
+                        AttachmentsOverride part;
+                        auto& differs = part.change(behaviour.id);
+                        if (behaviour.script != before.script) differs.script = behaviour.script;
+                        if (behaviour.enabled != before.enabled) differs.enabled = behaviour.enabled;
+                        if (behaviour.priority != before.priority) differs.priority = behaviour.priority;
+                        for (int phase = 0; phase < 3; ++phase)
+                            if (behaviour.phasePriorities[phase] != before.phasePriorities[phase])
+                                differs.phasePriorities[phase] = behaviour.phasePriorities[phase];
+                        for (const auto& [name, field] : behaviour.data)
+                            if (const auto it = before.data.find(name); it == before.data.end() || !(it->second == field))
+                                differs.data[name] = field;
+                        edit().merge(part);
+                    }
+                }
                 if (!keep) {
                     checkpoint();
-                    attachments.erase(attachments.begin() + static_cast<std::ptrdiff_t>(k));
-                    attachmentsChanged = true;
+                    if (own) {
+                        attachments.erase(attachments.begin() + static_cast<std::ptrdiff_t>(k));
+                        attachmentsChanged = true;
+                    } else if (target.overrides) {
+                        AttachmentsOverride part;
+                        part.removed.push_back(behaviour.id);
+                        edit().merge(part);
+                    }
                     ImGui::PopID();
                     break;
                 }
                 ImGui::PopID();
             }
+            // The prefab's attachments this instance removes.
+            if (overrides)
+                for (const auto id : overrides->removed) {
+                    const auto name = view_.instances[selected_.instance].expansion.removedAttachments.find({selected_.path, id});
+                    if (name == view_.instances[selected_.instance].expansion.removedAttachments.end()) continue;
+                    ImGui::PushID(static_cast<int>(id));
+                    ImGui::TextColored(overriddenColour, "Removed %s", name->second.c_str());
+                    AttachmentsOverride part;
+                    part.removed.push_back(id);
+                    item(std::move(part), "Restore");
+                    ImGui::PopID();
+                }
             if (ImGui::Button("Add Script")) {
                 checkpoint();
-                attachments.push_back({});
-                attachmentsChanged = true;
+                if (own) attachments.push_back({}), attachmentsChanged = true;
+                else if (target.overrides) edit().added.push_back({});
             }
             ImGui::Unindent();
-            if (attachmentsChanged) {
-                if (own) own->*list = std::move(attachments);
-                else if (target.overrides) target.overrides->node(target.relative).*replaced = std::move(attachments);
+            if (!attachmentsChanged) return;
+            if (own) {
+                own->*list = std::move(attachments);
+            } else if (target.overrides) {
+                // Attachments this instance added are kept in its overrides, edited there.
+                for (auto& each : edit().added)
+                    for (const auto& edited : attachments)
+                        if (edited.id == each.id) each = edited;
             }
         },[&] {
-            if (own) (own->*list).clear();
-            else if (target.overrides) target.overrides->node(target.relative).*replaced = std::vector<Behaviour>{};
+            if (own) {
+                (own->*list).clear();
+            } else if (target.overrides) {
+                AttachmentsOverride part;
+                for (const auto& each : value.*list)
+                    if (!addedHere(each.id)) part.removed.push_back(each.id);
+                auto& into = edit();
+                into.added.clear();
+                into.merge(part);
+            }
         });
     };
     attachmentSection("Behaviour", "Behaviour", &SceneNode::behaviour, &NodeOverride::behaviour);
@@ -1099,12 +1210,12 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         if (value.behaviour.empty() && ImGui::Selectable("Behaviour")) {
             checkpoint();
             if (own) own->behaviour.push_back({});
-            else target.overrides->node(target.relative).behaviour = std::vector<Behaviour>(1);
+            else target.overrides->node(target.relative).behaviour.added.push_back({});
         }
         if (value.renderEvent.empty() && ImGui::Selectable("Render Event")) {
             checkpoint();
             if (own) own->renderEvent.push_back({});
-            else target.overrides->node(target.relative).renderEvent = std::vector<Behaviour>(1);
+            else target.overrides->node(target.relative).renderEvent.added.push_back({});
         }
         if (own) {
             if (!own->transform && ImGui::Selectable("Transform")) checkpoint(), own->transform.emplace();
@@ -1148,6 +1259,10 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
                 applying.emplace(target.addedBy, std::move(piece));
             }
         }
+    }
+    if (reverting) {
+        checkpoint();
+        target.overrides->subtract(*reverting);
     }
     if (applying) applyOverrides(*applying->first, std::move(applying->second));
 }

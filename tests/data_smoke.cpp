@@ -280,6 +280,7 @@ int main() {
     const auto gone = throne::newNodeId();
     stale.node({gone}).name = "Gone";
     stale.node({lid}).light = throne::LightComponent{};
+    stale.node({lid}).behaviour.change(gone).data["speed"] = 1.0;
     stale.removed.push_back({gone});
     stale.removedSystems.push_back({{}, 999});
     stale.fieldsOf({}, 999, 0).fields["speed"] = 1.0;
@@ -288,7 +289,8 @@ int main() {
         std::any_of(unused.begin(), unused.end(), [&](const auto& entry) { return entry.instance != throne::NodePath{yard.nodes[0].id}; }))
         return fail("Overrides of what the prefab no longer has were not listed");
     for (const auto& entry : unused) stale.subtract(entry.piece);
-    if (stale.nodes.size() != kept.nodes.size() || !stale.nodes[0].scale || stale.nodes[0].light || !stale.removed.empty() ||
+    if (stale.nodes.size() != kept.nodes.size() || !stale.nodes[0].scale || stale.nodes[0].light ||
+        stale.nodes[0].behaviour.has_value() || !stale.removed.empty() ||
         stale.removedSystems.size() != 1 || !stale.systems.empty() || !throne::expand(yard, library).unused.empty())
         return fail("Removing unused overrides took more or less than them");
 

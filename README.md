@@ -151,7 +151,8 @@ the file does not exist yet; double-click the new instance node to fill the pref
 A node's Inspector lists the system fields that refer to it (Referenced by);
 clicking one selects that system.
 Each override has an Apply button beside its Revert (a property, a component, a
-Behaviour list, a system field, a removal, or a node or system the instance added):
+script setting or field of an attachment, a system field, a removal, or a node, system
+or attachment the instance added):
 it writes that override into the prefab, saving it at once, and removes it from the
 instance. The instance's Inspector has Apply All and Revert All for all of them.
 When the prefab no longer has what an override names (a node, a system, or a
@@ -376,8 +377,21 @@ components = {
 ```
 
 The Inspector edits exported members in `data`; the runtime writes them into the
-same instance that owns the callbacks. Prefab overrides replace the list under
-`overrides.nodes[].behaviour`; an empty list removes the component's attachments.
+same instance that owns the callbacks. A prefab instance overrides the prefab's
+attachments one by one, found by their `id` (an attachment without one gets its place in
+the list, from 1), under `overrides.nodes[].behaviour`:
+
+```lton
+behaviour = {
+    changed = { { id = 1, data = { degreesPerSecond = 1360 }, enabled = false^ } },
+    added = { { script = "scripts/pop.lh", id = 7484712563498500123, data = {} } },
+    removed = { 2 },
+},
+```
+
+`changed` sets fields and settings (`script`, `enabled`, the priorities; a priority of
+`false^` returns to the script's default) over the prefab's, so the prefab's other fields
+still reach the instance.
 
 `start(node)`, `update(node, dt)`, `lateupdate(node, dt)` and
 `onendofframe(node, dt)` are optional. The three BehaviourSystems query enabled
@@ -414,8 +428,9 @@ update = p^self^, node:throne.SceneNode, dt:number^ {
 
 The Inspector edits exported number, bool, string and node-reference fields. Other
 Behaviour fields remain private. Reset removes an override; missing or mistyped
-fields are ignored with a warning. Prefab instances can replace their Behaviour list,
-including editing fields, adding attachments, and removing them.
+fields are ignored with a warning. In a prefab instance, each field or setting changed on
+an attachment of the prefab is an override, coloured, with its own Revert and Apply; the
+instance can also add attachments and remove the prefab's.
 
 The level owns the execution schedule. The Systems panel shows engine stages and
 user stages together, expands their attachments in execution order, adds user stages,
@@ -544,7 +559,7 @@ is attached to SpinningCube, Cube 2 and the rotor prefab's Hub. SpinningCube als
 has [`pop.lh`](samples/basic/scripts/pop.lh), hopping upward every 1.5 seconds
 while continuing to spin. The hop lasts 0.4 seconds and reaches 0.5 units above
 its starting position; `interval`, `duration` and `height` are editable in the Inspector.
-The fast variant replaces its Hub attachment with a 360-degree-per-second version, which the
+The fast variant overrides its Hub attachment's speed with 360 degrees per second, which the
 scene's instance raises to 1360 (enough to show motion blur in Play).
 All use BehaviourSystems; no separate Spin Component or Spin System is needed.
 The design is recorded in [TDDja/07-component.md](TDDja/07-component.md).

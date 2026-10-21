@@ -124,7 +124,7 @@ std::size_t Expander::prefab(const std::string& file, const SceneNode* placed, c
 std::string names(const NodeOverride& layer) {
     std::string result;
     forEachProperty([&](const char* name, const auto& value) {
-        if (value) result += (result.empty() ? "" : ", ") + std::string(name);
+        if (value.has_value()) result += (result.empty() ? "" : ", ") + std::string(name);
     }, layer);
     return result;
 }
@@ -165,9 +165,15 @@ void apply(Expansion& out, const Pending& pending, std::set<std::size_t>& gone) 
             continue;
         }
         auto& node = out.nodes[at].node;
+        // The scripts of the attachments it removes, for the Inspector's list.
+        for (const auto* list : {&node.behaviour, &node.renderEvent})
+            for (const auto& attachment : *list)
+                for (const auto* removal : {&entry.behaviour.removed, &entry.renderEvent.removed})
+                    if (std::find(removal->begin(), removal->end(), attachment.id) != removal->end())
+                        out.removedAttachments[{where, attachment.id}] = attachment.script;
         piece.nodes.push_back(applyOverride(node, entry));
         if (!piece.nodes.back().empty())
-            unused(where, std::move(piece), names(piece.nodes.back()) + " of " + node.name + ", which lacks the component");
+            unused(where, std::move(piece), names(piece.nodes.back()) + " of " + node.name + ", which no longer has it");
     }
     for (const auto& entry : overrides.removedSystems) {
         const auto where = join(prefix, entry.instance);

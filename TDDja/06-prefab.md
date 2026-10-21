@@ -182,7 +182,7 @@ System の追加（`addedSystems`）と削除（`removedSystems`）も実装済�
 - **Revert**: 上書きを消し、プレハブの値に戻す
 - **Apply**: 上書きをプレハブ本体に書き込み、上書きを消す。プレハブのファイルはその場で保存する
 
-項目の単位は Revert と同じ: 欄（名前・位置・回転・拡大・色）、Component（Revert Component の横に Apply Component）、Behaviour／Render Event の一覧、System のフィールド、削除の一覧の各行（Restore の横）、インスタンスが足したノード・System（Delete の横）。インスタンスノードのインスペクターには、すべてをまとめて扱う Apply All と Revert All がある。Apply All は、インスタンスをそのプレハブのファイルへドロップする操作（7 節）と同じ。
+項目の単位は Revert と同じ: 欄（名前・位置・回転・拡大・色）、Component（Revert Component の横に Apply Component）、Behaviour／Render Event の付加の設定と欄（TDDja/07 4）、インスタンスが足した付加と消した付加、System のフィールド、削除の一覧の各行（Restore の横）、インスタンスが足したノード・System（Delete の横）。インスタンスノードのインスペクターには、すべてをまとめて扱う Apply All と Revert All がある。Apply All は、インスタンスをそのプレハブのファイルへドロップする操作（7 節）と同じ。
 
 - 項目の Apply は、上書きの一部（断片、`Overrides` と同じ形）をプレハブへ書き戻し、インスタンスの上書きからその分だけ引く（`Overrides::subtract`）。書き戻し方は全体の Apply と同じで、入れ子のインスタンスの中の分は、そのインスタンスの上書きに移る。
 - 書き戻せる先は、インスタンスノードの上書きだけ。バリアント自身の上書き（バリアントを開いているとき）には Apply を出さない（土台への書き戻しは未実装）。

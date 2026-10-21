@@ -98,6 +98,15 @@ update = p^self^, node:throne.SceneNode, dt:number^ { ... },
 
 プレハブのノードに付いた Behaviour は、インスタンスごとに 1 つずつ生まれる（今のプレハブの System と同じ）。インスタンスは、Behaviour の欄の値を上書きでき、Behaviour を足したり消したりできる。
 
+上書きは付加ごと、欄ごととする（Unity のコンポーネントの欄と同じ）。一覧を丸ごと置き換える形だと、欄を 1 つ変えただけで一覧全体を持つことになり、その後のプレハブ側の変更（他の欄、他の付加）がインスタンスに届かなくなるため。
+
+- 付加は `id` で探す。`id` を書いていない付加は、一覧の中の順番（1 から）を `id` とする。手で書いたプレハブでも、読むたびに同じ `id` になる（乱数にすると、上書きが毎回外れる）。
+- `changed`: プレハブの付加ごとに、`script`・`enabled`・各 priority・`data` の欄のうち上書きしたものだけを持つ。priority を「スクリプトの既定に戻す」上書きは `false^` で表す。
+- `added`: インスタンスが足した付加（プレハブの付加の後ろに並ぶ）。その場で編集し、変更は `added` の中に書く。
+- `removed`: インスタンスが消したプレハブの付加の `id`。
+- 展開は removed → changed → added の順に適用する。見つからない付加への `changed`・`removed` は、行き先の無い上書き（TDDja/06 4.2）になる。
+- Inspector では、上書きした設定と欄を上書きの色で表示し、それぞれに Revert と Apply を出す。足した付加は見出しを上書きの色にし、Revert（取り消し）と Apply を出す。消した付加は Restore と Apply とともに並ぶ。
+
 今の、System が直接持つ Behaviour（`target` の欄で特定のノードを指すもの）は残す。演出や進行役のように、特定のノードを外から動かす処理に使う（2 節のオブジェクト指向の側）。
 
 ## 5. 実行の段
@@ -230,7 +239,7 @@ for^ _^, node in^ throne.query("Transform", "BoxPrimitive") { ... }
 
 `node.component(throne.Transform)` のように型を指定して、組み込み Component にアクセスできる。シグネチャは `f^self^, type^ -> ARG0.T0|nil^;`。`self^` を除いた最初の引数の型パラメーターを戻り値に使い、この例では `throne.Transform|nil^` となる。未付加なら `nil^` を返す。Component 以外の型は実行時エラーとする。既存の `node.transform()` なども残す。
 
-ノードの Behaviour の上書きは `overrides.nodes[].behaviour` に一覧を保存する。空の一覧は全削除、省略は継承を意味する。
+ノードの Behaviour の上書きは `overrides.nodes[].behaviour` に `changed`・`added`・`removed` として保存する（4 節）。省略は継承を意味する。
 
 ## 7. 段階
 
@@ -259,6 +268,8 @@ for^ _^, node in^ throne.query("Transform", "BoxPrimitive") { ... }
 - Script Component を廃止。ユーザー定義 Component／System は C/C++ を前提に今後設計する。
 
 - スクリプトによる System 型定義を廃止。`node.component(type)` は型付きアクセスとして提供し、未付加なら `nil^` を返す。
+
+- プレハブのインスタンスの Behaviour／Render Event の上書きを、一覧の置き換えから付加ごと・欄ごと（`changed`・`added`・`removed`）に変えた（4 節）。`id` の無い付加は一覧の順番を `id` とする。
 
 ## 音声 Component と実行の段
 

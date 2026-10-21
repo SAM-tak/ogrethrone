@@ -168,19 +168,27 @@ if^ n != nil^ { let^ t:throne.BoxPrimitive|nil^ = n.component(throne.Transform) 
         }
 
         throne::Prefab prefab;
-        prefab.addNode("Root").behaviour.push_back({"node.lh", {{"speed", 1.0}}});
+        prefab.addNode("Root").behaviour.push_back({"node.lh", {{"speed", 1.0}, {"size", 2.0}}});
+        const auto attachment = prefab.nodes[0].behaviour[0].id;
         library.put("prefab.lton", prefab);
         throne::Scene instances;
         auto& placed = instances.addNode("Instance");
         placed.prefab = "prefab.lton";
-        placed.overrides.node({}).behaviour = std::vector<throne::Behaviour>{{"node.lh", {{"speed", 9.0}}}}
-        ; placed.overrides.node({}).behaviour->front().priority=3.0;
+        // An instance overrides an attachment of its prefab field by field; the rest follows the prefab.
+        auto& change = placed.overrides.node({}).behaviour.change(attachment);
+        change.data["speed"] = 9.0;
+        change.priority = 3.0;
+        placed.overrides.node({}).behaviour.added.push_back({"node.lh", {}});
         instances.save(root / "instances.lton");
         auto resolved = throne::expand(throne::Scene::load(root / "instances.lton"), library);
-        require(resolved.nodes[0].node.behaviour[0].priority == 3.0, "Prefab Behaviour override lost");
-        placed.overrides.node({}).behaviour = std::vector<throne::Behaviour>{};
+        const auto& overridden = resolved.nodes[0].node.behaviour;
+        require(overridden.size() == 2 && overridden[0].priority == 3.0 && std::get<double>(overridden[0].data.at("speed")) == 9 &&
+                    std::get<double>(overridden[0].data.at("size")) == 2,
+                "Prefab Behaviour override lost");
+        placed.overrides.node({}).behaviour = {};
+        placed.overrides.node({}).behaviour.removed.push_back(attachment);
         resolved = throne::expand(instances, library);
-        require(resolved.nodes[0].node.behaviour.empty(), "Prefab Behaviour removal failed");
+        require(resolved.nodes[0].node.behaviour.empty() && resolved.unused.empty(), "Prefab Behaviour removal failed");
 
         const auto mainThread = std::this_thread::get_id();
         const bool threaded = std::thread::hardware_concurrency() >= 2;

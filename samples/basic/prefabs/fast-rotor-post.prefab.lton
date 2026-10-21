@@ -5,7 +5,7 @@ overrides = {
     nodes = {
         {
             path = {105248190270967814},
-            behaviour = {{script = "scripts/spin.lh", data = {degreesPerSecond = 360.0}}},
+            behaviour = {changed = {{id = 1, data = {degreesPerSecond = 360.0}}}},
         },
         {
             box = {colour = {0.85, 0.2, 0.2}},

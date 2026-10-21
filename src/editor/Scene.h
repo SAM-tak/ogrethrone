@@ -306,6 +306,47 @@ struct RigidBody {
     bool bullet = false;
 };
 
+/// What an instance changes in one attachment of its prefab, found by the attachment's
+/// ID (TDDja/07 4). Unset settings and fields keep the prefab's.
+struct AttachmentOverride {
+    NodeId id = 0;
+    std::optional<std::string> script;
+    std::optional<bool> enabled;
+    /// Priority overrides; an empty inner value returns to the script's default.
+    std::optional<std::optional<double>> priority;
+    std::array<std::optional<std::optional<double>>, 3> phasePriorities;
+    /// Field values set over the attachment's data.
+    std::map<std::string, FieldValue> data;
+
+    /// Whether nothing is set.
+    bool empty() const;
+    /// Writes what is set into @p behaviour.
+    void applyTo(Behaviour& behaviour) const;
+};
+
+/// What an instance changes in one attachment list (Behaviour or Render Event) of a node
+/// of its prefab. has_value() and reset() are those of std::optional, so code over all
+/// properties can treat it as one.
+struct AttachmentsOverride {
+    std::vector<AttachmentOverride> changed;
+    /// Attachments the instance adds after the prefab's.
+    std::vector<Behaviour> added;
+    /// IDs of the prefab's attachments the instance removes.
+    std::vector<NodeId> removed;
+
+    bool has_value() const { return !changed.empty() || !added.empty() || !removed.empty(); }
+    void reset() { *this = {}; }
+    /// The override of attachment @p id, added empty when there is none.
+    AttachmentOverride& change(NodeId id);
+    /// Adds @p from on top of this: its settings and fields win, its additions and removals join.
+    void merge(const AttachmentsOverride& from);
+    /// Removes what @p piece sets, as Overrides::subtract().
+    void subtract(const AttachmentsOverride& piece);
+    /// Applies this to @p list: removals, changes, then additions. Returns the removals
+    /// and changes whose attachment @p list does not have.
+    AttachmentsOverride apply(std::vector<Behaviour>& list) const;
+};
+
 /// Property values an instance gives one node of its prefab (TDDja/06 4); unset ones
 /// keep the prefab's. Component properties apply only where the node has the component.
 struct NodeOverride {
@@ -335,8 +376,8 @@ struct NodeOverride {
     std::optional<PlaneCollider> planeCollider;
     std::optional<RigidBody> rigidBody;
 
-    /// Replacement attachment lists, including field edits, additions and removals.
-    std::optional<std::vector<Behaviour>> behaviour, renderEvent;
+    /// Changes to the attachment lists, by attachment.
+    AttachmentsOverride behaviour, renderEvent;
 
     /// Whether no property is set.
     bool empty() const;
@@ -480,6 +521,18 @@ template <class F, class... T> void forEachProperty(F&& visit, T&... each) {
     forEachComponent(visit, each...);
 }
 
+/// Sets in @p kept what @p set sets, as one property of forEachProperty().
+template <class T> void overlay(std::optional<T>& kept, const std::optional<T>& set) {
+    if (set) kept = set;
+}
+inline void overlay(AttachmentsOverride& kept, const AttachmentsOverride& set) { kept.merge(set); }
+
+/// Unsets in @p kept what @p gone sets, as one property of forEachProperty().
+template <class T> void unset(std::optional<T>& kept, const std::optional<T>& gone) {
+    if (gone) kept.reset();
+}
+inline void unset(AttachmentsOverride& kept, const AttachmentsOverride& gone) { kept.subtract(gone); }
+
 /// Writes the properties @p layer sets into @p node. Component properties go only where
 /// the node has the component; those that do not are returned, at @p layer's path.
 NodeOverride applyOverride(SceneNode& node, const NodeOverride& layer);
@@ -572,8 +625,12 @@ LhatValue writeOverrides(lton::Writer& out, const Overrides& overrides);
 Overrides readOverrides(LhatValue value);
 /// Writes node or system attachments, including their execution stage.
 LhatValue writeBehaviourList(lton::Writer& out, const std::vector<Behaviour>& behaviour);
-/// Reads attachments; nil means an empty list.
+/// Reads attachments; nil means an empty list. One without an ID gets its place in the list (from 1).
 std::vector<Behaviour> readBehaviourList(LhatValue value);
+/// Writes an instance's changes to an attachment list.
+LhatValue writeAttachmentsOverride(lton::Writer& out, const AttachmentsOverride& overrides);
+/// Reads what writeAttachmentsOverride wrote; nil means no changes.
+AttachmentsOverride readAttachmentsOverride(LhatValue value);
 /// Writes @p systems as an LTON sequence; shared by prefabs, scenes and levels.
 LhatValue writeSystems(lton::Writer& out, const std::vector<System>& systems);
 /// Reads what writeSystems wrote. @throws lton::Invalid on malformed data.

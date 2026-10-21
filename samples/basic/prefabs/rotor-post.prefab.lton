@@ -20,7 +20,7 @@ nodes = {
     {
         components = {
             transform = {position = {0.0, 2.1, 0.0}, rotation = {0.0, 0.0, 0.0}, scale = {1.0, 1.0, 1.0}},
-            behaviour = {{script = "scripts/spin.lh"}},
+            behaviour = {{id = 1, script = "scripts/spin.lh"}},
         },
         id = 105248190270967814,
 

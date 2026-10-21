@@ -82,6 +82,8 @@ struct Expansion {
     /// Names of the systems overrides removed, by the instance's path followed by
     /// the override's instance path, and the system's ID.
     std::map<std::pair<NodePath, std::uint32_t>, std::string> removedSystems;
+    /// Scripts of the attachments overrides removed, by the node's path and the attachment's ID.
+    std::map<std::pair<NodePath, NodeId>, std::string> removedAttachments;
     /// Overrides of the expanded content and its instances that change nothing. Those
     /// inside an instance that could not be expanded are not listed: they may apply again.
     std::vector<UnusedOverride> unused;
