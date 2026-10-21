@@ -640,7 +640,11 @@ sub-pixel offsets of the Halton (2, 3) sequence over eight frames and blends eac
 into the history of earlier ones, reprojected by the motion vectors (the sky by the
 camera's motion); the history is clipped to the colours around each pixel so that moving
 objects leave no trails. It makes alpha-hashed transparency usable and steadies thin
-geometry; orthographic views get none. The viewport then applies subtle HDR bloom before
+geometry; orthographic views get none. **View → Motion Blur (Play)** (on by default)
+smears each pixel along its motion over a 180° shutter while the game runs (up to 32
+pixels): a moving object blurs over the background, while a static foreground stays
+sharp over a moving background. Navigating the editor view never blurs. The viewport then
+applies subtle HDR bloom before
 exposure/tone mapping, then OGRE's SMAA 1x High preset to smooth edges. Editor UI is
 composed afterwards. `--capture` waits 16 frames for the history to settle.
 Bloom uses a soft brightness threshold of 1.5 (knee 0.5), a quarter-resolution

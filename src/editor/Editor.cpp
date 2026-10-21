@@ -394,7 +394,7 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
     resources.addResourceLocation(THRONE_MEDIA_DIR "/gi", "FileSystem", skyGroup);
     root.getHlmsManager()->loadMaterials("IBL.material.json", skyGroup, nullptr, "");
     for (const auto* script : {"Quad.program", "Atmosphere.material", "Sky.material", "DPSM.material", "Copyback.material",
-                               "PccDepthCompressor.material", "Tonemap.material", "Bloom.material", "Taa.material", "ThroneSmaa.material",
+                               "PccDepthCompressor.material", "Tonemap.material", "Bloom.material", "Taa.material", "MotionBlur.material", "ThroneSmaa.material",
                                "ThroneGi.compositor"}) {
         auto stream = resources.openResource(script, skyGroup);
         Ogre::MaterialManager::getSingleton().parseScript(stream, skyGroup);
@@ -418,6 +418,7 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
     createShadowNode(root);
     tonemap_ = Ogre::MaterialManager::getSingleton().getByName("Throne/Tonemap", skyGroup);
     taa_ = Ogre::MaterialManager::getSingleton().getByName("Throne/Taa", skyGroup);
+    motionBlur_ = Ogre::MaterialManager::getSingleton().getByName("Throne/MotionBlur", skyGroup);
     {
         // A depth prepass draws lit opaque geometry (queue 10) into Depth and a G-buffer of
         // view-space normals, sun shadow/roughness and motion vectors (MotionVectors, the
@@ -425,12 +426,13 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
         // queue 10 into Opaque reusing the prepass (depth read-only), then the other queues
         // below 200. Opaque is copied to Hdr; refractive glass (queue 200 and up) samples
         // Opaque and its depth while drawing into Hdr. Temporal anti-aliasing blends Hdr into
-        // the reprojected history (Taa, copied to TaaHistory for the next frame). Bloom is
+        // the reprojected history (Taa, copied to TaaHistory for the next frame) and writes each
+        // pixel's Velocity, along which motion blur (in Play) smears Taa into Blurred. Bloom is
         // combined before tone mapping, then SMAA filters the LDR scene before ImGui presents
         // it (the UI stays sharp).
         auto* node = compositor->addNodeDefinition("ThroneEditor/ViewportNode");
         node->addTextureSourceName("Viewport", 0, Ogre::TextureDefinitionBase::TEXTURE_INPUT);
-        node->setNumLocalTextureDefinitions(14);
+        node->setNumLocalTextureDefinitions(16);
         node->addTextureDefinition("Depth")->format = Ogre::PFG_D32_FLOAT;
         node->addTextureDefinition("GBufferNormals")->format = Ogre::PFG_R10G10B10A2_UNORM;
         node->addTextureDefinition("GBufferShadowRoughness")->format = Ogre::PFG_RG16_UNORM;
@@ -452,9 +454,9 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
             view->colourAttachments.push_back(attachment);
             view->depthAttachment.textureName = "Depth";
         }
-        for (const auto* name : {"Taa", "TaaHistory"}) {
+        for (const auto* name : {"Velocity", "Blurred", "Taa", "TaaHistory"}) {
             auto* texture = node->addTextureDefinition(name);
-            texture->format = Ogre::PFG_RGBA16_FLOAT;
+            texture->format = Ogre::String(name) == "Velocity" ? Ogre::PFG_RG16_FLOAT : Ogre::PFG_RGBA16_FLOAT;
             texture->depthBufferId = Ogre::DepthBuffer::POOL_NO_DEPTH;
         }
         // The history must survive until the next frame.
@@ -470,7 +472,7 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
             texture->format = Ogre::String(name) == "SmaaEdges" ? Ogre::PFG_RG8_UNORM : Ogre::PFG_RGBA8_UNORM;
             texture->depthBufferId = Ogre::DepthBuffer::POOL_NO_DEPTH;
         }
-        node->setNumTargetPass(12);
+        node->setNumTargetPass(13);
         auto* prepass = static_cast<Ogre::CompositorPassSceneDef*>(node->addTargetPass("GBuffer")->addPass(Ogre::PASS_SCENE));
         prepass->mShadowNode = "ThroneEditor/SunShadows";
         prepass->mPrePassMode = Ogre::PrePassCreate;
@@ -513,12 +515,18 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
         refractive->mStoreActionDepth = refractive->mStoreActionStencil = Ogre::StoreAction::DontCare;
         refractive->mFirstRQ = 200;
         refractive->setUseRefractions("Depth", "Opaque");
-        const auto quad = [&](const char* target, const char* material, std::initializer_list<const char*> inputs) {
+        // @p outputs are further colour targets the material writes after @p target.
+        const auto quad = [&](const char* target, const char* material, std::initializer_list<const char*> inputs,
+                              std::initializer_list<const char*> outputs = {}) {
             if (Ogre::String(target) != "Viewport") {
                 auto* view = node->addRenderTextureView(target);
-                Ogre::RenderTargetViewEntry attachment;
-                attachment.textureName = target;
-                view->colourAttachments.push_back(attachment);
+                const auto attach = [&](const char* name) {
+                    Ogre::RenderTargetViewEntry attachment;
+                    attachment.textureName = name;
+                    view->colourAttachments.push_back(attachment);
+                };
+                attach(target);
+                for (const auto* name : outputs) attach(name);
                 view->depthBufferId = Ogre::DepthBuffer::POOL_NO_DEPTH;
             }
             auto* pass = static_cast<Ogre::CompositorPassQuadDef*>(node->addTargetPass(target)->addPass(Ogre::PASS_QUAD));
@@ -529,12 +537,13 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
             pass->mStoreActionDepth = pass->mStoreActionStencil = Ogre::StoreAction::DontCare;
             return pass;
         };
-        quad("Taa", "Throne/Taa", {"Hdr", "TaaHistory", "GBufferMotion", "Depth"});
+        quad("Taa", "Throne/Taa", {"Hdr", "TaaHistory", "GBufferMotion", "Depth"}, {"Velocity"});
         quad("TaaHistory", "Ogre/Copy/4xFP32", {"Taa"});
-        quad("BloomBright", "Throne/BloomExtract", {"Taa"});
+        quad("Blurred", "Throne/MotionBlur", {"Taa", "Velocity", "Depth"});
+        quad("BloomBright", "Throne/BloomExtract", {"Blurred"});
         quad("BloomHorizontal", "Throne/BloomHorizontal", {"BloomBright"});
         quad("Bloom", "Throne/BloomVertical", {"BloomHorizontal"});
-        quad("Tonemapped", "Throne/Tonemap", {"Taa", "Bloom"});
+        quad("Tonemapped", "Throne/Tonemap", {"Blurred", "Bloom"});
         // Edge detection discards pixels without edges, so clear them every frame.
         // Run weights over the whole target instead of allocating a stencil buffer.
         auto* edges = quad("SmaaEdges", "Throne/SmaaEdgeDetection", {"Tonemapped"});
@@ -857,6 +866,7 @@ Editor::~Editor() {
     scene_.setSky(false, Ogre::SceneManager::SkyCubemap, nullptr);
     tonemap_.reset();
     taa_.reset();
+    motionBlur_.reset();
     sky_.reset();
     Ogre::ResourceGroupManager::getSingleton().destroyResourceGroup("ThroneEditorSky");
     root_.getCompositorManager2()->setCompositorPassProvider(nullptr);
@@ -1066,6 +1076,11 @@ void Editor::jitterCamera() {
     params->setNamedConstant("jitterDelta", jitter - taaJitter_);
     params->setNamedConstant("currentWeight", on && !taaReset_ ? 0.1f : 1.0f);
     params->setNamedConstant("reverseDepth", root_.getRenderSystem()->isReverseDepth() ? 1.0f : 0.0f);
+    // Motion blur over a 180 degree shutter while the game runs; the distance to a depth d
+    // is B / (d + A) with the projection's z row (A, B).
+    auto blur = motionBlur_->getTechnique(0)->getPass(0)->getFragmentProgramParameters();
+    blur->setNamedConstant("shutter", motionBlurInPlay_ && runtime_ && !paused() ? 0.5f : 0.0f);
+    blur->setNamedConstant("depthParams", Ogre::Vector2(float(steady[2][2]), float(steady[2][3])));
     taaViewProj_ = viewProj;
     taaJitter_ = jitter;
     taaReset_ = !on;
@@ -2666,6 +2681,7 @@ void Editor::menu() {
         if(ImGui::MenuItem("Shadows",nullptr,&shadows)) setShadowsEnabled(shadows);
         bool temporal=temporalAntialiasing_;
         if(ImGui::MenuItem("Temporal Anti-Aliasing",nullptr,&temporal)) setTemporalAntialiasing(temporal);
+        ImGui::MenuItem("Motion Blur (Play)",nullptr,&motionBlurInPlay_);
         ImGui::MenuItem("Orthographic", nullptr, &orthographic_);
         if (ImGui::MenuItem("Focus Selection", "F")) focusSelection();
         ImGui::EndMenu();

@@ -276,7 +276,8 @@ private:
     /// Applies persisted lighting settings, including the Forward+ method.
     void syncLighting(const LevelExpansion& shown);
     /// Offsets the camera by this frame's sub-pixel jitter and hands the temporal
-    /// anti-aliasing pass its reprojection; the offset is removed after rendering.
+    /// anti-aliasing and motion blur passes their parameters; the offset is removed after
+    /// rendering.
     void jitterCamera();
     /// Moves the sky OGRE made into the queue after opaque geometry.
     void drawSkyAfterOpaque();
@@ -488,6 +489,9 @@ private:
     Ogre::Vector2 taaJitter_ = Ogre::Vector2::ZERO;
     /// The temporal anti-aliasing pass material, given the reprojection each frame.
     Ogre::MaterialPtr taa_;
+    /// The motion blur pass material, and whether it blurs while the game runs.
+    Ogre::MaterialPtr motionBlur_;
+    bool motionBlurInPlay_ = true;
     bool particleResourcesLoaded_ = false, particlePreview_ = true;
     int particleBlending_ = 1, appliedParticleBlending_ = -1;
     std::set<std::string> particleScripts_;

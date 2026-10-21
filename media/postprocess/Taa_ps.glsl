@@ -1,7 +1,8 @@
 #version ogre_glsl_ver_330
 
 // Temporal anti-aliasing: blends the jittered current frame into the history of earlier frames,
-// reprojected by the motion vectors. The history is clipped to the colour range around the
+// reprojected by the motion vectors. It also writes each pixel's own motion since the previous
+// frame, without the jitter and with the sky's from the camera, for the motion blur. The history is clipped to the colour range around the
 // pixel (in YCoCg) so that it cannot show what is no longer there, and both are weighted by
 // their inverse brightness so that bright pixels do not flicker.
 
@@ -35,6 +36,8 @@ in block
 
 vulkan_layout( location = 0 )
 out vec4 fragColour;
+vulkan_layout( location = 1 )
+out vec2 velocity;
 
 vec3 toYCoCg( vec3 c )
 {
@@ -46,11 +49,30 @@ vec3 fromYCoCg( vec3 c )
 	return vec3( c.x + c.y - c.z, c.x + c.z, c.x - c.y - c.z );
 }
 
+bool isSky( float d )
+{
+	return d == ( reverseDepth > 0.5 ? 0.0 : 1.0 );
+}
+
+// The motion, in UV since the previous frame and without the jitter, of the surface at @p at
+// (of depth @p d, centred at @p uv); where nothing was drawn (the sky), the camera's alone.
+vec2 motionAt( ivec2 at, float d, vec2 uv )
+{
+	if( isSky( d ) )
+	{
+		vec4 previous = reproject * vec4( uv * 2.0 - 1.0, d, 1.0 );
+		return uv - ( previous.xy / previous.w * 0.5 + 0.5 ) - jitterDelta;
+	}
+	return texelFetch( vkSampler2D( motion, motionSampler ), at, 0 ).xy - jitterDelta;
+}
+
 void main()
 {
 	ivec2 size = textureSize( vkSampler2D( current, currentSampler ), 0 );
 	ivec2 pixel = clamp( ivec2( gl_FragCoord.xy ), ivec2( 0 ), size - 1 );
+	vec2 uv = ( vec2( pixel ) + 0.5 ) / vec2( size );
 	vec4 colour = texelFetch( vkSampler2D( current, currentSampler ), pixel, 0 );
+	velocity = motionAt( pixel, texelFetch( vkSampler2D( depth, depthSampler ), pixel, 0 ).x, uv );
 	if( currentWeight >= 1.0 )
 	{
 		fragColour = colour;
@@ -88,19 +110,7 @@ void main()
 		}
 	}
 
-	// Nothing was drawn there (the sky): the motion is the camera's alone.
-	vec2 uv = ( vec2( pixel ) + 0.5 ) / vec2( size );
-	vec2 moved;
-	if( nearestDepth == ( reverseDepth > 0.5 ? 0.0 : 1.0 ) )
-	{
-		vec4 previous = reproject * vec4( uv * 2.0 - 1.0, nearestDepth, 1.0 );
-		moved = uv - ( previous.xy / previous.w * 0.5 + 0.5 );
-	}
-	else
-	{
-		moved = texelFetch( vkSampler2D( motion, motionSampler ), nearest, 0 ).xy;
-	}
-	vec2 previousUv = uv - ( moved - jitterDelta );
+	vec2 previousUv = uv - motionAt( nearest, nearestDepth, ( vec2( nearest ) + 0.5 ) / vec2( size ) );
 	if( any( lessThan( previousUv, vec2( 0.0 ) ) ) || any( greaterThan( previousUv, vec2( 1.0 ) ) ) )
 	{
 		fragColour = colour;

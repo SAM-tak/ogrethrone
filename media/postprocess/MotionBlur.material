@@ -1,0 +1,48 @@
+// Motion blur of the editor viewport's half-float scene, after temporal anti-aliasing (TDDja/09).
+fragment_program Throne/MotionBlur_ps_VK glslvk
+{
+	source MotionBlur_ps.glsl
+	default_params
+	{
+		param_named shutter float 0
+		param_named depthParams float2 0 1
+	}
+}
+
+material Throne/MotionBlur
+{
+	technique
+	{
+		pass
+		{
+			depth_check off
+			depth_write off
+			cull_hardware none
+
+			vertex_program_ref Ogre/Compositor/Quad_vs
+			{
+			}
+
+			fragment_program_ref Throne/MotionBlur_ps_VK
+			{
+			}
+
+			// The scene, the velocities and the depth.
+			texture_unit
+			{
+				filtering none
+				tex_address_mode clamp
+			}
+			texture_unit
+			{
+				filtering none
+				tex_address_mode clamp
+			}
+			texture_unit
+			{
+				filtering none
+				tex_address_mode clamp
+			}
+		}
+	}
+}
