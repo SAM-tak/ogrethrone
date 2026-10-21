@@ -4,6 +4,7 @@
 #include "editor/Scene.h"
 #include "runtime/AnimationLibrary.h"
 #include <OgreMesh2.h>
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -83,6 +84,11 @@ public:
             std::vector<float> vertices;
             std::vector<std::uint32_t> indices;
             std::size_t material = 0;
+            /// A skinned submesh's four bone slots and weights a vertex, and each slot's joint
+            /// (an index into Parsed::joints); empty when it is not skinned.
+            std::vector<std::uint8_t> blendIndices;
+            std::vector<float> blendWeights;
+            std::vector<std::uint16_t> bones;
         };
         struct Mesh {
             std::vector<Submesh> submeshes;
@@ -108,6 +114,15 @@ public:
         /// An OGRE mesh file (.mesh, with its .skeleton), which add() reads through OGRE
         /// instead; the rest is then empty.
         std::filesystem::path ogreMesh;
+        /// The skinned meshes' joints (FbxSkeleton): names, parents (-1 for none) and bind poses
+        /// relative to their parents, and the ozz skeleton and clips; empty without skins.
+        struct Joint {
+            std::string name;
+            int parent = -1;
+            std::array<float, 10> rest{};
+        };
+        std::vector<Joint> joints;
+        std::shared_ptr<const SkeletonAsset> skeleton;
     };
 
     /// @param scene Where placed models are created; must outlive the library.

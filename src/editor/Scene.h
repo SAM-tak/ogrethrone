@@ -185,10 +185,13 @@ struct ModelMaterial {
     Translucency translucency;
     /// Subsurface scattering width in metres (PbsMaterial::subsurfaceWidth).
     float subsurfaceWidth = 0;
+    /// A project-relative base colour map replacing the file's (files often name their texture
+    /// only in the material's name); empty keeps the file's.
+    std::string diffuseMap;
     /// Equality, to tell when the drawn model must be rebuilt.
     bool operator==(const ModelMaterial& other) const {
         return name == other.name && absorption == other.absorption && thickness == other.thickness &&
-               translucency == other.translucency && subsurfaceWidth == other.subsurfaceWidth;
+               translucency == other.translucency && subsurfaceWidth == other.subsurfaceWidth && diffuseMap == other.diffuseMap;
     }
 };
 

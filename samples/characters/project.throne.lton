@@ -1,0 +1,4 @@
+format = "ogrethrone-project",
+mainLevel = "levels/characters.level.lton",
+name = "Animated Characters Sample",
+version = 1,

@@ -193,6 +193,7 @@ void readExtraComponents(const LhatTable& table, Node& node) {
                 for(const float a:{m.absorption.x,m.absorption.y,m.absorption.z}) if(!(a>=0)) lton::invalid();
                 readTranslucency(item,m.translucency);
                 m.subsurfaceWidth=scalar(item,"subsurfaceWidth",m.subsurfaceWidth,0,10);
+                if(const auto v=lton::field(item,"diffuseMap"); !lhat_is_nil(v)) m.diffuseMap=lton::relativePath(v);
                 c.materials.push_back(m);
             }
         }
@@ -340,6 +341,7 @@ void writeExtraComponents(lton::Writer& out, LhatValue table, const Node& node) 
                 out.set(item,"thickness",lhat_real(m.thickness));
                 writeTranslucency(out,item,m.translucency);
                 if(m.subsurfaceWidth>0) out.set(item,"subsurfaceWidth",lhat_real(m.subsurfaceWidth));
+                if(!m.diffuseMap.empty()) out.set(item,"diffuseMap",out.string(m.diffuseMap));
                 out.push(list,item);
             }
             out.set(t,"materials",list);

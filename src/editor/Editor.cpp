@@ -1665,11 +1665,19 @@ void Editor::updateProbeLayout() {
 void Editor::readModel(const ModelComponent& model, const std::string& key) {
     ++reads_;
     const auto file=mediaFile(model.path);
-    tasks_.background<ModelLibrary::Parsed>("Reading "+model.path,[file,model] { return ModelLibrary::parse(file,model); },
+    // The worker gets material changes' maps as files.
+    auto resolved=model;
+    for(auto& m:resolved.materials) if(!m.diffuseMap.empty()) m.diffuseMap=mediaFile(m.diffuseMap).u8string();
+    tasks_.background<ModelLibrary::Parsed>("Reading "+model.path,[file,resolved] { return ModelLibrary::parse(file,resolved); },
         [this,key,path=model.path](ModelLibrary::Parsed& parsed) {
             models_->add(key,parsed);
             // The Animation stage finds its skeleton by the component's path.
-            if(auto skeleton=models_->skeleton(key)) animations_.put(path,std::move(skeleton));
+            if(auto skeleton=models_->skeleton(key)) {
+                std::string clips;
+                for(const auto& clip:skeleton->clips) clips+=(clips.empty()?"":", ")+clip.name;
+                log(path+": "+std::to_string(skeleton->skeleton->num_joints())+" joints; clips: "+(clips.empty()?"none":clips));
+                animations_.put(path,std::move(skeleton));
+            }
             modelsReading_.erase(key);
             --reads_;
         });
@@ -1868,25 +1876,29 @@ void Editor::syncTransforms(const LevelExpansion* snapshot) {
             render.lower = render.placedModel.lower, render.upper = render.placedModel.upper;
         // An Animator poses a skinned model's bones as the simulation last published; OGRE's
         // workers then derive their matrices, and the vertex shader skins the mesh.
+        // Each skinned item (a file's skinned submeshes share one skeleton definition) has its
+        // own instance of it.
         const auto* pose = node.animator ? animation_.published(render.instance, render.index) : nullptr;
-        auto* skeleton = pose && render.placedModel.items.size() == 1 ? render.placedModel.items[0]->getSkeletonInstance() : nullptr;
-        if (skeleton) {
-            if (render.bonesOf != skeleton || render.bonesFor != pose->asset) {
+        for (auto* item : pose ? render.placedModel.items : std::vector<Ogre::Item*>{}) {
+            auto* skeleton = item->getSkeletonInstance();
+            if (!skeleton) continue;
+            if (render.bonesOf != skeleton->getDefinition() || render.bonesFor != pose->asset) {
                 // ozz orders the joints itself: match them to the mesh's bones by name.
-                std::map<std::string, Ogre::Bone*> byName;
-                for (std::size_t b = 0; b < skeleton->getNumBones(); ++b) byName[skeleton->getBone(b)->getName()] = skeleton->getBone(b);
+                std::map<std::string, std::size_t> byName;
+                for (std::size_t b = 0; b < skeleton->getNumBones(); ++b) byName[skeleton->getBone(b)->getName()] = b;
                 const auto names = pose->asset->skeleton->joint_names();
-                render.bones.assign(names.size(), nullptr);
+                render.bones.assign(names.size(), -1);
                 for (std::size_t j = 0; j < names.size(); ++j)
-                    if (const auto found = byName.find(names[j]); found != byName.end()) render.bones[j] = found->second;
-                render.bonesOf = skeleton, render.bonesFor = pose->asset;
+                    if (const auto found = byName.find(names[j]); found != byName.end()) render.bones[j] = int(found->second);
+                render.bonesOf = skeleton->getDefinition(), render.bonesFor = pose->asset;
             }
             for (std::size_t j = 0; j < render.bones.size() && j < pose->joints.size(); ++j) {
-                if (!render.bones[j]) continue;
+                if (render.bones[j] < 0) continue;
+                auto* bone = skeleton->getBone(std::size_t(render.bones[j]));
                 const auto& joint = pose->joints[j];
-                render.bones[j]->setPosition(Ogre::Vector3(joint.position[0], joint.position[1], joint.position[2]));
-                render.bones[j]->setOrientation(Ogre::Quaternion(joint.rotation[3], joint.rotation[0], joint.rotation[1], joint.rotation[2]));
-                render.bones[j]->setScale(Ogre::Vector3(joint.scale[0], joint.scale[1], joint.scale[2]));
+                bone->setPosition(Ogre::Vector3(joint.position[0], joint.position[1], joint.position[2]));
+                bone->setOrientation(Ogre::Quaternion(joint.rotation[3], joint.rotation[0], joint.rotation[1], joint.rotation[2]));
+                bone->setScale(Ogre::Vector3(joint.scale[0], joint.scale[1], joint.scale[2]));
             }
         }
         const auto colour=primitiveColour(node);

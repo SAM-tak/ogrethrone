@@ -582,20 +582,27 @@ colour is a clear dielectric (glass, water): it refracts the scene behind it and
 its reflections. A Model's **material changes** give named materials of its file a
 Beer-Lambert **absorption** (per metre, RGB) and **thickness**: such a volume (wine,
 beer, a tinted bottle) multiplies what is behind it by its transmittance, and glass in
-front of it shows it. Only opaque materials cast shadows. Lights and
+front of it shows it. A material change's **Diffuse Map** (project-relative) replaces the
+material's base colour map, for files that name their texture only in the material's name. Only opaque materials cast shadows. Lights and
 cameras in the file are not placed. A node with only a Model is picked and outlined
 by the model's bounds.
 
-A Model can also name an OGRE `.mesh` (with the `.skeleton` beside it), such as
-`@ogre/models/Stickman.mesh` from the pinned sample media; its material scripts are not
-read, so it is drawn in plain grey. An **Animator** component plays one of its skeleton's
-clips: **Clip**, **Time** (seconds), **Speed**, **Loop** and **Playing**. Poses are sampled on
+An FBX file's skinned meshes keep their skin: up to four bones a vertex, bound where the
+file binds them, with a skeleton of the bones and the nodes above them, and one clip per
+animation stack (baked by ufbx, named as the stack). An unskinned mesh under a bone (hair,
+a helmet) moves rigidly with it. A Model can also name an OGRE `.mesh` (with
+the `.skeleton` beside it), such as `@ogre/models/Stickman.mesh` from the pinned sample media;
+its material scripts are not read, so it is drawn in plain grey. An **Animator** component
+plays one of its skeleton's clips: **Clip**, **Time** (seconds), **Speed**, **Loop** and **Playing**. Poses are sampled on
 the simulation side with [ozz-animation](https://github.com/guillaumeblanc/ozz-animation):
 the Animation stage advances each playing Animator's time by its speed (wrapping, or
 holding at the clip's end) and samples its pose; SyncSimulation hands the poses to the
 renderer, which writes them to the model's OGRE bones, and OGRE derives the bone matrices
 on its worker threads and skins the mesh on the GPU. Outside Play the poses follow the
-Animators' times as edited, so dragging **Time** scrubs a clip.
+Animators' times as edited, so dragging **Time** scrubs a clip. When a skinned model is read,
+the Console lists its joint count and clips (Blender's `Armature|Action` stacks are named by
+the action). [`samples/characters`](samples/characters) places six animated characters
+(CC0, downloaded separately; see its [README](samples/characters/README.md)).
 
 A scene keeps its environment and global illumination (`lighting = { ... }` in the scene
 file): the default sun, the procedural sky, the ambient light, an HDR environment, filmic tone

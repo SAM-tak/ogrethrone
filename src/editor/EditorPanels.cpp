@@ -714,6 +714,7 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
             auto& m=c.materials[i];
             ImGui::Separator();
             edited|=texturePath("Material",m.name);
+            edited|=texturePath("Diffuse Map",m.diffuseMap);
             edited|=vector("Absorption (1/m)",m.absorption);
             edited|=scalar("Thickness (m)",m.thickness,.0001f,100);
             edited|=translucency(m.translucency);

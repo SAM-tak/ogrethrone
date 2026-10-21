@@ -37,8 +37,7 @@ class Camera;
 class SceneNode;
 class ManualObject;
 class TextureGpu;
-class Bone;
-class SkeletonInstance;
+class SkeletonDef;
 class CompositorWorkspace;
 class ImguiManager;
 class CompositorPassImguiProvider;
@@ -195,10 +194,10 @@ private:
         ModelLibrary::Placed placedModel;
         /// The library key the model is read under; empty when there is nothing to place.
         std::string modelKey;
-        /// The placed model's bones in its skeleton asset's joint order (null where the mesh
-        /// has no such bone), and what they were matched for.
-        std::vector<Ogre::Bone*> bones;
-        const Ogre::SkeletonInstance* bonesOf = nullptr;
+        /// The placed model's bone indices in its skeleton asset's joint order (-1 where the
+        /// mesh has no such bone), and the skeletons they were matched for.
+        std::vector<int> bones;
+        const Ogre::SkeletonDef* bonesOf = nullptr;
         std::shared_ptr<const SkeletonAsset> bonesFor;
         std::optional<ParticleSystemComponent> particleConfig;
 

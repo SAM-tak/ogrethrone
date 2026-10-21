@@ -108,9 +108,14 @@ int main(int argc,char** argv) {
         throne::Scene posed;
         auto& walker=posed.addNode("Walker"); walker.animator.emplace();
         walker.animator->clip="Walk"; walker.animator->time=.5f; walker.animator->speed=-1.5f; walker.animator->loop=false;
+        // ...and its Model's material changes their base colour maps.
+        walker.model.emplace(); walker.model->path="Characters/Walker.fbx";
+        walker.model->materials.push_back({}); walker.model->materials[0].name="Skin";
+        walker.model->materials[0].diffuseMap="Characters/Textures/Skin.png";
         posed.save(temporary/"animator.lton");
-        const auto animator=throne::Scene::load(temporary/"animator.lton").nodes[0].animator;
-        require(animator && *animator==*walker.animator,"Animator settings lost");
+        const auto reloaded=throne::Scene::load(temporary/"animator.lton").nodes[0];
+        require(reloaded.animator && *reloaded.animator==*walker.animator,"Animator settings lost");
+        require(reloaded.model && *reloaded.model==*walker.model,"Model material change lost");
         std::filesystem::remove_all(temporary);
         std::puts("Showcase data passed: all levels, PBS palette, lights, persistence, prefab overrides and validation");
         return 0;

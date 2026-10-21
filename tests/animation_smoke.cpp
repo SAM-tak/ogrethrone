@@ -1,7 +1,11 @@
 // Skeletal animation on the simulation side (TDDja/07 5.3), without OGRE: a three-joint arm
 // built from raw data, sampled by AnimationWorld at known times.
 #include "runtime/AnimationWorld.h"
+#include "runtime/FbxSkeleton.h"
+#include <ufbx.h>
+#include <algorithm>
 #include <cmath>
+#include <string>
 #include <cstdio>
 #include <stdexcept>
 
@@ -40,6 +44,75 @@ std::shared_ptr<const throne::SkeletonAsset> arm() {
     return throne::buildSkeleton(raw, {bend});
 }
 
+throne::LevelExpansion level();
+
+/// The largest difference between the 3x4 part of ozz matrix @p m and @p u.
+float difference(const float m[16], const ufbx_matrix& u) {
+    float most = 0;
+    for (int c = 0; c < 4; ++c) {
+        const ufbx_vec3& column = u.cols[c];
+        most = std::max({most, std::fabs(m[4 * c] - float(column.x)), std::fabs(m[4 * c + 1] - float(column.y)),
+                         std::fabs(m[4 * c + 2] - float(column.z))});
+    }
+    return most;
+}
+
+/// A skinned, animated FBX from ufbx's test data, read as the Model component reads files: the
+/// sampled joints must follow ufbx's own evaluation of the clip, and the rest pose must be the
+/// pose the skin was bound in.
+void fbx(const std::string& data) {
+    ufbx_load_opts options = {};
+    options.target_axes = ufbx_axes_right_handed_y_up;
+    options.target_unit_meters = 1.0f;
+    ufbx_error error;
+    ufbx_scene* scene = ufbx_load_file((data + "/max7_skin_5000_binary.fbx").c_str(), &options, &error);
+    require(scene, "Cannot read the skinned FBX");
+    const auto skeleton = throne::readFbxSkeleton(*scene);
+    require(skeleton.asset && !skeleton.asset->clips.empty() && scene->anim_stacks.count > 0, "FBX skeleton or clip missing");
+    throne::AnimationLibrary library;
+    library.put("skin.fbx", skeleton.asset);
+    throne::AnimationWorld world(library);
+    auto expanded = level();
+    auto& node = expanded.instances[0].expansion.nodes[0].node;
+    node.model->path = "skin.fbx";
+    node.animator->clip.clear();
+    float m[16];
+
+    // Rest pose: each cluster's bone, times the cluster's geometry_to_bone, places the mesh
+    // where every cluster agrees it was bound.
+    world.step(expanded, 0);
+    for (std::size_t i = 0; i < scene->skin_clusters.count; ++i) {
+        const auto* cluster = scene->skin_clusters.data[i];
+        const int joint = skeleton.joint(cluster->bone_node);
+        require(joint >= 0 && world.jointMatrix(0, 0, skeleton.names[std::size_t(joint)], m), "Clustered bone not a joint");
+        require(difference(m, cluster->bind_to_world) < 1e-3f, "Rest pose is not the bind pose");
+    }
+
+    // Part way through the first clip, every joint is where ufbx evaluates its node.
+    const auto* stack = scene->anim_stacks.data[0];
+    node.animator->clip = skeleton.asset->clips[0].name;
+    node.animator->time = skeleton.asset->duration(node.animator->clip) * 0.37f;
+    node.animator->playing = false;
+    world.step(expanded, 0);
+    ufbx_scene* posed = ufbx_evaluate_scene(scene, stack->anim, stack->time_begin + node.animator->time, nullptr, &error);
+    require(posed, "ufbx could not evaluate the clip");
+    float worst = 0, size = 0;
+    for (std::size_t j = 0; j < skeleton.nodes.size(); ++j) {
+        require(world.jointMatrix(0, 0, skeleton.names[j], m), "Joint not sampled");
+        const auto& expected = posed->nodes.data[skeleton.nodes[j]->typed_id]->node_to_world;
+        worst = std::max(worst, difference(m, expected));
+        size = std::max({size, std::fabs(float(expected.cols[3].x)), std::fabs(float(expected.cols[3].y)),
+                         std::fabs(float(expected.cols[3].z))});
+    }
+    ufbx_free_scene(posed);
+    ufbx_free_scene(scene);
+    // ozz quantizes keys and ufbx resamples curves at 30 per second: allow 1% of the extent.
+    if (!(worst < 2e-3f + size * 1e-2f)) {
+        std::fprintf(stderr, "joint error %g, extent %g\n", worst, size);
+        throw std::runtime_error("Sampled joints do not follow the FBX clip");
+    }
+}
+
 throne::LevelExpansion level() {
     throne::SceneNode node;
     node.id = 1;
@@ -55,8 +128,9 @@ throne::LevelExpansion level() {
 }
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        if (argc > 1) fbx(argv[1]);
         throne::AnimationLibrary library;
         const auto asset = arm();
         require(asset->clips.size() == 1 && near(asset->duration("bend"), 1) && asset->joint("hand") >= 0, "Arm asset");

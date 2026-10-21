@@ -1,0 +1,4 @@
+format = "ogrethrone-level",
+version = 3,
+scenes = {{id = 1, scene = "scenes/characters.scene.lton"}, {id = 2, scene = "scenes/characters-view.scene.lton"}},
+systems = {},

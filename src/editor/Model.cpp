@@ -20,6 +20,8 @@
 #include <OgreTextureGpuManager.h>
 #include <OgreRenderSystem.h>
 #include <Vao/OgreVaoManager.h>
+#include "runtime/FbxSkeleton.h"
+#include <OgreOldSkeletonManager.h>
 #include <ufbx.h>
 #include <algorithm>
 #include <cmath>
@@ -157,6 +159,8 @@ std::shared_ptr<const SkeletonAsset> toSkeleton(Ogre::v1::Skeleton& source) {
 /// One vertex as the file gives it, before tangents are derived.
 struct Corner {
     float position[3], normal[3], uv[2];
+    /// The file vertex (control point) a skinned corner comes from, for its weights; 0 otherwise.
+    std::uint32_t vertex;
 };
 /// One vertex as OGRE draws it.
 struct Vertex {
@@ -309,7 +313,7 @@ std::string ModelLibrary::key(const ModelComponent& component, const std::filesy
                std::to_string(m.absorption.z) + "/" + std::to_string(m.thickness) + "/" + std::to_string(m.translucency.colour.x) +
                "," + std::to_string(m.translucency.colour.y) + "," + std::to_string(m.translucency.colour.z) + "," +
                std::to_string(m.translucency.distortion) + "," + std::to_string(m.translucency.power) + "," +
-               std::to_string(m.translucency.scale) + "/" + std::to_string(m.subsurfaceWidth);
+               std::to_string(m.translucency.scale) + "/" + std::to_string(m.subsurfaceWidth) + "/" + m.diffuseMap;
     return key;
 }
 
@@ -462,7 +466,18 @@ ModelLibrary::Parsed ModelLibrary::parse(const std::filesystem::path& file, cons
         const auto* source = scene->materials.data[i];
         Parsed::Material material;
         material.name = source->name.data;
-        material.diffuse = texture(source->fbx.diffuse_color.texture);
+        const auto change = std::find_if(component.materials.begin(), component.materials.end(),
+                                         [&](const ModelMaterial& m) { return m.name == material.name; });
+        // A material change's base colour map (resolved by the caller) replaces the file's.
+        if (change != component.materials.end() && !change->diffuseMap.empty()) {
+            material.diffuse = std::filesystem::u8path(change->diffuseMap);
+            if (!std::filesystem::exists(material.diffuse)) {
+                out.messages.push_back("Model texture not found: " + change->diffuseMap);
+                material.diffuse.clear();
+            }
+        } else {
+            material.diffuse = texture(source->fbx.diffuse_color.texture);
+        }
         // The file's transparency colour makes glass and liquids blended; they keep their reflections.
         const auto& clear = source->fbx.transparency_color.value_vec3;
         material.opacity = 1.0f - float(source->fbx.transparency_factor.value_real * (clear.x + clear.y + clear.z) / 3);
@@ -478,8 +493,6 @@ ModelLibrary::Parsed ModelLibrary::parse(const std::filesystem::path& file, cons
         // A volume with absorption (a liquid, tinted glass) multiplies what is drawn behind it
         // by its transmittance, last in the opaque pass. Other blended surfaces (clear glass)
         // refract that pass afterwards, so a glass shows the wine in it.
-        const auto change = std::find_if(component.materials.begin(), component.materials.end(),
-                                         [&](const ModelMaterial& m) { return m.name == material.name; });
         const bool absorbs = material.blended && change != component.materials.end() &&
                              (change->absorption.x > 0 || change->absorption.y > 0 || change->absorption.z > 0);
         if (absorbs) material.pieces += absorptionPiece(change->absorption, change->thickness);
@@ -490,12 +503,49 @@ ModelLibrary::Parsed ModelLibrary::parse(const std::filesystem::path& file, cons
         out.materials.push_back(std::move(material));
     }
 
+    // Skinned meshes are posed by a skeleton of their bones (and the nodes above them): their
+    // vertices are kept where the skin was bound, in the model's space.
+    FbxSkeleton bones;
+    try {
+        bones = readFbxSkeleton(*scene);
+    } catch (const std::exception& error) {
+        out.messages.push_back("Model " + file.u8string() + " skeleton not read: " + error.what());
+    }
+    if (bones.asset) {
+        out.skeleton = bones.asset;
+        for (std::size_t j = 0; j < bones.nodes.size(); ++j) out.joints.push_back({bones.names[j], bones.parents[j], bones.rest[j]});
+    }
+    // Where a skinned mesh's geometry was bound, by mesh, and those placed already.
+    std::map<const ufbx_mesh*, ufbx_matrix> bound;
+    std::set<const ufbx_mesh*> placedSkins;
+
     // One mesh per file mesh, one submesh per material it uses.
     std::map<const ufbx_mesh*, std::size_t> meshes;
     std::vector<uint32_t> triangle;
     for (std::size_t m = 0; m < scene->meshes.count; ++m) {
         const auto* source = scene->meshes.data[m];
         if (!source->vertex_position.exists || source->num_triangles == 0) continue;
+        const auto* skin = out.skeleton && source->skin_deformers.count && source->skin_deformers.data[0]->clusters.count
+                               ? source->skin_deformers.data[0] : nullptr;
+        // An unskinned mesh under a joint (hair, a helmet) moves rigidly with it: it is skinned
+        // to that joint alone, placed where it is relative to the joint's bind pose.
+        int rigid = -1;
+        const ufbx_node* holder = !skin && out.skeleton && source->instances.count ? source->instances.data[0] : nullptr;
+        for (const auto* node = holder; node && rigid < 0; node = node->parent) rigid = bones.joint(node);
+        ufbx_matrix toBind{}, normalsToBind{};
+        if (skin) {
+            const auto* cluster = skin->clusters.data[0];
+            toBind = ufbx_matrix_mul(&cluster->bind_to_world, &cluster->geometry_to_bone);
+        } else if (rigid >= 0) {
+            const auto& joint = *bones.nodes[std::size_t(rigid)];
+            const auto toJoint = ufbx_matrix_invert(&joint.node_to_world);
+            const auto inJoint = ufbx_matrix_mul(&toJoint, &holder->geometry_to_world);
+            toBind = ufbx_matrix_mul(&bones.world[std::size_t(rigid)], &inJoint);
+        }
+        if (skin || rigid >= 0) {
+            normalsToBind = ufbx_matrix_for_normals(&toBind);
+            bound[source] = toBind;
+        }
         Parsed::Mesh mesh;
         mesh.lower = {std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max()};
         mesh.upper = mesh.lower * -1.0f;
@@ -509,10 +559,13 @@ ModelLibrary::Parsed ModelLibrary::parse(const std::filesystem::path& file, cons
                 for (std::size_t c = 0; c < count * 3; ++c) {
                     const auto index = triangle[c];
                     Corner corner{};
-                    const auto p = ufbx_get_vertex_vec3(&source->vertex_position, index);
+                    auto p = ufbx_get_vertex_vec3(&source->vertex_position, index);
+                    if (skin || rigid >= 0) p = ufbx_transform_position(&toBind, p);
+                    if (skin) corner.vertex = source->vertex_indices.data[index];
                     corner.position[0] = float(p.x), corner.position[1] = float(p.y), corner.position[2] = float(p.z);
                     if (source->vertex_normal.exists) {
-                        const auto n = ufbx_get_vertex_vec3(&source->vertex_normal, index);
+                        auto n = ufbx_get_vertex_vec3(&source->vertex_normal, index);
+                        if (skin || rigid >= 0) n = ufbx_vec3_normalize(ufbx_transform_direction(&normalsToBind, n));
                         corner.normal[0] = float(n.x), corner.normal[1] = float(n.y), corner.normal[2] = float(n.z);
                     }
                     if (source->vertex_uv.exists) {
@@ -538,6 +591,33 @@ ModelLibrary::Parsed ModelLibrary::parse(const std::filesystem::path& file, cons
             }
             submesh.vertices.resize(vertices.size() * (sizeof(Vertex) / sizeof(float)));
             std::memcpy(submesh.vertices.data(), vertices.data(), vertices.size() * sizeof(Vertex));
+            if (skin) {
+                // The four heaviest bones of each vertex, normalized; slots name the submesh's bones.
+                std::map<int, std::uint8_t> slots;
+                submesh.blendIndices.assign(corners.size() * 4, 0);
+                submesh.blendWeights.assign(corners.size() * 4, 0.0f);
+                for (std::size_t v = 0; v < corners.size(); ++v) {
+                    const auto& weights = skin->vertices.data[corners[v].vertex];
+                    float total = 0;
+                    for (std::uint32_t w = 0; w < weights.num_weights && w < 4; ++w) {
+                        const auto& weight = skin->weights.data[weights.weight_begin + w];
+                        const int joint = bones.joint(skin->clusters.data[weight.cluster_index]->bone_node);
+                        if (joint < 0 || (!slots.count(joint) && slots.size() == 256)) continue;
+                        const auto [slot, added] = slots.try_emplace(joint, std::uint8_t(slots.size()));
+                        if (added) submesh.bones.push_back(std::uint16_t(joint));
+                        submesh.blendIndices[v * 4 + w] = slot->second;
+                        submesh.blendWeights[v * 4 + w] = float(weight.weight);
+                        total += float(weight.weight);
+                    }
+                    for (int w = 0; w < 4 && total > 0; ++w) submesh.blendWeights[v * 4 + w] /= total;
+                }
+                if (submesh.bones.empty()) submesh.bones.push_back(0);
+            } else if (rigid >= 0) {
+                submesh.bones.push_back(std::uint16_t(rigid));
+                submesh.blendIndices.assign(corners.size() * 4, 0);
+                submesh.blendWeights.assign(corners.size() * 4, 0.0f);
+                for (std::size_t v = 0; v < corners.size(); ++v) submesh.blendWeights[v * 4] = 1;
+            }
             const auto* material = part.index < source->materials.count ? source->materials.data[part.index] : nullptr;
             submesh.material = material ? material->typed_id : out.materials.size();
             mesh.submeshes.push_back(std::move(submesh));
@@ -563,7 +643,12 @@ ModelLibrary::Parsed ModelLibrary::parse(const std::filesystem::path& file, cons
         const auto* node = scene->nodes.data[n];
         const auto found = node->mesh ? meshes.find(node->mesh) : meshes.end();
         if (found == meshes.end()) continue;
-        const auto transform = ufbx_matrix_to_transform(&node->geometry_to_world);
+        // A skinned mesh is already in the model's space, and its bones place it: once only.
+        const auto skinned = bound.find(node->mesh);
+        if (skinned != bound.end() && !placedSkins.insert(node->mesh).second) continue;
+        const ufbx_matrix toWorld = skinned != bound.end() ? skinned->second : node->geometry_to_world;
+        const ufbx_matrix toPart = skinned != bound.end() ? ufbx_identity_matrix : node->geometry_to_world;
+        const auto transform = ufbx_matrix_to_transform(&toPart);
         Parsed::Part part;
         part.mesh = found->second;
         part.position = vec(transform.translation);
@@ -576,7 +661,7 @@ ModelLibrary::Parsed ModelLibrary::parse(const std::filesystem::path& file, cons
         for (int corner = 0; corner < 8; ++corner) {
             const Vec3 local{corner & 1 ? mesh.upper.x : mesh.lower.x, corner & 2 ? mesh.upper.y : mesh.lower.y,
                              corner & 4 ? mesh.upper.z : mesh.lower.z};
-            const auto world = vec(ufbx_transform_position(&node->geometry_to_world, {local.x, local.y, local.z}));
+            const auto world = vec(ufbx_transform_position(&toPart, {local.x, local.y, local.z}));
             partLower = {std::min(partLower.x, world.x), std::min(partLower.y, world.y), std::min(partLower.z, world.z)};
             partUpper = {std::max(partUpper.x, world.x), std::max(partUpper.y, world.y), std::max(partUpper.z, world.z)};
         }
@@ -591,13 +676,13 @@ ModelLibrary::Parsed ModelLibrary::parse(const std::filesystem::path& file, cons
         const auto& meshPieces = at->second;
         pieceVolume.resize(meshPieces.lower.size());
         for (std::size_t i = 0; i < pieceVolume.size(); ++i)
-            pieceVolume[i] = placedVolume(node->geometry_to_world, meshPieces.lower[i], meshPieces.upper[i]);
+            pieceVolume[i] = placedVolume(toWorld, meshPieces.lower[i], meshPieces.upper[i]);
         for (std::size_t f = 0; f < source.faces.count; ++f) {
             const auto count = ufbx_triangulate_face(triangle.data(), triangle.size(), &source, source.faces.data[f]);
             for (std::size_t t = 0; t < count; ++t) {
                 Vec3 corners[3];
                 for (int c = 0; c < 3; ++c)
-                    corners[c] = vec(ufbx_transform_position(&node->geometry_to_world,
+                    corners[c] = vec(ufbx_transform_position(&toWorld,
                                                              ufbx_get_vertex_vec3(&source.vertex_position, triangle[t * 3 + c])));
                 const auto &a = corners[0], &b = corners[1], &c = corners[2];
                 const auto length = [](const Vec3& v) { return std::sqrt(dot(v, v)); };
@@ -629,6 +714,7 @@ void ModelLibrary::add(const std::string& key, const Parsed& parsed) {
     Model out;
     out.lower = parsed.lower, out.upper = parsed.upper;
     out.surface = parsed.surface;
+    out.skeleton = parsed.skeleton;
     // Names stay unique when the same file is read with other material changes.
     const auto prefix = "ThroneModel/" + std::to_string(models_.size()) + "/";
     auto& resources = Ogre::ResourceGroupManager::getSingleton();
@@ -718,6 +804,31 @@ void ModelLibrary::add(const std::string& key, const Parsed& parsed) {
                                            {Ogre::VET_FLOAT3, Ogre::VES_NORMAL},
                                            {Ogre::VET_FLOAT4, Ogre::VES_TANGENT},
                                            {Ogre::VET_FLOAT2, Ogre::VES_TEXTURE_COORDINATES}};
+    // Skinned submeshes share an OGRE skeleton of the file's joints, whose bone handles are their
+    // indices; the renderer poses its bones (the ozz skeleton has the clips).
+    Ogre::v1::SkeletonPtr skeleton;
+    if (!parsed.joints.empty()) {
+        skeleton = Ogre::v1::OldSkeletonManager::getSingleton().create(prefix + "skeleton",
+                                                                       Ogre::ResourceGroupManager::DEFAULT_RESOURCE_GROUP_NAME, true);
+        std::vector<Ogre::v1::OldBone*> bones;
+        for (std::size_t j = 0; j < parsed.joints.size(); ++j) {
+            const auto& joint = parsed.joints[j];
+            auto* bone = skeleton->createBone(joint.name, Ogre::ushort(j));
+            const auto& r = joint.rest;
+            bone->setPosition(r[0], r[1], r[2]);
+            bone->setOrientation(Ogre::Quaternion(r[6], r[3], r[4], r[5]));
+            bone->setScale(r[7], r[8], r[9]);
+            if (joint.parent >= 0) bones[std::size_t(joint.parent)]->addChild(bone);
+            bones.push_back(bone);
+        }
+        skeleton->setBindingPose();
+    }
+    const auto skinnedElements = [&] {
+        auto skinned = elements;
+        skinned.push_back({Ogre::VET_UBYTE4, Ogre::VES_BLEND_INDICES});
+        skinned.push_back({Ogre::VET_FLOAT4, Ogre::VES_BLEND_WEIGHTS});
+        return skinned;
+    }();
     // A file mesh becomes one OGRE mesh per submesh, so every item has one material: items
     // can be shown a material at a time (see reveal()), and each draws in its material's
     // render queue, so opaque parts (which write depth) never draw in the refraction pass.
@@ -729,9 +840,22 @@ void ModelLibrary::add(const std::string& key, const Parsed& parsed) {
             const auto vertexCount = part.vertices.size() * sizeof(float) / sizeof(Vertex);
             auto mesh = Ogre::MeshManager::getSingleton().createManual(prefix + "mesh/" + std::to_string(m) + "/" + std::to_string(s),
                                                                         Ogre::ResourceGroupManager::DEFAULT_RESOURCE_GROUP_NAME);
+            // A skinned vertex adds its four bone slots (bytes) and weights.
+            const bool skinned = skeleton && !part.bones.empty();
+            std::vector<float> interleaved;
+            if (skinned) {
+                constexpr std::size_t floats = sizeof(Vertex) / sizeof(float), stride = floats + 5;
+                interleaved.resize(vertexCount * stride);
+                for (std::size_t v = 0; v < vertexCount; ++v) {
+                    float* out = interleaved.data() + v * stride;
+                    std::memcpy(out, part.vertices.data() + v * floats, sizeof(Vertex));
+                    std::memcpy(out + floats, part.blendIndices.data() + v * 4, 4);
+                    std::memcpy(out + floats + 1, part.blendWeights.data() + v * 4, 4 * sizeof(float));
+                }
+            }
             // OGRE copies immutable buffers on creation.
-            auto* vertexBuffer = vaos->createVertexBuffer(elements, vertexCount, Ogre::BT_IMMUTABLE,
-                                                          const_cast<float*>(part.vertices.data()), false);
+            auto* vertexBuffer = vaos->createVertexBuffer(skinned ? skinnedElements : elements, vertexCount, Ogre::BT_IMMUTABLE,
+                                                          skinned ? interleaved.data() : const_cast<float*>(part.vertices.data()), false);
             auto* indexBuffer = vaos->createIndexBuffer(Ogre::IndexBufferPacked::IT_32BIT, part.indices.size(), Ogre::BT_IMMUTABLE,
                                                         const_cast<std::uint32_t*>(part.indices.data()), false);
             auto* vao = vaos->createVertexArrayObject({vertexBuffer}, indexBuffer, Ogre::OT_TRIANGLE_LIST);
@@ -739,6 +863,10 @@ void ModelLibrary::add(const std::string& key, const Parsed& parsed) {
             submesh->mVao[Ogre::VpNormal].push_back(vao);
             submesh->mVao[Ogre::VpShadow].push_back(vao);
             if (part.material < materialNames.size()) submesh->setMaterialName(materialNames[part.material]);
+            if (skinned) {
+                for (const auto bone : part.bones) submesh->mBlendIndexToBoneIndexMap.push_back(bone);
+                mesh->_notifySkeleton(skeleton);
+            }
             Vec3 lower{std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max()};
             Vec3 upper = lower * -1.0f;
             for (std::size_t v = 0; v < vertexCount; ++v) {

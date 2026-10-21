@@ -38,8 +38,11 @@ foreach(check IN ITEMS audio acoustics)
 endforeach()
 
 add_library(throne_runtime STATIC src/runtime/PhysicsWorld.cpp src/runtime/PhysicsWorld.h src/runtime/Box3DMath.h
-    src/runtime/AnimationLibrary.cpp src/runtime/AnimationLibrary.h src/runtime/AnimationWorld.cpp src/runtime/AnimationWorld.h)
-target_include_directories(throne_runtime PUBLIC src)
+    src/runtime/AnimationLibrary.cpp src/runtime/AnimationLibrary.h src/runtime/AnimationWorld.cpp src/runtime/AnimationWorld.h
+    src/runtime/FbxSkeleton.cpp src/runtime/FbxSkeleton.h third_party/ufbx/ufbx.c)
+# ufbx reads FBX for the Model component and its skeletons; its warnings are its own.
+set_source_files_properties(third_party/ufbx/ufbx.c PROPERTIES COMPILE_OPTIONS "$<IF:$<BOOL:${MSVC}>,/w,-w>")
+target_include_directories(throne_runtime PUBLIC src third_party/ufbx)
 target_link_libraries(throne_runtime PUBLIC box3d::box3d lhat ozz_animation_offline)
 target_compile_features(throne_runtime PUBLIC cxx_std_17)
 
@@ -53,7 +56,7 @@ endif()
 add_executable(throne_animation_smoke tests/animation_smoke.cpp)
 target_link_libraries(throne_animation_smoke PRIVATE throne_runtime)
 if(BUILD_TESTING)
-    add_test(NAME animation_smoke COMMAND throne_animation_smoke)
+    add_test(NAME animation_smoke COMMAND throne_animation_smoke "${PROJECT_SOURCE_DIR}/third_party/ufbx/data")
 endif()
 
 # Levels, projects and the project list: the editor's LTON data, without OGRE.
@@ -104,11 +107,9 @@ if(THRONE_BUILD_GRAPHICS)
     add_executable(ogrethrone src/editor/main.cpp src/editor/Editor.cpp src/editor/EditorPanels.cpp
         src/input/OisInput.cpp src/input/OisInput.h
         src/editor/EditorPlatform.cpp src/editor/EditorParticles.cpp src/editor/References.cpp src/editor/Model.cpp src/editor/Environment.cpp src/editor/GlobalIllumination.cpp src/editor/PbsExtensions.cpp src/editor/AdaptiveIrradianceField.cpp src/editor/Tasks.cpp
-        third_party/imguizmo/src/ImGuizmo.cpp third_party/ufbx/ufbx.c
+        third_party/imguizmo/src/ImGuizmo.cpp
         src/editor/Editor.h src/editor/EditorPlatform.h src/editor/OgreConversions.h src/editor/References.h
         src/editor/Model.h src/editor/Environment.h src/editor/GlobalIllumination.h src/editor/AdaptiveIrradianceField.h src/editor/Tasks.h)
-    # ufbx reads FBX for the Model component; its warnings are its own.
-    set_source_files_properties(third_party/ufbx/ufbx.c PROPERTIES COMPILE_OPTIONS "$<IF:$<BOOL:${MSVC}>,/w,-w>")
     if(WIN32)
         # The application icon and the manifest (visual styles, per-monitor DPI, UTF-8).
         target_sources(ogrethrone PRIVATE media/ogrethrone.rc media/ogrethrone.manifest)
@@ -119,7 +120,6 @@ if(THRONE_BUILD_GRAPHICS)
     target_include_directories(ogrethrone PRIVATE
         third_party/ogre-next/RenderSystems/Vulkan/include
         third_party/ogre-next/Components/Imgui/include
-        third_party/ufbx
         third_party/ogre-next/Components/Hlms/Common/include
         third_party/ogre-next/Components/Hlms/Unlit/include
         third_party/ogre-next/Components/Hlms/Pbs/include
