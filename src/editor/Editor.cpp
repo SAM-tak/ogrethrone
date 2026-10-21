@@ -55,6 +55,7 @@
 #include <imgui_internal.h>
 #include <ImGuizmo.h>
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <chrono>
 #include <cstdio>
@@ -697,6 +698,7 @@ void Editor::openProject(const std::filesystem::path& path) {
         consoleIdle_.reset();
         consoleMore_ = nullptr;
         project_ = std::move(project);
+        modelFilesFound_ = false;
         projects_.touch(project_->root);
         projectsChanged();
         writeHostApi();
@@ -1281,6 +1283,7 @@ Prefab* Editor::content() {
     const auto& context = contexts_.back();
     if (context.kind == Context::Kind::Scene) return &doc_.world.scenes[context.path];
     if (context.kind == Context::Kind::Prefab) return &doc_.prefabs[context.path];
+    if (context.kind == Context::Kind::Model) return &modelPreview_;
     return nullptr;
 }
 
@@ -1328,7 +1331,18 @@ void Editor::enter(Context context) {
         }
     }
     navigate_ = contexts_;
+    // A model is the last step: it holds no files to drill into.
+    if (navigate_->back().kind == Context::Kind::Model) navigate_->pop_back();
     navigate_->push_back(std::move(context));
+}
+
+void Editor::enterModel(const ModelComponent& model) {
+    modelPreview_ = {};
+    auto& node = modelPreview_.addNode(std::filesystem::u8path(model.path).filename().u8string());
+    node.box.reset();
+    node.transform = Transform{};
+    node.model = model;
+    enter({Context::Kind::Model, model.path});
 }
 
 Prefab* Editor::fileOf(int instance) {
@@ -1434,7 +1448,8 @@ Editor::SystemTarget Editor::systemTarget() {
 }
 
 const ExpandedNode* Editor::selectedNode() {
-    if (selected_.kind != Selection::Kind::Node || selected_.instance < 0 ||
+    // A Model step's node only places the model, which is not edited there.
+    if (selected_.kind != Selection::Kind::Node || selected_.instance < 0 || contexts_.back().kind == Context::Kind::Model ||
         selected_.instance >= static_cast<int>(view_.instances.size()))
         return nullptr;
     const auto& expansion = view_.instances[selected_.instance].expansion;
@@ -1756,6 +1771,8 @@ std::filesystem::path Editor::giFolder() const {
 
 std::string Editor::lightingScenePath() const {
     if (contexts_.back().kind == Context::Kind::Scene) return contexts_.back().path;
+    // A model is seen alone in the default lighting: a scene's may rely on its own light nodes.
+    if (contexts_.back().kind == Context::Kind::Model) return {};
     return doc_.world.level.scenes.empty() ? std::string() : doc_.world.level.scenes.front().scene;
 }
 
@@ -1766,7 +1783,8 @@ const SceneLighting& Editor::lighting() const {
 }
 
 int Editor::giInstance() const {
-    return contexts_.back().kind == Context::Kind::Prefab || view_.instances.empty() ? -1 : 0;
+    const auto kind = contexts_.back().kind;
+    return kind == Context::Kind::Prefab || kind == Context::Kind::Model || view_.instances.empty() ? -1 : 0;
 }
 
 Ogre::Matrix4 Editor::instanceTransform(int instance) const {
@@ -2107,10 +2125,18 @@ void Editor::syncTransforms(const LevelExpansion* snapshot) {
         }
     }
     giBoxesNode_->setVisible(gi_->debugVisible() && giInstance() >= 0);
+    // At a Model step, the selected node's meshes are outlined within the model.
+    auto lower=outlined ? outlined->lower : Vec3{}, upper=outlined ? outlined->upper : Vec3{};
+    if (const auto* contents=selected_.kind==Selection::Kind::ModelNode ? modelContents() : nullptr;
+        contents && selected_.item<contents->outline.nodes.size()) {
+        const auto& node=contents->outline.nodes[selected_.item];
+        outlined=node.lower.x<=node.upper.x ? modelShown() : nullptr;
+        lower=node.lower, upper=node.upper;
+    }
     outlineNode_->setVisible(outlined != nullptr);
     if (outlined) {
-        const auto centre=(outlined->lower+outlined->upper)*.5f;
-        const auto size=outlined->upper-outlined->lower;
+        const auto centre=(lower+upper)*.5f;
+        const auto size=upper-lower;
         outlineNode_->setPosition(outlined->node->_getFullTransformUpdated().transformAffine(toOgre(centre)));
         outlineNode_->setOrientation(outlined->node->_getDerivedOrientationUpdated());
         outlineNode_->setScale(outlined->node->_getDerivedScaleUpdated() * toOgre(Vec3{(std::max)(size.x,.02f),(std::max)(size.y,.02f),(std::max)(size.z,.02f)}) * 1.02f);
@@ -3051,7 +3077,13 @@ void Editor::viewport() {
             breadcrumb();
             if (showStatistics_) {
                 const float fontScale = ImGui::GetFontSize() / 13.0f;
-                const ImVec2 statisticsSize(280 * fontScale, (statisticsCollapsed_ ? 28 : 200) * fontScale);
+                auto& width = preferences_.statisticsWidth;
+                auto& height = preferences_.statisticsHeight;
+                // Unless set by dragging, the height fits the button row and eight lines.
+                const float fitted = (8 + ImGui::GetFrameHeight() + 8 * ImGui::GetTextLineHeightWithSpacing()) / fontScale;
+                width = std::clamp(width, 120.0f, (std::max)(120.0f, (size.x - 20) / fontScale));
+                if (height > 0) height = std::clamp(height, 28.0f, (std::max)(28.0f, (size.y - 16) / fontScale));
+                const ImVec2 statisticsSize(width * fontScale, (statisticsCollapsed_ ? 28 : height > 0 ? height : fitted) * fontScale);
                 ImGui::SetCursorScreenPos(ImVec2(origin.x + size.x - statisticsSize.x - 10, origin.y + 8));
                 ImGui::SetNextWindowBgAlpha(0.75f);
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6, 4));
@@ -3078,6 +3110,40 @@ void Editor::viewport() {
                         ImGui::Text("Simulation wait: %.2f ms", t.waitMs);
                         if (ImGui::IsItemHovered())
                             ImGui::SetTooltip("CPU wall times; with frame delay, simulation and rendering overlap.\nRender / present includes GPU and display waits.");
+                    }
+                    // It stays at the top right: its left and bottom edges, and the corner
+                    // between them, resize it. Their grips reach into the window's padding.
+                    const ImRect frame = ImGui::GetCurrentWindow()->Rect();
+                    ImGui::PushClipRect(frame.Min, frame.Max, false);
+                    const float grip = 5;
+                    const auto edge = [&](const char* id, ImVec2 min, ImVec2 max, ImGuiMouseCursor cursor, bool x, bool y) {
+                        ImGui::SetCursorScreenPos(min);
+                        ImGui::InvisibleButton(id, {max.x - min.x, max.y - min.y});
+                        const bool active = ImGui::IsItemActive();
+                        if (!active && !ImGui::IsItemHovered()) return;
+                        ImGui::SetMouseCursor(cursor);
+                        const auto colour = ImGui::GetColorU32(active ? ImGuiCol_SeparatorActive : ImGuiCol_SeparatorHovered);
+                        auto* draw = ImGui::GetWindowDrawList();
+                        if (x) draw->AddLine({frame.Min.x + 1, frame.Min.y}, {frame.Min.x + 1, frame.Max.y}, colour, 2);
+                        if (y) draw->AddLine({frame.Min.x, frame.Max.y - 1}, {frame.Max.x, frame.Max.y - 1}, colour, 2);
+                        if (!active) return;
+                        const auto delta = ImGui::GetIO().MouseDelta;
+                        if (x) width -= delta.x / fontScale;
+                        if (y) height = (height > 0 ? height : fitted) + delta.y / fontScale;
+                    };
+                    edge("##corner", {frame.Min.x, frame.Max.y - grip * 2}, {frame.Min.x + grip * 2, frame.Max.y},
+                         statisticsCollapsed_ ? ImGuiMouseCursor_ResizeEW : ImGuiMouseCursor_ResizeNESW, true, !statisticsCollapsed_);
+                    bool released = ImGui::IsItemDeactivated();
+                    edge("##left", frame.Min, {frame.Min.x + grip, frame.Max.y}, ImGuiMouseCursor_ResizeEW, true, false);
+                    released |= ImGui::IsItemDeactivated();
+                    if (!statisticsCollapsed_) {
+                        edge("##bottom", {frame.Min.x, frame.Max.y - grip}, frame.Max, ImGuiMouseCursor_ResizeNS, false, true);
+                        released |= ImGui::IsItemDeactivated();
+                    }
+                    ImGui::PopClipRect();
+                    if (released) {
+                        try { preferences_.save(preferencesFile_); }
+                        catch (const std::exception& error) { log(std::string("Could not save editor preferences: ") + error.what()); }
                     }
                 }
                 ImGui::EndChild();
@@ -3151,6 +3217,29 @@ void Editor::browser() {
             };
             files("Scenes", "scenes", ".scene.lton", newScenePath_, sizeof newScenePath_, Context::Kind::Scene);
             files("Prefabs", "prefabs", ".prefab.lton", newPrefabPath_, sizeof newPrefabPath_, Context::Kind::Prefab);
+            // Model files can lie anywhere in the project, among many textures: they are looked
+            // for when the tab is first shown and on Refresh. A double click opens one alone.
+            if (ImGui::BeginTabItem("Models")) {
+                if (ImGui::SmallButton("Refresh") || !modelFilesFound_) {
+                    modelFiles_.clear();
+                    std::error_code error;
+                    const auto& root = project_->root;
+                    for (std::filesystem::recursive_directory_iterator it(root, std::filesystem::directory_options::skip_permission_denied, error), end;
+                         !error && it != end; it.increment(error)) {
+                        auto extension = it->path().extension().u8string();
+                        std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+                        if (extension == ".fbx" || extension == ".mesh")
+                            modelFiles_.push_back(it->path().lexically_relative(root).generic_u8string());
+                    }
+                    std::sort(modelFiles_.begin(), modelFiles_.end());
+                    modelFilesFound_ = true;
+                }
+                for (const auto& file : modelFiles_)
+                    if (ImGui::Selectable(file.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick) &&
+                        ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !runtime_)
+                        enterModel({file});
+                ImGui::EndTabItem();
+            }
             audioBrowser();
             ImGui::EndTabBar();
         }
@@ -3233,23 +3322,36 @@ void Editor::gizmo(ImVec2 origin, ImVec2 size) {
         if (node && selected_.instance == static_cast<int>(each.instance) &&
             view_.instances[each.instance].expansion.nodes[each.index].path == selected_.path)
             moved = each.node;
+    float view[16], projection[16], model[16];
+    const auto manipulate = [&](const Ogre::Matrix4& placement, bool enabled) {
+        toColumnMajor(camera_.getViewMatrix(), view);
+        toColumnMajor(camera_.getProjectionMatrix(), projection);
+        toColumnMajor(placement, model);
+        ImGuizmo::SetDrawlist();
+        ImGuizmo::SetRect(origin.x, origin.y, size.x, size.y);
+        ImGuizmo::SetOrthographic(orthographic_);
+        ImGuizmo::Enable(enabled);
+        return ImGuizmo::Manipulate(view, projection, static_cast<ImGuizmo::OPERATION>(gizmoOperation_),
+                                    gizmoLocal_ ? ImGuizmo::LOCAL : ImGuizmo::WORLD, model);
+    };
+    // A node of a Model step's file shows where it is, greyed out: it cannot be moved.
+    if (const auto* contents = selected_.kind == Selection::Kind::ModelNode ? modelContents() : nullptr;
+        contents && selected_.item < contents->outline.nodes.size()) {
+        const auto& shown = contents->outline.nodes[selected_.item];
+        Ogre::Matrix4 inModel;
+        inModel.makeTransform(toOgre(shown.position), toOgre(shown.scale),
+                              Ogre::Quaternion(shown.rotation[3], shown.rotation[0], shown.rotation[1], shown.rotation[2]));
+        manipulate(modelShown()->node->_getFullTransformUpdated() * inModel, false);
+        gizmoOver_ = false;
+        return;
+    }
     // Only a node with a Transform can be moved.
     if (!moved || runtime_ || (node && !node->node.transform)) {
         gizmoOver_ = false;
         return;
     }
-    float view[16], projection[16], model[16];
-    toColumnMajor(camera_.getViewMatrix(), view);
-    toColumnMajor(camera_.getProjectionMatrix(), projection);
-    toColumnMajor(moved->_getFullTransformUpdated(), model);
-    ImGuizmo::SetDrawlist();
-    ImGuizmo::SetRect(origin.x, origin.y, size.x, size.y);
-    ImGuizmo::SetOrthographic(orthographic_);
     // Navigation draws the gizmo without letting it highlight or take the mouse.
-    ImGuizmo::Enable(viewDrag_ == ViewDrag::None);
-    const bool changed =
-        ImGuizmo::Manipulate(view, projection, static_cast<ImGuizmo::OPERATION>(gizmoOperation_),
-                             gizmoLocal_ ? ImGuizmo::LOCAL : ImGuizmo::WORLD, model);
+    const bool changed = manipulate(moved->_getFullTransformUpdated(), viewDrag_ == ViewDrag::None);
     // One undo step per drag.
     const bool using_ = ImGuizmo::IsUsing();
     if (using_ && !gizmoUsing_) editStart_ = doc_;
@@ -3371,6 +3473,17 @@ void Editor::focusSelection() {
         target_ = sceneRoots_[selected_.instance]->_getDerivedPositionUpdated();
         return;
     }
+    // At a Model step, the selected node's meshes, within the model.
+    if (const auto* contents = selected_.kind == Selection::Kind::ModelNode ? modelContents() : nullptr) {
+        if (selected_.item >= contents->outline.nodes.size()) return;
+        const auto& node = contents->outline.nodes[selected_.item];
+        if (node.lower.x > node.upper.x) return;
+        const auto* render = modelShown();
+        target_ = render->node->_getFullTransformUpdated().transformAffine(toOgre((node.lower + node.upper) * .5f));
+        const auto size = render->node->_getDerivedScaleUpdated() * toOgre(node.upper - node.lower);
+        distance_ = std::max({Ogre::Real(.5f), size.x * 1.6f, size.y * 1.6f, size.z * 1.6f});
+        return;
+    }
     for (const auto& render : renderObjects_) {
         if (selected_.kind != Selection::Kind::Node || selected_.instance != static_cast<int>(render.instance) ||
             view_.instances[render.instance].expansion.nodes[render.index].path != selected_.path)
@@ -3385,6 +3498,31 @@ void Editor::pick(float x, float y) {
     const Ogre::Ray ray = camera_.getCameraToViewportRay(x, y);
     auto nearest = std::numeric_limits<Ogre::Real>::max();
     selected_ = {};
+    // At a Model step, the file's node whose meshes' bounds the ray meets first (the smaller of
+    // equally near ones); the hierarchy then shows it.
+    if (contexts_.back().kind == Context::Kind::Model) {
+        const auto* render = modelShown();
+        const auto* contents = modelContents();
+        if (!render || !contents) return;
+        const auto inverse = render->node->_getFullTransformUpdated().inverseAffine();
+        const Ogre::Ray local(inverse.transformAffine(ray.getOrigin()), inverse.transformDirectionAffine(ray.getDirection()));
+        float smallest = 0;
+        const auto& nodes = contents->outline.nodes;
+        for (std::size_t k = 0; k < nodes.size(); ++k) {
+            auto lower = nodes[k].meshLower, upper = nodes[k].meshUpper;
+            if (lower.x > upper.x) continue;
+            for (auto [low, high] : {std::pair{&lower.x, &upper.x}, std::pair{&lower.y, &upper.y}, std::pair{&lower.z, &upper.z}})
+                if (*high - *low < .02f) *low -= .01f, *high += .01f;
+            const auto hit = local.intersects(Ogre::AxisAlignedBox(toOgre(lower), toOgre(upper)));
+            const auto extent = upper - lower;
+            const float volume = extent.x * extent.y * extent.z;
+            if (!hit.first || hit.second > nearest + 1e-4f || (hit.second > nearest - 1e-4f && volume >= smallest)) continue;
+            nearest = hit.second, smallest = volume;
+            selected_ = {Selection::Kind::ModelNode, 0, {}, 0, {}, k};
+            modelReveal_ = true;
+        }
+        return;
+    }
     for (const auto& render : renderObjects_) {
         if (render.shape.kind==PrimitiveKind::None && !render.placedModel.root) continue;
         auto lower=render.lower, upper=render.upper;

@@ -87,6 +87,11 @@ EditorPreferences EditorPreferences::load(const fs::path& file) {
             if (!lhat_is_bool(value)) lton::invalid();
             result.vsync=lhat_as_bool(value);
         }
+        const auto labels=lton::field(document.root(),"inspectorLabelWidth");
+        if (!lhat_is_nil(labels)) result.inspectorLabelWidth=float(lton::number(labels));
+        const auto width=lton::field(document.root(),"statisticsWidth"), height=lton::field(document.root(),"statisticsHeight");
+        if (!lhat_is_nil(width)) result.statisticsWidth=float(lton::number(width));
+        if (!lhat_is_nil(height)) result.statisticsHeight=float(lton::number(height));
     } catch(const std::exception&) { return {}; }
     return result;
 }
@@ -98,6 +103,9 @@ void EditorPreferences::save(const fs::path& file) const {
     write.set(root,"format",write.string("ogrethrone-editor"));
     write.set(root,"version",lhat_integer(1));
     write.set(root,"vsync",lhat_bool(vsync));
+    write.set(root,"inspectorLabelWidth",lhat_real(inspectorLabelWidth));
+    write.set(root,"statisticsWidth",lhat_real(statisticsWidth));
+    write.set(root,"statisticsHeight",lhat_real(statisticsHeight));
     write.save(root,file);
 }
 

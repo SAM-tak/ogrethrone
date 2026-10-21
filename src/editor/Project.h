@@ -15,6 +15,11 @@ struct GameRendering {
 /// Per-user editor preferences, stored beside the project list, never in a project.
 struct EditorPreferences {
     bool vsync = true;
+    /// Width in pixels of the Inspector's label column, set by the handle over it.
+    float inspectorLabelWidth = 140;
+    /// Size of the viewport's statistics panel, in pixels at the 13-pixel font, set by dragging
+    /// its left and bottom edges; a height of 0 fits its rows.
+    float statisticsWidth = 240, statisticsHeight = 0;
     /// Missing or damaged preferences use the defaults; an empty path disables persistence.
     static EditorPreferences load(const std::filesystem::path& file);
     /// Saves preferences atomically; an empty path disables persistence.

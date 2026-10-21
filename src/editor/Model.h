@@ -123,6 +123,34 @@ public:
         };
         std::vector<Joint> joints;
         std::shared_ptr<const SkeletonAsset> skeleton;
+        /// The file's structure as read, for the editor's hierarchy (TDDja/09 8.1).
+        struct Outline {
+            /// One node of the file: a group, a mesh's placement or a skeleton joint.
+            struct Node {
+                std::string name;
+                /// Index of the parent in nodes, or -1 at the file's top.
+                int parent = -1;
+                /// One past the index of its last descendant: its subtree is [own index, end).
+                std::size_t end = 0;
+                /// Whether it is a joint of the model's skeleton.
+                bool joint = false;
+                /// Placement in the model's space: position in metres, rotation as a quaternion
+                /// (x, y, z, w), scale.
+                Vec3 position, scale{1, 1, 1};
+                float rotation[4] = {0, 0, 0, 1};
+                /// Bounds of the meshes it and its descendants place, in the model's space;
+                /// lower above upper when there are none.
+                Vec3 lower{1, 1, 1}, upper{-1, -1, -1};
+                /// Bounds of the meshes it places itself, for picking; lower above upper when none.
+                Vec3 meshLower{1, 1, 1}, meshUpper{-1, -1, -1};
+                /// What the node itself places: vertices, triangles and the materials used
+                /// (indices into Parsed::materials).
+                std::size_t vertices = 0, triangles = 0;
+                std::vector<std::size_t> materials;
+            };
+            /// Parents before children, each followed by its subtree.
+            std::vector<Node> nodes;
+        } outline;
     };
 
     /// @param scene Where placed models are created; must outlive the library.
@@ -161,6 +189,13 @@ public:
     /// The skeleton and clips of the model added under @p key, or null when it has none. A
     /// skinned model is placed as one item, whose SkeletonInstance poses it.
     std::shared_ptr<const SkeletonAsset> skeleton(const std::string& key) const;
+    /// What the model added under @p key was read into: its nodes and materials, as shown in
+    /// the editor's hierarchy; nullptr when it has not been added.
+    struct Contents {
+        Parsed::Outline outline;
+        std::vector<Parsed::Material> materials;
+    };
+    const Contents* contents(const std::string& key) const;
 
 private:
     /// One submesh of a mesh instance of a file (so one material): its mesh and its
@@ -183,6 +218,7 @@ private:
         std::vector<Ogre::HlmsPbsDatablock*> materials;
         std::vector<SurfacePoint> surface;
         std::shared_ptr<const SkeletonAsset> skeleton;
+        Contents contents;
     };
     /// Reads an OGRE .mesh (and its skeleton) for add().
     void addOgreMesh(const std::string& key, const std::filesystem::path& file);

@@ -4,9 +4,12 @@
 #include "editor/OgreConversions.h"
 #include <imgui.h>
 #include <imgui_internal.h>
+#include <OgreMatrix3.h>
+#include <OgreQuaternion.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <functional>
 #include <optional>
 #include <string_view>
 
@@ -19,6 +22,24 @@ struct Move {
     NodeId id, parent, before = 0;
 };
 std::optional<Move> pendingMove;
+
+/// ImGui::DragFloat3 for X, Y and Z, each field marked on its left by its axis colour (red,
+/// green, blue, as the gizmo draws them).
+bool axisDrag3(const char* label, float* values, float speed, float low, float high, const char* format) {
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    const float spacing = ImGui::GetStyle().ItemInnerSpacing.x, width = ImGui::CalcItemWidth();
+    const bool edited = ImGui::DragFloat3(label, values, speed, low, high, format, ImGuiSliderFlags_AlwaysClamp);
+    // Laid out as ImGui::PushMultiItemsWidths() does: equal fields, the last taking the rest.
+    const float field = (std::max)(1.0f, std::floor((width - spacing * 2) / 3)), height = ImGui::GetFrameHeight();
+    static const ImU32 colours[3] = {IM_COL32(219, 62, 62, 255), IM_COL32(92, 186, 64, 255), IM_COL32(64, 120, 235, 255)};
+    auto* draw = ImGui::GetWindowDrawList();
+    for (int i = 0; i < 3; ++i) {
+        const float left = at.x + float(i) * (field + spacing);
+        draw->AddRectFilled({left, at.y}, {left + 3, at.y + height}, colours[i], ImGui::GetStyle().FrameRounding,
+                            ImDrawFlags_RoundCornersLeft);
+    }
+    return edited;
+}
 
 /// Accepts a node (payload @p type, a DragNode) dropped on the last item, to go
 /// under @p parent; only a node of the same view instance, so of the same file.
@@ -95,9 +116,10 @@ void Editor::breadcrumb() {
             ImGui::TextUnformatted(">");
             ImGui::SameLine();
         }
+        const auto kind = contexts_[i].kind;
         const auto label = i == 0 ? (levelPath_[0] ? nameOf(levelPath_) : std::string("untitled")) + " [Level]"
-                                  : nameOf(contexts_[i].path) +
-                                        (contexts_[i].kind == Context::Kind::Scene ? " [Scene]" : " [Prefab]");
+                           : kind == Context::Kind::Model ? std::filesystem::u8path(contexts_[i].path).filename().u8string() + " [Model]"
+                                                          : nameOf(contexts_[i].path) + (kind == Context::Kind::Scene ? " [Scene]" : " [Prefab]");
         if (ImGui::SmallButton(label.c_str()) && i + 1 < contexts_.size() && !runtime_)
             navigate_.emplace(contexts_.begin(), contexts_.begin() + static_cast<std::ptrdiff_t>(i + 1));
         ImGui::PopID();
@@ -105,8 +127,13 @@ void Editor::breadcrumb() {
 }
 
 void Editor::scenePanel() {
-    // Named after what it shows: the level's scenes, or the hierarchy of a scene or prefab.
-    if (ImGui::Begin(content() ? "Scene###Hierarchy" : "Level###Hierarchy")) {
+    // Named after what it shows: the level's scenes, or the hierarchy of a scene, prefab or model.
+    if (contexts_.back().kind == Context::Kind::Model) {
+        if (ImGui::Begin("Model###Hierarchy", nullptr, ImGuiWindowFlags_HorizontalScrollbar)) modelTree();
+        ImGui::End();
+        return;
+    }
+    if (ImGui::Begin(content() ? "Scene###Hierarchy" : "Level###Hierarchy", nullptr, ImGuiWindowFlags_HorizontalScrollbar)) {
         ImGui::BeginDisabled(runtime_ != nullptr);
         if (!content()) {
             if (ImGui::Button("Add Scene")) addScene();
@@ -202,10 +229,11 @@ void Editor::nodeTree(std::size_t instance, std::size_t parent) {
         if (!own) ImGui::PopStyleColor();
         if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
             selected_ = {Selection::Kind::Node, static_cast<int>(instance), expanded.path};
-        // Double-clicking an instance node drills into its prefab.
-        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !expanded.node.prefab.empty() &&
-            !runtime_)
-            enter({Context::Kind::Prefab, expanded.node.prefab});
+        // Double-clicking an instance node drills into its prefab, and a node with a model into the model.
+        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !runtime_) {
+            if (!expanded.node.prefab.empty()) enter({Context::Kind::Prefab, expanded.node.prefab});
+            else if (expanded.node.model && !expanded.node.model->path.empty()) enterModel(*expanded.node.model);
+        }
         if (own && ImGui::BeginDragDropSource()) {
             const DragNode dragged{static_cast<int>(instance), expanded.path[0]};
             ImGui::SetDragDropPayload(nodePayload, &dragged, sizeof dragged);
@@ -252,8 +280,145 @@ void Editor::nodeTree(std::size_t instance, std::size_t parent) {
     }
 }
 
+const Editor::RenderObject* Editor::modelShown() {
+    if (contexts_.back().kind != Context::Kind::Model) return nullptr;
+    for (const auto& render : renderObjects_)
+        if (render.placedModel.root) return &render;
+    return nullptr;
+}
+
+const ModelLibrary::Contents* Editor::modelContents() {
+    const auto* render = modelShown();
+    return render ? models_->contents(render->modelKey) : nullptr;
+}
+
+void Editor::modelTree() {
+    ImGui::TextUnformatted(contexts_.back().path.c_str());
+    ImGui::Separator();
+    const auto* contents = modelContents();
+    if (!contents) {
+        const bool reading = std::any_of(renderObjects_.begin(), renderObjects_.end(),
+                                         [&](const RenderObject& render) { return modelsReading_.count(render.modelKey) != 0; });
+        ImGui::TextDisabled(reading ? "Reading..." : "Nothing to show; see the Console.");
+        return;
+    }
+    const auto& nodes = contents->outline.nodes;
+    // Each node's subtree follows it, so siblings are found by skipping subtrees.
+    const std::function<void(std::size_t, std::size_t)> rows = [&](std::size_t from, std::size_t to) {
+        for (auto k = from; k < to; k = nodes[k].end) {
+            const auto& node = nodes[k];
+            auto flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
+            if (node.end == k + 1) flags |= ImGuiTreeNodeFlags_Leaf;
+            const bool chosen = selected_.kind == Selection::Kind::ModelNode && selected_.item == k;
+            if (chosen) flags |= ImGuiTreeNodeFlags_Selected;
+            // A node picked elsewhere is shown: the nodes above it open, and it scrolls into view.
+            const bool above = selected_.kind == Selection::Kind::ModelNode && selected_.item > k && selected_.item < node.end;
+            if (modelReveal_ && above) ImGui::SetNextItemOpen(true);
+            const bool open = ImGui::TreeNodeEx(reinterpret_cast<void*>(static_cast<std::uintptr_t>(k)), flags, "%s", node.name.c_str());
+            if (modelReveal_ && chosen) ImGui::SetScrollHereY(.5f);
+            if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) selected_ = {Selection::Kind::ModelNode, 0, {}, 0, {}, k};
+            // A mesh names the materials it uses; they are listed under Materials.
+            std::string note = node.joint ? "[Joint]" : "";
+            for (const auto m : node.materials) note += (note.empty() ? "" : ", ") + contents->materials[m].name;
+            if (!note.empty()) {
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", note.c_str());
+            }
+            if (open) {
+                rows(k + 1, node.end);
+                ImGui::TreePop();
+            }
+        }
+    };
+    ImGui::PushID("nodes");
+    rows(0, nodes.size());
+    ImGui::PopID();
+    modelReveal_ = false;
+    if (ImGui::TreeNodeEx("##materials", ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth, "Materials (%zu)",
+                          contents->materials.size())) {
+        for (std::size_t m = 0; m < contents->materials.size(); ++m) {
+            auto flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_SpanAvailWidth;
+            if (selected_.kind == Selection::Kind::ModelMaterial && selected_.item == m) flags |= ImGuiTreeNodeFlags_Selected;
+            ImGui::TreeNodeEx(reinterpret_cast<void*>(static_cast<std::uintptr_t>(m)), flags, "%s", contents->materials[m].name.c_str());
+            if (ImGui::IsItemClicked()) selected_ = {Selection::Kind::ModelMaterial, 0, {}, 0, {}, m};
+        }
+        ImGui::TreePop();
+    }
+}
+
+void Editor::modelInspector() {
+    const auto* contents = modelContents();
+    if (!contents) return;
+    const auto& nodes = contents->outline.nodes;
+    const auto& materials = contents->materials;
+    // A row selecting another node or material of the model.
+    const auto select = [&](Selection::Kind kind, std::size_t item, const std::string& label) {
+        ImGui::PushID(kind == Selection::Kind::ModelNode ? "node" : "material");
+        ImGui::PushID(static_cast<int>(item));
+        if (ImGui::Selectable(label.c_str())) selected_ = {kind, 0, {}, 0, {}, item}, modelReveal_ = true;
+        ImGui::PopID();
+        ImGui::PopID();
+    };
+    if (selected_.kind == Selection::Kind::ModelNode && selected_.item < nodes.size()) {
+        const auto& node = nodes[selected_.item];
+        ImGui::TextUnformatted(node.name.c_str());
+        ImGui::TextDisabled("%s as read; not editable", node.joint ? "Joint" : node.triangles ? "Mesh" : "Node");
+        if (node.parent >= 0) {
+            ImGui::TextUnformatted("Parent:");
+            ImGui::SameLine();
+            select(Selection::Kind::ModelNode, std::size_t(node.parent), nodes[std::size_t(node.parent)].name);
+        }
+        // Rotation as a Transform's: degrees about X, then Y, then Z.
+        Ogre::Matrix3 axes;
+        Ogre::Quaternion(node.rotation[3], node.rotation[0], node.rotation[1], node.rotation[2]).ToRotationMatrix(axes);
+        Ogre::Radian z, y, x;
+        axes.ToEulerAnglesZYX(z, y, x);
+        ImGui::SeparatorText(node.joint ? "In the model (file pose)" : "In the model");
+        ImGui::Text("Position  %.4f, %.4f, %.4f", node.position.x, node.position.y, node.position.z);
+        ImGui::Text("Rotation  %.2f, %.2f, %.2f", float(x.valueDegrees()), float(y.valueDegrees()), float(z.valueDegrees()));
+        ImGui::Text("Scale     %.4f, %.4f, %.4f", node.scale.x, node.scale.y, node.scale.z);
+        if (node.lower.x <= node.upper.x) {
+            const auto size = node.upper - node.lower;
+            ImGui::Text("Bounds    %.3f x %.3f x %.3f m", size.x, size.y, size.z);
+        }
+        if (node.triangles) {
+            ImGui::SeparatorText("Mesh");
+            ImGui::Text("%zu vertices, %zu triangles", node.vertices, node.triangles);
+            for (const auto m : node.materials) select(Selection::Kind::ModelMaterial, m, materials[m].name);
+        }
+    } else if (selected_.kind == Selection::Kind::ModelMaterial && selected_.item < materials.size()) {
+        const auto& material = materials[selected_.item];
+        ImGui::TextUnformatted(material.name.c_str());
+        ImGui::TextDisabled("Material as read; not editable");
+        const char* surface = material.renderQueue == 99 ? "Absorbing volume"
+                              : material.blended         ? "Refractive"
+                              : material.alphaHashed     ? "Alpha Hash"
+                              : material.alphaTested     ? "Alpha Test"
+                                                         : "Opaque";
+        ImGui::Text("Surface   %s", surface);
+        if (material.blended) ImGui::Text("Opacity   %.3f", material.opacity);
+        if (material.diffuse.empty()) ImGui::Text("Colour    %.3f, %.3f, %.3f", material.colour.x, material.colour.y, material.colour.z);
+        if (!material.emissive.empty()) ImGui::Text("Emission  %.3f", material.emission);
+        ImGui::SeparatorText("Textures");
+        // Shown relative to the project when they lie in it.
+        const auto texture = [&](const char* label, const std::filesystem::path& path) {
+            auto shown = path.lexically_relative(project_->root);
+            if (shown.empty() || *shown.begin() == "..") shown = path;
+            ImGui::Text("%-9s %s", label, path.empty() ? "none" : shown.generic_u8string().c_str());
+        };
+        texture("Diffuse", material.diffuse);
+        texture("Normal", material.normal);
+        texture("ORM", material.orm);
+        texture("Emissive", material.emissive);
+        ImGui::SeparatorText("Used by");
+        for (std::size_t k = 0; k < nodes.size(); ++k)
+            if (std::find(nodes[k].materials.begin(), nodes[k].materials.end(), selected_.item) != nodes[k].materials.end())
+                select(Selection::Kind::ModelNode, k, nodes[k].name);
+    }
+}
+
 void Editor::systemsPanel() {
-    if (ImGui::Begin("Systems")) {
+    if (ImGui::Begin("Systems", nullptr, ImGuiWindowFlags_HorizontalScrollbar)) {
         ImGui::BeginDisabled(runtime_ != nullptr);
         auto& level = doc_.world.level;
         bool serial = level.serialExecution;
@@ -414,11 +579,17 @@ void Editor::systemsPanel() {
 
 void Editor::inspector() {
     if (ImGui::Begin("Inspector")) {
+        const ImVec2 start = ImGui::GetCursorScreenPos();
+        const float right = start.x + ImGui::GetContentRegionAvail().x;
+        // Widgets end where the label column starts; text wraps at the panel's width.
+        ImGui::PushItemWidth(-preferences_.inspectorLabelWidth);
+        ImGui::PushTextWrapPos(0.0f);
         ImGui::BeginDisabled(runtime_ != nullptr);
         if (selected_.kind==Selection::Kind::EngineSystem) {
             ImGui::TextUnformatted(selected_.engine.c_str());
             if(selected_.engine=="OGRE") rendererInspector();
         }
+        else if (selected_.kind==Selection::Kind::ModelNode || selected_.kind==Selection::Kind::ModelMaterial) modelInspector();
         else if (const auto* node = selectedNode()) nodeInspector(*node);
         else if (const auto* system = selectedSystem()) systemInspector(*system);
         else if (auto* placed = selectedScene()) sceneInspector(*placed);
@@ -429,8 +600,37 @@ void Editor::inspector() {
         }
         else ImGui::TextDisabled("Nothing selected");
         ImGui::EndDisabled();
+        ImGui::PopTextWrapPos();
+        ImGui::PopItemWidth();
+        labelColumnHandle(start, right);
     }
     ImGui::End();
+}
+
+void Editor::labelColumnHandle(ImVec2 start, float right) {
+    auto& width = preferences_.inspectorLabelWidth;
+    const float size = ImGui::GetTextLineHeight(), gap = ImGui::GetStyle().ItemInnerSpacing.x;
+    // Both columns keep some room however narrow the panel is.
+    width = std::clamp(width, size, (std::max)(size, right - start.x - 2 * size));
+    const float edge = right - width, bottom = ImGui::GetCursorScreenPos().y;
+    if (bottom <= start.y) return;
+    // The gap between the widgets and their labels, from the top of the Inspector to its end,
+    // drags the edge. Widgets drawn over it (headers) keep the mouse.
+    const ImVec2 cursor = ImGui::GetCursorScreenPos();
+    ImGui::SetCursorScreenPos({edge - 3, start.y});
+    ImGui::InvisibleButton("##labelColumn", {gap + 6, bottom - start.y});
+    const bool active = ImGui::IsItemActive(), hovered = ImGui::IsItemHovered();
+    if (active) width -= ImGui::GetIO().MouseDelta.x;
+    if (active || hovered) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+        const auto colour = ImGui::GetColorU32(active ? ImGuiCol_SeparatorActive : ImGuiCol_SeparatorHovered);
+        ImGui::GetWindowDrawList()->AddLine({edge + gap * .5f, start.y}, {edge + gap * .5f, bottom}, colour);
+    }
+    if (ImGui::IsItemDeactivated()) {
+        try { preferences_.save(preferencesFile_); }
+        catch (const std::exception& error) { log(std::string("Could not save editor preferences: ") + error.what()); }
+    }
+    ImGui::SetCursorScreenPos(cursor);
 }
 
 void Editor::selectRenderer() { selected_={Selection::Kind::EngineSystem,-1,{},0,"OGRE"}; }
@@ -638,11 +838,11 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
     if (auto& transform = value.transform;
         transform && ImGui::CollapsingHeader("Transform", own ? &keepTransform : nullptr, open)) {
         property(2, &NodeOverride::position,
-                 [&] { return ImGui::DragFloat3("Position", transform->position.data(), 0.05f, -1.0e6f, 1.0e6f, "%.3f", clamp); });
+                 [&] { return axisDrag3("Position", transform->position.data(), 0.05f, -1.0e6f, 1.0e6f, "%.3f"); });
         property(4, &NodeOverride::rotation,
-                 [&] { return ImGui::DragFloat3("Rotation", transform->rotation.data(), 0.5f, -1.0e6f, 1.0e6f, "%.1f", clamp); });
+                 [&] { return axisDrag3("Rotation", transform->rotation.data(), 0.5f, -1.0e6f, 1.0e6f, "%.1f"); });
         property(8, &NodeOverride::scale,
-                 [&] { return ImGui::DragFloat3("Scale", transform->scale.data(), 0.01f, 0.001f, 1.0e6f, "%.3f", clamp); });
+                 [&] { return axisDrag3("Scale", transform->scale.data(), 0.01f, 0.001f, 1.0e6f, "%.3f"); });
     }
     if (auto& box = value.box; box && ImGui::CollapsingHeader("Box Primitive", own ? &keepBox : nullptr, open))
         property(16, &NodeOverride::colour, [&] { return ImGui::ColorEdit3("Colour", box->colour.data()); });
@@ -719,6 +919,8 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
                                                      "probability of its alpha instead of testing it against 0.5: soft edges\n"
                                                      "once temporal anti-aliasing averages them.");
         ImGui::TextDisabled("A project-relative FBX file: its meshes and PBS materials.");
+        if(!c.path.empty() && ImGui::SmallButton("Open Model")) enterModel(c);
+        if(ImGui::IsItemHovered()) ImGui::SetTooltip("Shows the model alone, with its nodes and materials as read.");
         // Changes to named materials of the file: absorbing volumes such as liquids.
         for(std::size_t i=0;i<c.materials.size();) {
             ImGui::PushID(int(i));
@@ -1064,6 +1266,9 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
             const auto& shown = value.*list;
             auto attachments = shown;
             bool attachmentsChanged = false;
+            // Dragging an attachment's header onto another's moves it to that place.
+            const auto payload = std::string("THRONE_ATTACHMENT_") + symbol;
+            std::optional<std::pair<std::size_t, std::size_t>> move;
             for (std::size_t k = 0; k < attachments.size(); ++k) {
                 auto& behaviour = attachments[k];
                 const bool added = addedHere(behaviour.id);
@@ -1076,6 +1281,16 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
                 if (added || change) ImGui::PushStyleColor(ImGuiCol_Text, overriddenColour);
                 const bool shownOpen = ImGui::CollapsingHeader((behaviour.script + "###attachment").c_str(), &keep, open);
                 if (added || change) ImGui::PopStyleColor();
+                if ((own || target.overrides) && ImGui::BeginDragDropSource()) {
+                    ImGui::SetDragDropPayload(payload.c_str(), &k, sizeof k);
+                    ImGui::TextUnformatted(behaviour.script.c_str());
+                    ImGui::EndDragDropSource();
+                }
+                if (ImGui::BeginDragDropTarget()) {
+                    if (const auto* dropped = ImGui::AcceptDragDropPayload(payload.c_str()))
+                        move.emplace(*static_cast<const std::size_t*>(dropped->Data), k);
+                    ImGui::EndDragDropTarget();
+                }
                 if (added) {
                     AttachmentsOverride part;
                     part.added.push_back(behaviour);
@@ -1132,6 +1347,26 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
                     item(std::move(part), "Restore");
                     ImGui::PopID();
                 }
+            if (overrides && !overrides->order.empty()) {
+                ImGui::TextColored(overriddenColour, "Order changed");
+                AttachmentsOverride part;
+                part.order = overrides->order;
+                item(std::move(part), "Revert");
+            }
+            if (move && move->first != move->second && move->first < attachments.size()) {
+                checkpoint();
+                auto moved = std::move(attachments[move->first]);
+                attachments.erase(attachments.begin() + static_cast<std::ptrdiff_t>(move->first));
+                attachments.insert(attachments.begin() + static_cast<std::ptrdiff_t>(move->second), std::move(moved));
+                if (own) {
+                    attachmentsChanged = true;
+                } else if (target.overrides) {
+                    // An instance records the whole order, its own attachments among the prefab's.
+                    AttachmentsOverride part;
+                    for (const auto& each : attachments) part.order.push_back(each.id);
+                    edit().merge(part);
+                }
+            }
             if (ImGui::Button("Add Script")) {
                 checkpoint();
                 if (own) attachments.push_back({}), attachmentsChanged = true;
@@ -1349,13 +1584,12 @@ void Editor::sceneInspector(SceneInstance& instance) {
     };
     ImGui::TextDisabled("Scene instance #%u", instance.id);
     ImGui::TextUnformatted(instance.scene.c_str());
-    constexpr auto clamp = ImGuiSliderFlags_AlwaysClamp;
     auto& transform = instance.transform;
-    ImGui::DragFloat3("Position", transform.position.data(), 0.05f, -1.0e6f, 1.0e6f, "%.3f", clamp);
+    axisDrag3("Position", transform.position.data(), 0.05f, -1.0e6f, 1.0e6f, "%.3f");
     track();
-    ImGui::DragFloat3("Rotation", transform.rotation.data(), 0.5f, -1.0e6f, 1.0e6f, "%.1f", clamp);
+    axisDrag3("Rotation", transform.rotation.data(), 0.5f, -1.0e6f, 1.0e6f, "%.1f");
     track();
-    ImGui::DragFloat3("Scale", transform.scale.data(), 0.01f, 0.001f, 1.0e6f, "%.3f", clamp);
+    axisDrag3("Scale", transform.scale.data(), 0.01f, 0.001f, 1.0e6f, "%.3f");
     track();
     ImGui::Separator();
     ImGui::Separator();

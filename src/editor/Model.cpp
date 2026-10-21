@@ -1,4 +1,5 @@
 #include "editor/Model.h"
+#include "editor/OgreConversions.h"
 #include <OgreHlmsPbs.h>
 #include <OgreHlmsPbsDatablock.h>
 #include <OgreItem.h>
@@ -17,6 +18,7 @@
 #include <OgreSceneManager.h>
 #include <OgreSceneNode.h>
 #include <OgreSubMesh2.h>
+#include <OgreSubMesh.h>
 #include <OgreTextureGpuManager.h>
 #include <OgreRenderSystem.h>
 #include <Vao/OgreVaoManager.h>
@@ -365,6 +367,11 @@ void ModelLibrary::reveal(unsigned materials) {
     hidden_.resize(kept);
 }
 
+const ModelLibrary::Contents* ModelLibrary::contents(const std::string& key) const {
+    const auto found = models_.find(key);
+    return found == models_.end() ? nullptr : &found->second.contents;
+}
+
 std::shared_ptr<const SkeletonAsset> ModelLibrary::skeleton(const std::string& key) const {
     const auto found = models_.find(key);
     return found == models_.end() ? nullptr : found->second.skeleton;
@@ -384,7 +391,36 @@ void ModelLibrary::addOgreMesh(const std::string& key, const std::filesystem::pa
         auto v1 = Ogre::v1::MeshManager::getSingleton().load(file.filename().u8string(), group, Ogre::v1::HardwareBuffer::HBU_STATIC,
                                                              Ogre::v1::HardwareBuffer::HBU_STATIC);
         auto mesh = Ogre::MeshManager::getSingleton().createByImportingV1(prefix + "mesh", group, v1.get(), false, false, false);
-        if (v1->hasSkeleton() && v1->getOldSkeleton()) out.skeleton = toSkeleton(*v1->getOldSkeleton());
+        // The mesh heads the hierarchy, followed by the skeleton's bones in their bind pose.
+        auto& outline = out.contents.outline.nodes;
+        auto& shown = outline.emplace_back();
+        shown.name = file.stem().u8string();
+        shown.end = 1;
+        shown.materials = {0};
+        if (v1->sharedVertexData[0]) shown.vertices += v1->sharedVertexData[0]->vertexCount;
+        for (unsigned short s = 0; s < v1->getNumSubMeshes(); ++s) {
+            const auto* submesh = v1->getSubMesh(s);
+            if (!submesh->useSharedVertices && submesh->vertexData[0]) shown.vertices += submesh->vertexData[0]->vertexCount;
+            if (submesh->indexData[0]) shown.triangles += submesh->indexData[0]->indexCount / 3;
+        }
+        if (v1->hasSkeleton() && v1->getOldSkeleton()) {
+            auto& bones = *v1->getOldSkeleton();
+            out.skeleton = toSkeleton(bones);
+            const std::function<void(Ogre::v1::OldNode&, int)> describe = [&](Ogre::v1::OldNode& bone, int parent) {
+                const auto at = outline.size();
+                auto& entry = outline.emplace_back();
+                entry.name = bone.getName();
+                entry.parent = parent;
+                entry.joint = true;
+                entry.position = fromOgre(bone._getDerivedPosition()), entry.scale = fromOgre(bone._getDerivedScale());
+                const auto q = bone._getDerivedOrientation();
+                entry.rotation[0] = float(q.x), entry.rotation[1] = float(q.y), entry.rotation[2] = float(q.z), entry.rotation[3] = float(q.w);
+                for (unsigned short i = 0; i < bone.numChildren(); ++i) describe(*bone.getChild(i), int(at));
+                outline[at].end = outline.size();
+            };
+            for (unsigned short i = 0; i < bones.getNumBones(); ++i)
+                if (!bones.getBone(i)->getParent()) describe(*bones.getBone(i), -1);
+        }
         v1->unload();
         // The file's material scripts are not read: a plain PBS surface for every submesh.
         const auto name = prefix + "material";
@@ -397,9 +433,15 @@ void ModelLibrary::addOgreMesh(const std::string& key, const std::filesystem::pa
         material->setTexture(Ogre::PBSM_REFLECTION, reflection_);
         for (auto* submesh : mesh->getSubMeshes()) submesh->setMaterialName(name);
         out.materials.push_back(material);
+        Parsed::Material shownMaterial;
+        shownMaterial.name = "(plain grey)";
+        shownMaterial.colour = {0.7f, 0.7f, 0.7f};
+        out.contents.materials.push_back(shownMaterial);
         const auto& bounds = mesh->getAabb();
         out.lower = {float(bounds.getMinimum().x), float(bounds.getMinimum().y), float(bounds.getMinimum().z)};
         out.upper = {float(bounds.getMaximum().x), float(bounds.getMaximum().y), float(bounds.getMaximum().z)};
+        outline.front().lower = outline.front().meshLower = out.lower;
+        outline.front().upper = outline.front().meshUpper = out.upper;
         Part part;
         part.mesh = mesh;
         out.parts.push_back(part);
@@ -627,8 +669,27 @@ ModelLibrary::Parsed ModelLibrary::parse(const std::filesystem::path& file, cons
         out.meshes.push_back(std::move(mesh));
     }
 
+    // The file's nodes below its root, depth-first, for the editor's hierarchy.
+    auto& outline = out.outline.nodes;
+    std::map<const ufbx_node*, std::size_t> outlined;
+    const std::function<void(const ufbx_node&, int)> describe = [&](const ufbx_node& node, int parent) {
+        const auto at = outline.size();
+        outlined[&node] = at;
+        auto& entry = outline.emplace_back();
+        entry.name = node.name.length ? std::string(node.name.data, node.name.length) : "(unnamed)";
+        entry.parent = parent;
+        entry.joint = bones.joint(&node) >= 0;
+        const auto transform = ufbx_matrix_to_transform(&node.node_to_world);
+        entry.position = vec(transform.translation), entry.scale = vec(transform.scale);
+        entry.rotation[0] = float(transform.rotation.x), entry.rotation[1] = float(transform.rotation.y);
+        entry.rotation[2] = float(transform.rotation.z), entry.rotation[3] = float(transform.rotation.w);
+        for (const auto* child : node.children) describe(*child, int(at));
+        outline[at].end = outline.size();
+    };
+    for (const auto* child : scene->root_node->children) describe(*child, -1);
+
     // Every node with a mesh places it; the bounds gather the placed boxes' corners.
-    out.lower = {std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max()};
+    out.lower ={std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max()};
     out.upper = out.lower * -1.0f;
     // Surface cells, packed as 21-bit signed coordinates, with the largest piece (by volume) touching each.
     std::unordered_map<std::uint64_t, float> cells;
@@ -667,6 +728,17 @@ ModelLibrary::Parsed ModelLibrary::parse(const std::filesystem::path& file, cons
         }
         out.lower = {std::min(out.lower.x, partLower.x), std::min(out.lower.y, partLower.y), std::min(out.lower.z, partLower.z)};
         out.upper = {std::max(out.upper.x, partUpper.x), std::max(out.upper.y, partUpper.y), std::max(out.upper.z, partUpper.z)};
+        if (const auto entry = outlined.find(node); entry != outlined.end()) {
+            auto& shown = outline[entry->second];
+            shown.lower = shown.meshLower = partLower, shown.upper = shown.meshUpper = partUpper;
+            for (const auto& submesh : mesh.submeshes) {
+                shown.vertices += submesh.vertices.size() * sizeof(float) / sizeof(Vertex);
+                shown.triangles += submesh.indices.size() / 3;
+                if (submesh.material < out.materials.size() &&
+                    std::find(shown.materials.begin(), shown.materials.end(), submesh.material) == shown.materials.end())
+                    shown.materials.push_back(submesh.material);
+            }
+        }
         // Each triangle is sampled on a barycentric grid fine enough to touch every cell it
         // crosses, with the volume of its piece as placed.
         const auto& source = *node->mesh;
@@ -695,6 +767,15 @@ ModelLibrary::Parsed ModelLibrary::parse(const std::filesystem::path& file, cons
         }
         out.parts.push_back(part);
     }
+    // A node's bounds take in its subtree's; children come after their parents.
+    for (std::size_t i = outline.size(); i-- > 0;) {
+        const auto& child = outline[i];
+        if (child.parent < 0 || child.lower.x > child.upper.x) continue;
+        auto& parent = outline[std::size_t(child.parent)];
+        if (parent.lower.x > parent.upper.x) parent.lower = child.lower, parent.upper = child.upper;
+        parent.lower = {std::min(parent.lower.x, child.lower.x), std::min(parent.lower.y, child.lower.y), std::min(parent.lower.z, child.lower.z)};
+        parent.upper = {std::max(parent.upper.x, child.upper.x), std::max(parent.upper.y, child.upper.y), std::max(parent.upper.z, child.upper.z)};
+    }
     out.surface.reserve(cells.size());
     for (const auto& [cell, volume] : cells) {
         const auto c = [key = cell](int shift) { return (float(std::int64_t(key >> shift & 0x1fffff) - (1 << 20)) + .5f) * surfaceCell; };
@@ -715,6 +796,7 @@ void ModelLibrary::add(const std::string& key, const Parsed& parsed) {
     out.lower = parsed.lower, out.upper = parsed.upper;
     out.surface = parsed.surface;
     out.skeleton = parsed.skeleton;
+    out.contents = {parsed.outline, parsed.materials};
     // Names stay unique when the same file is read with other material changes.
     const auto prefix = "ThroneModel/" + std::to_string(models_.size()) + "/";
     auto& resources = Ogre::ResourceGroupManager::getSingleton();

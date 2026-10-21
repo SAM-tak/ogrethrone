@@ -333,8 +333,11 @@ struct AttachmentsOverride {
     std::vector<Behaviour> added;
     /// IDs of the prefab's attachments the instance removes.
     std::vector<NodeId> removed;
+    /// The attachments' order, by ID, when the instance moves them; empty keeps the prefab's.
+    /// Those it does not list (added to the prefab later) follow, in their own order.
+    std::vector<NodeId> order;
 
-    bool has_value() const { return !changed.empty() || !added.empty() || !removed.empty(); }
+    bool has_value() const { return !changed.empty() || !added.empty() || !removed.empty() || !order.empty(); }
     void reset() { *this = {}; }
     /// The override of attachment @p id, added empty when there is none.
     AttachmentOverride& change(NodeId id);

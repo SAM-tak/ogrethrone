@@ -217,13 +217,13 @@ private:
     };
     /// One step of the drill-down (TDDja/06 6).
     struct Context {
-        enum class Kind { Level, Scene, Prefab } kind;
-        /// The scene or prefab file; empty for the level.
+        enum class Kind { Level, Scene, Prefab, Model } kind;
+        /// The scene, prefab or model file; empty for the level.
         std::string path;
     };
     /// What the inspector shows: a node of view_, a system, or a scene instance of the level.
     struct Selection {
-        enum class Kind { None, Node, System, Scene, EngineSystem, Level } kind = Kind::None;
+        enum class Kind { None, Node, System, Scene, EngineSystem, Level, ModelNode, ModelMaterial } kind = Kind::None;
         /// Index into view_.instances; -1 for a system of the level itself.
         int instance = -1;
         /// The node's path; for a system, the prefab instance it came from.
@@ -232,6 +232,8 @@ private:
         std::uint32_t system = 0;
         /// Name of a built-in engine system, independent of authored System IDs.
         std::string engine;
+        /// At a Model step, the index of the model's node or material.
+        std::size_t item = 0;
     };
     /// Where an edit of one node is written: the node itself (it belongs to the
     /// file being edited), or a property override of the instance that contains it.
@@ -436,10 +438,23 @@ private:
     void scenePanel();
     /// Draws the children of node @p parent (an index, or npos) of view instance @p instance.
     void nodeTree(std::size_t instance, std::size_t parent);
+    /// Draws the hierarchy of a Model step: the file's nodes as read, and its materials.
+    void modelTree();
+    /// The render object of a Model step's model and what its file was read into; null
+    /// elsewhere or until it has been read.
+    const RenderObject* modelShown();
+    const ModelLibrary::Contents* modelContents();
+    /// Draws the selected node or material of a Model step, which cannot be edited.
+    void modelInspector();
+    /// Enters a Model step showing @p model alone.
+    void enterModel(const ModelComponent& model);
     /// Draws the Systems panel: the level's systems and the systems of view_.
     void systemsPanel();
     /// Draws the property panel for the selected node or system.
     void inspector();
+    /// Lets the gap between the Inspector's widgets and labels, from @p start down to the
+    /// cursor, be dragged to set the label column's width; @p right is the content's right edge.
+    void labelColumnHandle(ImVec2 start, float right);
     /// Draws the selected node's properties, marking and reverting overridden ones.
     void nodeInspector(const ExpandedNode& node);
     /// Draws a scene instance's scene and transform.
@@ -573,6 +588,13 @@ private:
     /// Files being read on worker threads (a bake waits for them), and the model keys among them.
     unsigned reads_ = 0;
     std::set<std::string> modelsReading_;
+    /// What a Model step shows: one node placing the model, never saved.
+    Prefab modelPreview_;
+    /// Whether the Model hierarchy opens and scrolls to the selected node on its next draw.
+    bool modelReveal_ = false;
+    /// The project's model files for the Browser, found when its Models tab is refreshed.
+    std::vector<std::string> modelFiles_;
+    bool modelFilesFound_ = false;
     /// The reflection last given to model materials.
     Ogre::TextureGpu* modelReflection_ = nullptr;
 

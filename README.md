@@ -86,7 +86,10 @@ System component stores its template and optional script file. See the sample's
 [README](samples/showcase/README.md) for controls and source attribution.
 
 The editor's dockable panels are Scene, Systems, Inspector, Viewport, Browser and Console
-(the layout is kept in `editor.ini` beside the project list). The data is split
+(the layout is kept in `editor.ini` beside the project list).
+Scene and Systems scroll sideways when their rows are wider than the panel; the
+Inspector wraps its text instead. Dragging the gap between the Inspector's fields and
+their labels sets the width of the label column (kept per user in `editor.lton`). The data is split
 in three kinds of file, all LTON (L^ Table Object Notation, read by L^ as
 effect-free data):
 
@@ -199,7 +202,8 @@ instead of the null driver. Shutdown stages are recorded in `OgreThrone.log`;
 the final OGRE marker is also written to standard error.
 **View → Statistics** toggles a viewport overlay showing averaged editor FPS and
 frame time, scene node count and active physics body count. Its **− / +** button
-switches between the full panel and a single FPS row. Expanded statistics also
+switches between the full panel and a single FPS row. Dragging its left or bottom edge
+(or the corner between them) resizes it; the size is kept in `editor.lton`. Expanded statistics also
 show CPU wall times for UI/scripts, physics, scene copying, render synchronization,
 render/present and waiting for simulation. With frame delay, simulation and rendering
 overlap; render/present includes GPU/driver/display waits and is not a GPU timestamp. The panel is enabled
@@ -389,6 +393,10 @@ behaviour = {
 },
 ```
 
+`order` (attachment IDs), written when an instance's attachments are dragged into another
+order, puts them in that order; attachments it does not list follow in their own. In the
+Inspector, dragging an attachment's header onto another's moves it there, in the edited
+file's own nodes and in instances alike.
 `changed` sets fields and settings (`script`, `enabled`, the priorities; a priority of
 `false^` returns to the script's default) over the prefab's, so the prefab's other fields
 still reach the instance.
@@ -609,6 +617,17 @@ front of it shows it. A material change's **Diffuse Map** (project-relative) rep
 material's base colour map, for files that name their texture only in the material's name. Only opaque materials cast shadows. Lights and
 cameras in the file are not placed. A node with only a Model is picked and outlined
 by the model's bounds.
+
+**Browser > Models** lists the project's `.fbx` and `.mesh` files (found when the tab is
+first shown and on **Refresh**). Double-clicking one, double-clicking a node with a Model,
+or **Open Model** in its Inspector opens the model alone as a drill-down step, in the
+default lighting (opened from a node, with that node's Model settings). Its
+hierarchy shows the file as read: its nodes (each mesh naming the materials it uses, and
+skeleton joints marked [Joint]) and a **Materials** group. Selecting one shows its
+placement in the model, mesh size, surface type and textures in the Inspector, read-only;
+the viewport outlines the selected node's meshes, shows a greyed-out gizmo at it, and `F`
+frames them. Clicking a mesh in the viewport selects its node (by the nearest bounds the
+click meets) and reveals it in the hierarchy.
 
 An FBX file's skinned meshes keep their skin: up to four bones a vertex, bound where the
 file binds them, with a skeleton of the bones and the nodes above them, and one clip per

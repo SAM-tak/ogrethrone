@@ -632,6 +632,7 @@ void AttachmentsOverride::merge(const AttachmentsOverride& from) {
                       changed.end());
         removed.push_back(id);
     }
+    if (!from.order.empty()) order = from.order;
 }
 
 void AttachmentsOverride::subtract(const AttachmentsOverride& piece) {
@@ -652,6 +653,7 @@ void AttachmentsOverride::subtract(const AttachmentsOverride& piece) {
     removed.erase(std::remove_if(removed.begin(), removed.end(), [&](NodeId id) {
         return std::find(piece.removed.begin(), piece.removed.end(), id) != piece.removed.end();
     }), removed.end());
+    if (!piece.order.empty()) order.clear();
 }
 
 AttachmentsOverride AttachmentsOverride::apply(std::vector<Behaviour>& list) const {
@@ -668,6 +670,16 @@ AttachmentsOverride AttachmentsOverride::apply(std::vector<Behaviour>& list) con
         else unused.changed.push_back(entry);
     }
     list.insert(list.end(), added.begin(), added.end());
+    // The listed attachments come first, as listed; the rest keep their order after them.
+    if (!order.empty()) {
+        std::map<NodeId, std::size_t> rank;
+        for (std::size_t i = 0; i < order.size(); ++i) rank.emplace(order[i], i);
+        const auto of = [&](const Behaviour& each) {
+            const auto found = rank.find(each.id);
+            return found == rank.end() ? order.size() : found->second;
+        };
+        std::stable_sort(list.begin(), list.end(), [&](const Behaviour& a, const Behaviour& b) { return of(a) < of(b); });
+    }
     return unused;
 }
 
@@ -1068,6 +1080,11 @@ LhatValue writeAttachmentsOverride(lton::Writer& out, const AttachmentsOverride&
         for (const auto id : overrides.removed) out.push(removed, lhat_integer(static_cast<LhatInteger>(id)));
         out.set(root, "removed", removed);
     }
+    if (!overrides.order.empty()) {
+        const auto order = out.table();
+        for (const auto id : overrides.order) out.push(order, lhat_integer(static_cast<LhatInteger>(id)));
+        out.set(root, "order", order);
+    }
     return root;
 }
 
@@ -1108,6 +1125,10 @@ AttachmentsOverride readAttachmentsOverride(LhatValue value) {
     if (const auto removed = lton::field(root, "removed"); !lhat_is_nil(removed)) {
         const auto& list = lton::table(removed);
         for (std::size_t i = 0, count = lton::sequence(list); i < count; ++i) overrides.removed.push_back(nodeId(lton::at(list, i)));
+    }
+    if (const auto order = lton::field(root, "order"); !lhat_is_nil(order)) {
+        const auto& list = lton::table(order);
+        for (std::size_t i = 0, count = lton::sequence(list); i < count; ++i) overrides.order.push_back(nodeId(lton::at(list, i)));
     }
     return overrides;
 }

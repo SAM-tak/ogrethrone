@@ -185,6 +185,18 @@ if^ n != nil^ { let^ t:throne.BoxPrimitive|nil^ = n.component(throne.Transform) 
         require(overridden.size() == 2 && overridden[0].priority == 3.0 && std::get<double>(overridden[0].data.at("speed")) == 9 &&
                     std::get<double>(overridden[0].data.at("size")) == 2,
                 "Prefab Behaviour override lost");
+        // An instance's order puts its own attachment before the prefab's, and survives saving.
+        const auto addedId = placed.overrides.node({}).behaviour.added[0].id;
+        placed.overrides.node({}).behaviour.order = {addedId, attachment};
+        instances.save(root / "instances.lton");
+        resolved = throne::expand(throne::Scene::load(root / "instances.lton"), library);
+        require(resolved.nodes[0].node.behaviour.size() == 2 && resolved.nodes[0].node.behaviour[0].id == addedId &&
+                    resolved.nodes[0].node.behaviour[1].id == attachment,
+                "Prefab Behaviour order override lost");
+        throne::AttachmentsOverride orderPiece;
+        orderPiece.order = {addedId};
+        placed.overrides.node({}).behaviour.subtract(orderPiece);
+        require(placed.overrides.node({}).behaviour.order.empty(), "Reverting the Behaviour order failed");
         placed.overrides.node({}).behaviour = {};
         placed.overrides.node({}).behaviour.removed.push_back(attachment);
         resolved = throne::expand(instances, library);
