@@ -9,6 +9,58 @@ fragment_program Throne/MotionBlur_ps_VK glslvk
 	}
 }
 
+fragment_program Throne/MotionTiles_ps_VK glslvk
+{
+	source MotionTiles_ps.glsl
+	default_params
+	{
+		param_named neighbours float 0
+	}
+}
+
+// The fastest motion in each 16x16 tile of the velocities.
+material Throne/MotionTileMax
+{
+	technique
+	{
+		pass
+		{
+			depth_check off
+			depth_write off
+			cull_hardware none
+
+			vertex_program_ref Ogre/Compositor/Quad_vs
+			{
+			}
+
+			fragment_program_ref Throne/MotionTiles_ps_VK
+			{
+			}
+
+			texture_unit
+			{
+				filtering none
+				tex_address_mode clamp
+			}
+		}
+	}
+}
+
+// The fastest motion of the 3x3 tiles around each tile.
+material Throne/MotionNeighbourMax : Throne/MotionTileMax
+{
+	technique
+	{
+		pass
+		{
+			fragment_program_ref Throne/MotionTiles_ps_VK
+			{
+				param_named neighbours float 1
+			}
+		}
+	}
+}
+
 material Throne/MotionBlur
 {
 	technique
@@ -27,7 +79,12 @@ material Throne/MotionBlur
 			{
 			}
 
-			// The scene, the velocities and the depth.
+			// The scene, the velocities, the depth and the neighbouring tiles' fastest motion.
+			texture_unit
+			{
+				filtering none
+				tex_address_mode clamp
+			}
 			texture_unit
 			{
 				filtering none

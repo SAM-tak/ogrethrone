@@ -442,7 +442,14 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
         // it (the UI stays sharp).
         auto* node = compositor->addNodeDefinition("ThroneEditor/ViewportNode");
         node->addTextureSourceName("Viewport", 0, Ogre::TextureDefinitionBase::TEXTURE_INPUT);
-        node->setNumLocalTextureDefinitions(20);
+        node->setNumLocalTextureDefinitions(22);
+        for (const auto* name : {"VelocityTiles", "VelocityNeighbours"}) {
+            // One texel per 16x16 pixels (see media/postprocess/MotionTiles).
+            auto* texture = node->addTextureDefinition(name);
+            texture->format = Ogre::PFG_RG16_FLOAT;
+            texture->widthFactor = texture->heightFactor = 1.0f / 16;
+            texture->depthBufferId = Ogre::DepthBuffer::POOL_NO_DEPTH;
+        }
         {
             auto* texture = node->addTextureDefinition("Ssr");
             texture->format = Ogre::PFG_RGBA16_FLOAT;
@@ -492,7 +499,7 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
             texture->format = Ogre::String(name) == "SmaaEdges" ? Ogre::PFG_RG8_UNORM : Ogre::PFG_RGBA8_UNORM;
             texture->depthBufferId = Ogre::DepthBuffer::POOL_NO_DEPTH;
         }
-        node->setNumTargetPass(17);
+        node->setNumTargetPass(19);
         // @p outputs are further colour targets the material writes after @p target.
         const auto quad = [&](const char* target, const char* material, std::initializer_list<const char*> inputs,
                               std::initializer_list<const char*> outputs = {}) {
@@ -566,7 +573,9 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
         quad("Focused", "Throne/DepthOfField", {"Hdr", "Depth"});
         quad("Taa", "Throne/Taa", {"Focused", "TaaHistory", "GBufferMotion", "Depth"}, {"Velocity"});
         quad("TaaHistory", "Ogre/Copy/4xFP32", {"Taa"});
-        quad("Blurred", "Throne/MotionBlur", {"Taa", "Velocity", "Depth"});
+        quad("VelocityTiles", "Throne/MotionTileMax", {"Velocity"});
+        quad("VelocityNeighbours", "Throne/MotionNeighbourMax", {"VelocityTiles"});
+        quad("Blurred", "Throne/MotionBlur", {"Taa", "Velocity", "Depth", "VelocityNeighbours"});
         quad("BloomBright", "Throne/BloomExtract", {"Blurred"});
         quad("BloomHorizontal", "Throne/BloomHorizontal", {"BloomBright"});
         quad("Bloom", "Throne/BloomVertical", {"BloomHorizontal"});

@@ -1,10 +1,10 @@
 #version ogre_glsl_ver_330
 
-// Motion blur along each pixel's motion since the previous frame (McGuire et al. 2012,
-// "A Reconstruction Filter for Plausible Motion Blur", without the tile pass): samples along
-// the pixel's motion count where they are in front and reach it with their own motion, or are
-// behind and covered by its motion, so a moving object blurs over the background but a static
-// foreground stays sharp over a moving background.
+// Motion blur along the motion around each pixel since the previous frame (McGuire et al. 2012,
+// "A Reconstruction Filter for Plausible Motion Blur"): samples along the fastest motion of the
+// neighbouring tiles (MotionTiles) count where they are in front and reach the pixel with their
+// own motion, or are behind and covered by its motion, so a moving object blurs over the
+// background around it but a static foreground stays sharp over a moving background.
 
 vulkan_layout( ogre_t0 ) uniform texture2D scene;
 vulkan( layout( ogre_s0 ) uniform sampler sceneSampler );
@@ -12,6 +12,8 @@ vulkan_layout( ogre_t1 ) uniform texture2D velocities;
 vulkan( layout( ogre_s1 ) uniform sampler velocitySampler );
 vulkan_layout( ogre_t2 ) uniform texture2D depth;
 vulkan( layout( ogre_s2 ) uniform sampler depthSampler );
+vulkan_layout( ogre_t3 ) uniform texture2D neighbours;
+vulkan( layout( ogre_s3 ) uniform sampler neighbourSampler );
 
 vulkan( layout( ogre_P0 ) uniform Params { )
 	// The share of the frame the shutter is open (0.5: a 180 degree shutter); 0 turns it off.
@@ -59,25 +61,28 @@ void main()
 	ivec2 size = textureSize( vkSampler2D( scene, sceneSampler ), 0 );
 	ivec2 pixel = clamp( ivec2( gl_FragCoord.xy ), ivec2( 0 ), size - 1 );
 	vec4 colour = texelFetch( vkSampler2D( scene, sceneSampler ), pixel, 0 );
-	// The blur in pixels: the motion over the open shutter.
-	vec2 blur = texelFetch( vkSampler2D( velocities, velocitySampler ), pixel, 0 ).xy * vec2( size ) * shutter;
-	float reach = length( blur );
-	if( reach > maxBlur )
-	{
-		blur *= maxBlur / reach;
-		reach = maxBlur;
-	}
-	if( reach < 0.5 )
+	// The blur in pixels, the motion over the open shutter: the fastest around (along which the
+	// samples lie) and the pixel's own.
+	// Interleaved gradient noise offsets the samples per pixel, turning banding into grain, and
+	// the tile looked up, hiding the tiles' edges.
+	float noise = fract( 52.9829189 * fract( dot( gl_FragCoord.xy, vec2( 0.06711056, 0.00583715 ) ) ) ) - 0.5;
+	ivec2 tiles = textureSize( vkSampler2D( neighbours, neighbourSampler ), 0 );
+	ivec2 tile = clamp( ( pixel + ivec2( noise * 8.0, -noise * 8.0 ) ) / 16, ivec2( 0 ), tiles - 1 );
+	vec2 blur = texelFetch( vkSampler2D( neighbours, neighbourSampler ), tile, 0 ).xy * vec2( size ) * shutter;
+	float longest = length( blur );
+	if( longest > maxBlur )
+		blur *= maxBlur / longest;
+	if( longest < 0.5 )
 	{
 		fragColour = colour;
 		return;
 	}
+	float reach = clamp( length( texelFetch( vkSampler2D( velocities, velocitySampler ), pixel, 0 ).xy * vec2( size ) * shutter ),
+						 0.5, maxBlur );
 
 	float z = distanceAt( pixel );
 	float total = 1.0 / reach;
 	vec3 sum = colour.rgb * total;
-	// Interleaved gradient noise offsets the samples per pixel, turning banding into grain.
-	float noise = fract( 52.9829189 * fract( dot( gl_FragCoord.xy, vec2( 0.06711056, 0.00583715 ) ) ) ) - 0.5;
 	for( int i = 0; i < sampleCount; ++i )
 	{
 		float t = ( float( i ) + 0.5 + noise ) / float( sampleCount ) - 0.5;
