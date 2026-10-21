@@ -261,11 +261,12 @@ int main(int argc, char** argv) {
             std::fabs(basic.nodes()[0].node.transform->rotation.x) > 0.01f ||
             std::fabs(basic.nodes()[1].node.transform->rotation.y - 22.5f) > 0.01f)
             return fail("The sample's Behaviour components lost their per-script data or failed to rotate");
-        // The rotor post prefab spins its hub at 90 degrees a second, its variant at 360.
+        // The rotor post prefab spins its hub at 90 degrees a second; the scene's instance of the
+        // fast variant overrides its 360 with 1360.
         std::vector<float> hubs;
         for (const auto& node : basic.nodes())
             if (node.node.name == "Hub") hubs.push_back(node.node.transform->rotation.y);
-        if (hubs.size() != 2 || std::fabs(hubs[0] - 45.0f) > 0.01f || std::fabs(hubs[1] - 180.0f) > 0.01f)
+        if (hubs.size() != 2 || std::fabs(hubs[0] - 45.0f) > 0.01f || std::fabs(hubs[1] - 680.0f) > 0.01f)
             return fail("The sample's prefab and variant did not spin their hubs at their own speeds");
         const auto& position = basic.nodes()[0].node.transform->position;
         if (std::fabs(position.y - 0.5f) > 0.001f) return fail("Pop did not rest at its starting height between hops");

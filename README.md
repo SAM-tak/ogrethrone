@@ -515,7 +515,8 @@ is attached to SpinningCube, Cube 2 and the rotor prefab's Hub. SpinningCube als
 has [`pop.lh`](samples/basic/scripts/pop.lh), hopping upward every 1.5 seconds
 while continuing to spin. The hop lasts 0.4 seconds and reaches 0.5 units above
 its starting position; `interval`, `duration` and `height` are editable in the Inspector.
-The fast variant replaces its Hub attachment with a 360-degree-per-second version.
+The fast variant replaces its Hub attachment with a 360-degree-per-second version, which the
+scene's instance raises to 1360 (enough to show motion blur in Play).
 All use BehaviourSystems; no separate Spin Component or Spin System is needed.
 The design is recorded in [TDDja/07-component.md](TDDja/07-component.md).
 
