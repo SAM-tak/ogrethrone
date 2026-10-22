@@ -86,7 +86,7 @@ public:
             std::size_t material = 0;
             /// A skinned submesh's four bone slots and weights a vertex, and each slot's joint
             /// (an index into Parsed::joints); empty when it is not skinned.
-            std::vector<std::uint8_t> blendIndices;
+            std::vector<std::uint16_t> blendIndices;
             std::vector<float> blendWeights;
             std::vector<std::uint16_t> bones;
         };
@@ -165,6 +165,7 @@ public:
     /// Reads @p file as @p model asks; safe on a worker thread, as it touches no OGRE state.
     static Parsed parse(const std::filesystem::path& file, const ModelComponent& model);
     /// Makes the OGRE meshes and materials of @p parsed under @p key, logging its messages.
+    /// When OGRE rejects it, logs why and keeps an empty model, which places nothing.
     void add(const std::string& key, const Parsed& parsed);
     /// Whether add() has made the model read under @p key.
     bool has(const std::string& key) const { return models_.count(key) != 0; }
