@@ -954,6 +954,7 @@ Editor::~Editor() {
     renderSnapshot_.reset();
     shutdownLog.logMessage("Shutdown: releasing editor rendering resources");
     clearThumbnails();
+    destroyRetiredThumbnails();
     // ImGui would save to io.IniFilename when its context is destroyed, after iniFile_ is gone.
     auto& io = ImGui::GetIO();
     if (io.IniFilename) ImGui::SaveIniSettingsToDisk(io.IniFilename);
@@ -997,6 +998,7 @@ bool Editor::frame(float deltaSeconds, const std::function<void()>& input) {
         return std::chrono::duration<double, std::milli>(end - begin).count();
     };
     FrameTimings measured;
+    destroyRetiredThumbnails();
     platform_.newFrame();
     input_.capture();
     if (input) input();

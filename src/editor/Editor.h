@@ -516,8 +516,12 @@ private:
     /// The small picture of the image file at @p path, read on a worker thread; null until read
     /// or when it cannot be.
     Ogre::TextureGpu* thumbnail(const std::string& path);
-    /// Releases the thumbnails' textures.
+    /// Forgets the thumbnails; their textures are destroyed by destroyRetiredThumbnails(), as
+    /// the frame being built may still draw them.
     void clearThumbnails();
+    /// Destroys the textures of thumbnails cleared before the last frame was rendered, with what
+    /// ImGui made to draw them.
+    void destroyRetiredThumbnails();
     /// Scans the assets folder again (Ctrl+R): files added, changed or moved outside the editor
     /// get their IDs, and the Browser and thumbnails show them as they are.
     void rescanAssets();
@@ -663,6 +667,8 @@ private:
         bool failed = false;
     };
     std::map<std::string, Thumbnail> thumbnails_;
+    /// Textures of cleared thumbnails, destroyed at the start of the next frame.
+    std::vector<Ogre::TextureGpu*> retiredThumbnails_;
     /// The reflection last given to model materials.
     Ogre::TextureGpu* modelReflection_ = nullptr;
 

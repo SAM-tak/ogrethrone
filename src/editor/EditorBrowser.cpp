@@ -1,6 +1,7 @@
 #include "editor/Editor.h"
 #include <OgreDataStream.h>
 #include <OgreImage2.h>
+#include <OgreImguiManager.h>
 #include <OgrePixelFormatGpuUtils.h>
 #include <OgreRoot.h>
 #include <OgreRenderSystem.h>
@@ -128,12 +129,21 @@ std::string freePath(const Project& project, const std::string& folder, std::str
 }
 
 void Editor::clearThumbnails() {
-    auto* textures = root_.getRenderSystem()->getTextureGpuManager();
     for (auto& [path, thumbnail] : thumbnails_) {
         if (thumbnail.reading.valid()) thumbnail.reading.wait();
-        if (thumbnail.texture) textures->destroyTexture(thumbnail.texture);
+        if (thumbnail.texture) retiredThumbnails_.push_back(thumbnail.texture);
     }
     thumbnails_.clear();
+}
+
+void Editor::destroyRetiredThumbnails() {
+    auto* textures = root_.getRenderSystem()->getTextureGpuManager();
+    for (auto* texture : retiredThumbnails_) {
+        // ImGui keeps a material per texture it drew, which would outlive the texture.
+        gui_->destroyResourcesFor(texture);
+        textures->destroyTexture(texture);
+    }
+    retiredThumbnails_.clear();
 }
 
 Ogre::TextureGpu* Editor::thumbnail(const std::string& path) {
