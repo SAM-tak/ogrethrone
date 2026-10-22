@@ -1,6 +1,7 @@
 #include "script/ScriptRuntime.h"
 #include <cstdio>
 #include <fstream>
+#include <string_view>
 #include <limits>
 
 namespace {
@@ -8,7 +9,10 @@ namespace {
 void require(bool ok,const std::string& message) { if(!ok) throw std::runtime_error(message); }
 /// Writes a project-relative script fixture.
 void write(const std::filesystem::path& root,const char* name,const char* source) {
-    std::ofstream(root/name,std::ios::binary)<<source;
+    // Scripts lie in the assets folder, which script paths start from.
+    const bool script=std::string_view(name).size()>3 && std::string_view(name).substr(std::string_view(name).size()-3)==".lh";
+    std::filesystem::create_directories(root/"assets");
+    std::ofstream(script ? root/"assets"/name : root/name,std::ios::binary)<<source;
 }
 /// An isolated world with mutable expanded attachments and captured script output.
 struct Session {

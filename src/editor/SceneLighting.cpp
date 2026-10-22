@@ -1,4 +1,5 @@
 #include "editor/SceneLighting.h"
+#include "editor/Assets.h"
 #include <utility>
 
 namespace throne {
@@ -15,7 +16,7 @@ SceneLighting readLighting(const LhatTable& t) {
     for(const auto& v:{std::pair{"environmentScale",&r.environmentScale},std::pair{"environmentTemperature",&r.environmentTemperature},
         std::pair{"exposure",&r.exposure}})
         if(const auto f=lton::field(t,v.first); !lhat_is_nil(f)) *v.second=static_cast<float>(lton::number(f));
-    if(const auto f=lton::field(t,"environment"); !lhat_is_nil(f)) r.environment=lton::relativePath(f);
+    if(const auto f=lton::field(t,"environment"); !lhat_is_nil(f)) r.environment=lton::assetRef(f);
     if(const auto f=lton::field(t,"gi"); !lhat_is_nil(f)) {
         const auto& gi=lton::table(f);
         r.gi.enabled=true;
@@ -66,7 +67,7 @@ LhatValue writeLighting(lton::Writer& out, const SceneLighting& r) {
     for(const auto& v:{std::pair{"environmentScale",r.environmentScale},std::pair{"environmentTemperature",r.environmentTemperature},
         std::pair{"exposure",r.exposure}})
         out.set(settings,v.first,lhat_real(v.second));
-    if(!r.environment.empty()) out.set(settings,"environment",out.string(r.environment));
+    if(!r.environment.empty()) out.set(settings,"environment",lton::assetRef(out,r.environment));
     if(r.gi.enabled) {
         const auto gi=out.table();
         out.set(gi,"lower",out.vector(r.gi.lower.data()));

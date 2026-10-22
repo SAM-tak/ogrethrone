@@ -1,0 +1,237 @@
+format = "ogrethrone-scene",
+id = 7609915242430464,
+lighting = {
+    ambientDirection = {
+        1.0,
+        1.34641,
+        1.0,
+    },
+    ambientLower = {
+        0.05,
+        0.045,
+        0.04,
+    },
+    ambientUpper = {
+        0.06,
+        0.08,
+        0.1,
+    },
+    defaultSun = false^,
+    environmentScale = 1.0,
+    environmentTemperature = 0.0,
+    exposure = 0.0,
+    sky = true^,
+    toneMapping = false^,
+},
+nodes = {
+    {
+        components = {
+            material = {
+                diffuseMap = "@ogre/materials/textures/MRAMOR6X6.jpg",
+                emissive = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                fresnel = {
+                    0.04,
+                    0.04,
+                    0.04,
+                },
+                metalness = -1.0,
+                roughness = 1.0,
+                roughnessMap = "@ogre/materials/textures/MRAMOR-bump.jpg",
+                uvScale = 4.0,
+            },
+            plane = {
+                colour = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+                depth = 20.0,
+                width = 20.0,
+            },
+            transform = {
+                position = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                rotation = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
+        },
+        id = 1,
+        name = "Ground",
+        parent = 0,
+    },
+    {
+        components = {
+            animator = {
+                clip = "Walk",
+                loop = true^,
+                playing = true^,
+                speed = 1.0,
+                time = 0.4000000059604645,
+            },
+            model = {
+                directXNormals = true^,
+                emission = 1.0,
+                path = "@ogre/models/Stickman.mesh",
+            },
+            transform = {
+                position = {
+                    -1.6,
+                    0.0,
+                    0.0,
+                },
+                rotation = {
+                    0.0,
+                    20.0,
+                    0.0,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
+        },
+        id = 2,
+        name = "Stickman",
+        parent = 0,
+    },
+    {
+        components = {
+            animator = {
+                clip = "Attack1",
+                loop = true^,
+                playing = true^,
+                speed = 1.0,
+                time = 0.5,
+            },
+            model = {
+                directXNormals = true^,
+                emission = 1.0,
+                path = "@ogre/models/ninja.mesh",
+            },
+            transform = {
+                position = {
+                    0.0,
+                    0.0,
+                    -0.3,
+                },
+                rotation = {
+                    0.0,
+                    180.0,
+                    0.0,
+                },
+                scale = {
+                    0.01,
+                    0.01,
+                    0.01,
+                },
+            },
+        },
+        id = 3,
+        name = "Ninja",
+        parent = 0,
+    },
+    {
+        components = {
+            animator = {
+                clip = "Walk",
+                loop = true^,
+                playing = true^,
+                speed = 1.5,
+                time = 0.30000001192092896,
+            },
+            model = {
+                directXNormals = true^,
+                emission = 1.0,
+                path = "@ogre/models/robot.mesh",
+            },
+            transform = {
+                position = {
+                    1.6,
+                    0.0,
+                    0.0,
+                },
+                rotation = {
+                    0.0,
+                    -60.0,
+                    0.0,
+                },
+                scale = {
+                    0.015,
+                    0.015,
+                    0.015,
+                },
+            },
+        },
+        id = 4,
+        name = "Robot",
+        parent = 0,
+    },
+    {
+        components = {
+            light = {
+                castShadows = false^,
+                colour = {
+                    1.0,
+                    0.97,
+                    0.92,
+                },
+                direction = {
+                    -0.5,
+                    -1.0,
+                    -0.7,
+                },
+                enabled = true^,
+                height = 1.0,
+                innerAngle = 30.0,
+                outerAngle = 45.0,
+                power = 2.5,
+                radius = 10.0,
+                showEmitter = false^,
+                temperature = 0.0,
+                threshold = 0.009999999776482582,
+                twoSided = false^,
+                type = "Directional",
+                width = 1.0,
+            },
+            transform = {
+                position = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                rotation = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
+        },
+        id = 5,
+        name = "Sun",
+        parent = 0,
+    },
+},
+systems = {
+},
+version = 2,

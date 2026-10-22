@@ -1,4 +1,7 @@
 format = "ogrethrone-project",
-version = 1,
+mainLevel = 7609912310611968,
 name = "OGRE Lighting and Materials",
-mainLevel = "levels/area-lights.level.lton",
+rendering = {
+    vsync = true^,
+},
+version = 1,

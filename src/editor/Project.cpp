@@ -1,5 +1,6 @@
 #include "editor/Project.h"
 #include "editor/Level.h"
+#include "editor/Assets.h"
 #include "editor/Lton.h"
 #include <algorithm>
 #include <cstdlib>
@@ -10,13 +11,13 @@ namespace {
 namespace fs = std::filesystem;
 constexpr std::string_view projectFormat = "ogrethrone-project", listFormat = "ogrethrone-projects";
 constexpr LhatInteger projectVersion = 1, listVersion = 1;
-constexpr const char* mainLevelPath = "levels/main.level.lton";
+constexpr const char* mainLevelPath = "main.level.lton";
 
 /// The entry point a new project starts with (TDDja/03 3.2).
 constexpr std::string_view mainScript = R"(# The game's entry point and organizer, run when the whole game is played.
 # An await^ here makes this script a coroutine that the engine resumes every
 # frame until it ends, e.g. once level playback exists:
-#   await^ throne.playLevel("levels/main.level.lton")
+#   await^ throne.playLevel("main.level.lton")
 import^ throne
 )";
 
@@ -33,13 +34,15 @@ Project Project::create(const fs::path& parent, const std::string& name) {
         throw std::runtime_error("Project names must be 1-100 characters without <>:\"/\\|?* or edge dots");
     const auto root = fs::absolute(parent) / fs::u8path(name);
     if (fs::exists(root) && !fs::is_empty(root)) throw std::runtime_error(root.u8string() + " is not empty");
-    fs::create_directories(root / "scripts");
-    Project project{root, name, mainLevelPath};
-    lton::writeAtomically(project.resolve("main.lh"), mainScript);
-    Scene::example().save(project.resolve("scenes/main.scene.lton"));
+    fs::create_directories(root / "assets");
+    Project project{root, name, {}};
+    lton::writeAtomically(root / "main.lh", mainScript);
+    const auto scene = Scene::example();
+    scene.save(project.resolve("main.scene.lton"));
     Level level;
-    level.addScene("scenes/main.scene.lton");
+    level.addScene(AssetRef::of(scene.id));
     level.save(project.resolve(mainLevelPath));
+    project.mainLevel = AssetRef::of(level.id);
     project.save();
     return project;
 }
@@ -50,7 +53,7 @@ Project Project::open(const fs::path& path) {
     document.expect(projectFormat, projectVersion);
     Project project{root, std::string(lton::string(lton::field(document.root(), "name"))), {}};
     if (const auto level = lton::field(document.root(), "mainLevel"); !lhat_is_nil(level))
-        project.mainLevel = lton::relativePath(level);
+        project.mainLevel = lton::assetRef(level);
     if (const auto rendering=lton::field(document.root(),"rendering"); !lhat_is_nil(rendering)) {
         const auto vsync=lton::field(lton::table(rendering),"vsync");
         if (!lhat_is_nil(vsync)) {
@@ -67,14 +70,14 @@ void Project::save() const {
     write.set(root, "format", write.string(projectFormat));
     write.set(root, "version", lhat_integer(projectVersion));
     write.set(root, "name", write.string(name));
-    if (!mainLevel.empty()) write.set(root, "mainLevel", write.string(mainLevel));
+    if (!mainLevel.empty()) write.set(root, "mainLevel", lton::assetRef(write, mainLevel));
     const auto rendering=write.table();
     write.set(rendering,"vsync",lhat_bool(this->rendering.vsync));
     write.set(root,"rendering",rendering);
     write.save(root, this->root / markerName);
 }
 
-fs::path Project::resolve(std::string_view relative) const { return root / fs::u8path(relative); }
+fs::path Project::resolve(std::string_view relative) const { return root / "assets" / fs::u8path(relative); }
 
 EditorPreferences EditorPreferences::load(const fs::path& file) {
     EditorPreferences result;

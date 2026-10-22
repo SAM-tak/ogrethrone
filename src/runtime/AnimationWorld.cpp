@@ -19,7 +19,7 @@ using Key = std::pair<std::size_t, std::size_t>;
 struct AnimationWorld::State {
     /// One posed node.
     struct Slot {
-        std::string path;
+        AssetRef path;
         std::shared_ptr<const SkeletonAsset> asset;
         std::unique_ptr<ozz::animation::SamplingJob::Context> context;
         std::vector<ozz::math::SoaTransform> locals;

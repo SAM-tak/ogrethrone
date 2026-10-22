@@ -1,8 +1,0 @@
-format = "ogrethrone-mixer", version = 1,
-buses = {
- {id = 1, parent = 0, name = "Master", volume = 1, mute = false^},
- {id = 2, parent = 1, name = "Music", volume = 1, mute = false^},
- {id = 3, parent = 1, name = "SFX", volume = 1, mute = false^},
- {id = 4, parent = 1, name = "UI", volume = 1, mute = false^},
- {id = 5, parent = 1, name = "Ambience", volume = 1, mute = false^},
-},

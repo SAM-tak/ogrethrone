@@ -79,8 +79,10 @@ struct AudioWorld::State {
     std::vector<std::pair<Key,AudioCommand>> commands;
     std::set<std::string> warned;
     bool paused=false;
-    State(AudioSystem& audio,std::filesystem::path root,Log log):audio(audio),root(std::move(root)),log(std::move(log)) {
-        acoustics=std::make_unique<AcousticWorld>(audio,this->root,[this](const auto& text){warn(text);});
+    const AssetDatabase* assets;
+    State(AudioSystem& audio,std::filesystem::path root,Log log,const AssetDatabase* assets)
+        :audio(audio),root(std::move(root)),log(std::move(log)),assets(assets) {
+        acoustics=std::make_unique<AcousticWorld>(audio,this->root,[this](const auto& text){warn(text);},assets);
     }
     void warn(const std::string& message) { if(warned.insert(message).second && log) log(message); }
     SoLoud::Soloud& soloud() { return audio.mixer(); }
@@ -92,15 +94,18 @@ struct AudioWorld::State {
             throw std::runtime_error("Cannot decode audio: "+path);
         clips.emplace(path,wave); return wave;
     }
+    /// The path of the clip @p ref names, in the assets folder.
+    std::string path(const AssetRef& ref) const { return assets ? assets->path(ref) : ref.path; }
     void prepare(Slot& slot) {
         const auto& c=slot.config; c.validate();
         if(c.clip.empty()) return;
-        const auto path=std::filesystem::u8path(c.clip);
-        if(c.spatial && c.streaming) throw std::runtime_error("3D streaming is not supported: "+c.clip);
+        const auto name=path(c.clip);
+        if(name.empty()) throw std::runtime_error("Missing audio clip asset "+std::to_string(c.clip.id));
+        if(c.spatial && c.streaming) throw std::runtime_error("3D streaming is not supported: "+name);
         if(c.streaming) {
-            slot.source=std::make_shared<BufferedStream>((root/path).u8string());
+            slot.source=std::make_shared<BufferedStream>((root/std::filesystem::u8path(name)).u8string());
         } else {
-            auto wave=clip(c.clip);
+            auto wave=clip(name);
             if(c.spatial) slot.source=std::make_shared<SpatialSound>(audio,wave,Vec3{0,0,-1});
             else slot.source=wave;
         }
@@ -124,12 +129,13 @@ struct AudioWorld::State {
     }
     void safePlay(Slot& slot) {
         try { play(slot); }
-        catch(const std::exception& e) { stop(slot); slot.source.reset(); warn(slot.config.clip+": "+e.what()); }
+        catch(const std::exception& e) { stop(slot); slot.source.reset(); warn(path(slot.config.clip)+": "+e.what()); }
     }
 };
 
-AudioWorld::AudioWorld(AudioSystem& audio,std::filesystem::path root,const MixerDefinition& mixer,Log log)
-    :state_(std::make_unique<State>(audio,std::move(root),std::move(log))) { setMixer(mixer); }
+AudioWorld::AudioWorld(AudioSystem& audio,std::filesystem::path root,const MixerDefinition& mixer,Log log,
+                       const AssetDatabase* assets)
+    :state_(std::make_unique<State>(audio,std::move(root),std::move(log),assets)) { setMixer(mixer); }
 AudioWorld::~AudioWorld() { clear(); }
 void AudioWorld::setMixer(const MixerDefinition& definition) {
     definition.validate(); auto& s=*state_; auto& mixer=s.mixer;
@@ -172,7 +178,7 @@ void AudioWorld::setMixer(const MixerDefinition& definition) {
 }
 void AudioWorld::spatialStep(const LevelExpansion& world,std::optional<ListenerPose> listenerOverride) {
     auto& s=*state_; s.spatial.clear();
-    if(!s.acoustics) s.acoustics=std::make_unique<AcousticWorld>(s.audio,s.root,[&s](const auto& text){s.warn(text);});
+    if(!s.acoustics) s.acoustics=std::make_unique<AcousticWorld>(s.audio,s.root,[&s](const auto& text){s.warn(text);},s.assets);
     std::vector<std::vector<Pose>> all;
     const AudioListenerComponent* selected=nullptr; Pose ear;
     for(const auto& instance:world.instances) {
@@ -195,7 +201,7 @@ void AudioWorld::spatialStep(const LevelExpansion& world,std::optional<ListenerP
         for(std::size_t n=0;n<nodes.size();++n) {
             const auto& c=nodes[n].node.audioSource;
             if(c && c->enabled && c->spatial && c->reflections && !c->clip.empty() && !c->streaming) {
-                std::string identity=std::to_string(world.instances[i].id)+":"+c->clip;
+                std::string identity=std::to_string(world.instances[i].id)+":"+s.path(c->clip);
                 for(auto id:nodes[n].path) identity+=":"+std::to_string(id);
                 reflected.push_back({{i,n},all[i][n],false,std::move(identity)});
             }
@@ -260,7 +266,7 @@ void AudioWorld::step(const LevelExpansion& world) {
                 if(parameters.direct.distanceAttenuation==0) slot.outputVolume=0;
             }
             if(c.streaming && slot.source && static_cast<BufferedStream&>(*slot.source).failed()) {
-                s.stop(slot); slot.source.reset(); s.warn("Streaming decode failed: "+c.clip);
+                s.stop(slot); slot.source.reset(); s.warn("Streaming decode failed: "+s.path(c.clip));
             }
             if((created || replaced) && c.autoPlay) s.safePlay(slot);
             if(s.soloud().isValidVoiceHandle(slot.voice)) {

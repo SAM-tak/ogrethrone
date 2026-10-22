@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <string_view>
 #include <string>
 #include <vector>
 
@@ -18,8 +19,10 @@ int fail(const std::string& message) {
 
 /// Writes @p text to @p root / @p path, creating directories.
 void write(const fs::path& root, const char* path, const char* text) {
-    fs::create_directories((root / path).parent_path());
-    std::ofstream(root / path, std::ios::binary | std::ios::trunc) << text;
+    // Scripts lie in the assets folder; main.lh in the project's root.
+    const auto file = std::string_view(path) == "main.lh" ? root / path : root / "assets" / path;
+    fs::create_directories(file.parent_path());
+    std::ofstream(file, std::ios::binary | std::ios::trunc) << text;
 }
 
 /// A world and its expansion, as the editor hands them to a Play session.
@@ -244,15 +247,17 @@ int main(int argc, char** argv) {
     if (argc > 1) {
         const fs::path sample = argv[1];
         Session basic;
-        basic.world.level = throne::Level::load(sample / "levels/main.level.lton");
+        throne::AssetDatabase assets(sample / "assets", {});
+        assets.scan([](const std::string&) {});
+        basic.world.level = throne::Level::load(sample / "assets/levels/main.level.lton");
         for (const auto& instance : basic.world.level.scenes)
-            basic.world.scenes[instance.scene] = throne::Scene::load(sample / instance.scene);
-        throne::Library library(sample);
+            basic.world.scenes[instance.scene] = throne::Scene::load(sample / "assets" / fs::u8path(assets.path(instance.scene)));
+        throne::Library library(sample / "assets", &assets);
         basic.expanded = throne::expand(basic.world, library);
         std::unique_ptr<throne::ScriptRuntime> runtime;
         try {
             runtime = std::make_unique<throne::ScriptRuntime>(basic.world, basic.expanded, sample, [](const std::string&) {},
-                                                            throne::PlayScope::Level);
+                                                            throne::PlayScope::Level, &assets);
             for (int i = 0; i < 30; ++i) runtime->update(static_cast<float>(throne::fixedStep));
         } catch (const throne::ScriptError& e) {
             return fail(std::string("The sample was rejected:\n") + e.what());

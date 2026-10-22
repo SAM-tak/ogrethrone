@@ -35,7 +35,7 @@ int main(int argc,char** argv) {
     using namespace throne;
     namespace fs=std::filesystem;
     try {
-        const fs::path root=THRONE_AUDIO_SAMPLE;
+        const fs::path root=fs::path(THRONE_AUDIO_SAMPLE)/"assets";
         const bool device=argc>1 && std::string(argv[1])=="--device";
         AudioSystem audio(!device);
         for(const char* file:{"audio/kenney/impact-sounds/footstep_carpet_000.ogg","audio/kenney/interface-sounds/back_001.ogg","audio/kenney/impact-sounds/footstep_carpet_000-mono.wav"}) {
@@ -48,9 +48,10 @@ int main(int argc,char** argv) {
             if(std::string(file).find("-mono.wav")!=std::string::npos) require(wave.mChannels==1,"3D Kenney fixture must be mono");
         }
         auto mixer=MixerDefinition::load(root/"mixers/main.mixer.lton");
+        AssetDatabase assets(root,{}); assets.scan([](const std::string&){});
         World world; world.level=Level::load(root/"levels/main.level.lton");
-        world.scenes.emplace("scenes/main.scene.lton",Scene::load(root/"scenes/main.scene.lton"));
-        Library library(root); auto expanded=expand(world,library);
+        for(const auto& instance:world.level.scenes) world.scenes.emplace(instance.scene,Scene::load(root/fs::u8path(assets.path(instance.scene))));
+        Library library(root,&assets); auto expanded=expand(world,library);
         // The positioning/mixer checks isolate the direct sound; the device demo keeps its walls.
         if(!device) for(auto& instance:expanded.instances) for(auto& node:instance.expansion.nodes)
             {
@@ -58,8 +59,8 @@ int main(int argc,char** argv) {
                 if(node.node.audioSource) node.node.audioSource->reflections=false;
             }
         std::vector<std::string> warnings;
-        AudioWorld runtime(audio,root,mixer,[&](const std::string& s){warnings.push_back(s);});
-        ScriptRuntime scripts(world,expanded,root,{},PlayScope::Level);
+        AudioWorld runtime(audio,root,mixer,[&](const std::string& s){warnings.push_back(s);},&assets);
+        ScriptRuntime scripts(world,expanded,root.parent_path(),{},PlayScope::Level,&assets);
         scripts.setAudioCallbacks([&](auto i,auto n,auto c){runtime.command(i,n,c);},[&](auto i,auto n){return runtime.playing(i,n);});
         const auto tick=[&] {
             runtime.spatialStep(expanded); runtime.step(expanded);
@@ -189,7 +190,7 @@ for^ _^, node in^ throne.query("AudioListener") {
         require(nodes[2].node.audioSource->volume==.25f && nodes[2].node.audioSource->bus==4,"Audio script writes not applied");
         require(nodes[0].node.audioListener->priority==7 && nodes[0].node.audioListener->enabled,"Listener script writes not applied");
         {
-            ScriptRuntime renderEvents(world,expanded,root,{},PlayScope::RenderEvents);
+            ScriptRuntime renderEvents(world,expanded,root.parent_path(),{},PlayScope::RenderEvents,&assets);
             const auto result=renderEvents.evaluate(R"(import^ throne
 for^ _^, node in^ throne.query("AudioSource") {
     let^ sound=node.audioSource()
@@ -229,7 +230,7 @@ for^ _^, node in^ throne.query("AudioSource") {
         rejects([&]{invalid.validate();},"Cyclic mixer accepted");
         invalid=mixer; invalid.buses[1].id=1; rejects([&]{invalid.validate();},"Duplicate bus accepted");
         invalid=mixer; invalid.buses[1].parent=999; rejects([&]{invalid.validate();},"Missing parent accepted");
-        const auto scene=world.scenes.at("scenes/main.scene.lton"); scene.save(temp/"roundtrip.scene.lton");
+        const auto scene=world.scenes.at(world.level.scenes.front().scene); scene.save(temp/"roundtrip.scene.lton");
         const auto loaded=Scene::load(temp/"roundtrip.scene.lton");
         require(loaded.nodes[0].audioListener==scene.nodes[0].audioListener && loaded.nodes[1].audioSource==scene.nodes[1].audioSource,"Audio component roundtrip failed");
         Prefab prefab; auto& child=prefab.addNode("Audio"); child.audioSource=AudioSourceComponent{}; child.audioListener=AudioListenerComponent{};

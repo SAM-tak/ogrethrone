@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/AssetRef.h"
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -36,8 +37,8 @@ struct Project {
     std::filesystem::path root;
     /// Display name.
     std::string name;
-    /// Project-relative path of the level opened with the project; may be empty.
-    std::string mainLevel;
+    /// The level opened with the project (a soft reference, TDDja/15 6); may be empty.
+    AssetRef mainLevel;
     /// Defaults used by the game's output window, not the editor's window.
     GameRendering rendering;
 
@@ -50,7 +51,8 @@ struct Project {
     static Project open(const std::filesystem::path& path);
     /// Writes the marker file.
     void save() const;
-    /// Resolves a project-relative path.
+    /// Resolves a path relative to the project's assets folder (TDDja/15 2), where every path
+    /// stored in its files starts; main.lh and lhat-host.json lie in the root instead.
     std::filesystem::path resolve(std::string_view relative) const;
 };
 

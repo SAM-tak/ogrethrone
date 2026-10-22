@@ -1,5 +1,0 @@
-format = "ogrethrone-level",
-version = 3,
-scenes = {{id = 1, scene = "scenes/interior-wine.scene.lton"}, {id = 2, scene = "scenes/wine-counter-view.scene.lton"}},
-systems = {},
-rendering = {grid = false^, clustered = true^, minDistance = 0.1, maxDistance = 40},

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/AssetRef.h"
 #include <ozz/animation/offline/raw_animation.h>
 #include <ozz/animation/offline/raw_skeleton.h>
 #include <ozz/base/memory/unique_ptr.h>
@@ -50,22 +51,22 @@ struct RawClip {
 std::shared_ptr<const SkeletonAsset> buildSkeleton(const ozz::animation::offline::RawSkeleton& skeleton,
                                                    const std::vector<RawClip>& clips);
 
-/// The skeletons of the models read so far, by the Model component's path. The editor adds
+/// The skeletons of the models read so far, by the Model component's file. The editor adds
 /// them on the main thread as models finish reading; the simulation looks them up from its
 /// own thread.
 class AnimationLibrary {
 public:
-    /// Adds or replaces the skeleton of the model at @p path.
-    void put(const std::string& path, std::shared_ptr<const SkeletonAsset> asset);
-    /// The skeleton of the model at @p path, or null; safe from any thread.
-    std::shared_ptr<const SkeletonAsset> get(const std::string& path) const;
+    /// Adds or replaces the skeleton of the model @p model.
+    void put(const AssetRef& model, std::shared_ptr<const SkeletonAsset> asset);
+    /// The skeleton of the model @p model, or null; safe from any thread.
+    std::shared_ptr<const SkeletonAsset> get(const AssetRef& model) const;
     /// get() without sharing ownership, for the main thread (which alone calls put()).
-    const SkeletonAsset* find(const std::string& path) const { return get(path).get(); }
+    const SkeletonAsset* find(const AssetRef& model) const { return get(model).get(); }
     /// Forgets every skeleton (a project closing).
     void clear();
 
 private:
     mutable std::mutex mutex_;
-    std::map<std::string, std::shared_ptr<const SkeletonAsset>> assets_;
+    std::map<AssetRef, std::shared_ptr<const SkeletonAsset>> assets_;
 };
 }

@@ -1,0 +1,344 @@
+format = "ogrethrone-scene",
+id = 7609909882474496,
+lighting = {
+    ambientDirection = {
+        0.0,
+        1.0,
+        0.0,
+    },
+    ambientLower = {
+        0.06,
+        0.07,
+        0.09,
+    },
+    ambientUpper = {
+        0.22,
+        0.25,
+        0.3,
+    },
+    defaultSun = true^,
+    environmentScale = 1.0,
+    environmentTemperature = 0.0,
+    exposure = 0.0,
+    sky = true^,
+    toneMapping = false^,
+},
+nodes = {
+    {
+        components = {
+            plane = {
+                colour = {
+                    0.27,
+                    0.4,
+                    0.31,
+                },
+                depth = 14.0,
+                width = 16.0,
+            },
+            planeCollider = {
+                centre = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                density = 1.0,
+                depth = 14.0,
+                friction = 0.699999988079071,
+                restitution = 0.05000000074505806,
+                sensor = false^,
+                width = 16.0,
+            },
+            transform = {
+                position = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                rotation = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
+        },
+        id = 200000000000000001,
+        name = "Ground",
+        parent = 0,
+    },
+    {
+        components = {
+            rigidBody = {
+                angularDamping = 0.05000000074505806,
+                angularVelocity = {
+                    0.0,
+                    0.0,
+                    25.0,
+                },
+                bullet = false^,
+                gravityScale = 1.0,
+                linearDamping = 0.0,
+                linearVelocity = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                type = "Dynamic",
+            },
+            sphere = {
+                colour = {
+                    0.25,
+                    0.6,
+                    0.95,
+                },
+                radius = 0.6000000238418579,
+            },
+            sphereCollider = {
+                centre = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                density = 1.0,
+                friction = 0.25,
+                radius = 0.6000000238418579,
+                restitution = 0.8500000238418579,
+                sensor = false^,
+            },
+            transform = {
+                position = {
+                    0.0,
+                    6.0,
+                    0.0,
+                },
+                rotation = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
+        },
+        id = 200000000000000002,
+        name = "Bouncing Sphere",
+        parent = 0,
+    },
+    {
+        components = {
+            capsule = {
+                colour = {
+                    0.95,
+                    0.48,
+                    0.19,
+                },
+                height = 1.7999999523162842,
+                radius = 0.44999998807907104,
+            },
+            capsuleCollider = {
+                centre = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                density = 1.0,
+                friction = 0.6499999761581421,
+                height = 1.7999999523162842,
+                radius = 0.44999998807907104,
+                restitution = 0.25,
+                sensor = false^,
+            },
+            rigidBody = {
+                angularDamping = 0.05000000074505806,
+                angularVelocity = {
+                    0.0,
+                    0.0,
+                    35.0,
+                },
+                bullet = false^,
+                gravityScale = 1.0,
+                linearDamping = 0.0,
+                linearVelocity = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                type = "Dynamic",
+            },
+            transform = {
+                position = {
+                    -3.0,
+                    5.0,
+                    0.0,
+                },
+                rotation = {
+                    0.0,
+                    0.0,
+                    25.0,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
+        },
+        id = 200000000000000003,
+        name = "Tumbling Capsule",
+        parent = 0,
+    },
+    {
+        components = {
+            box = {
+                colour = {
+                    0.9,
+                    0.72,
+                    0.18,
+                },
+            },
+            boxCollider = {
+                centre = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                density = 1.0,
+                friction = 0.699999988079071,
+                restitution = 0.15000000596046448,
+                sensor = false^,
+                size = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
+            rigidBody = {
+                angularDamping = 0.05000000074505806,
+                angularVelocity = {
+                    20.0,
+                    15.0,
+                    10.0,
+                },
+                bullet = false^,
+                gravityScale = 1.0,
+                linearDamping = 0.0,
+                linearVelocity = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                type = "Dynamic",
+            },
+            transform = {
+                position = {
+                    3.0,
+                    4.0,
+                    0.0,
+                },
+                rotation = {
+                    15.0,
+                    20.0,
+                    10.0,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
+        },
+        id = 200000000000000004,
+        name = "Falling Box",
+        parent = 0,
+    },
+    {
+        components = {
+            box = {
+                colour = {
+                    0.48,
+                    0.42,
+                    0.62,
+                },
+            },
+            boxCollider = {
+                centre = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                density = 1.0,
+                friction = 0.699999988079071,
+                restitution = 0.20000000298023224,
+                sensor = false^,
+                size = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
+            transform = {
+                position = {
+                    3.0,
+                    0.4,
+                    0.0,
+                },
+                rotation = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                scale = {
+                    2.5,
+                    0.8,
+                    2.5,
+                },
+            },
+        },
+        id = 200000000000000005,
+        name = "Static Box Platform",
+        parent = 0,
+    },
+    {
+        components = {
+            behaviour = {
+                {
+                    data = {
+                        interval = 0.1,
+                    },
+                    id = 1,
+                    script = 7609909957971968,
+                },
+            },
+            transform = {
+                position = {
+                    -2.0,
+                    8.0,
+                    0.0,
+                },
+                rotation = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
+        },
+        id = 200000000000000006,
+        name = "Box Spawn Point",
+        parent = 0,
+    },
+},
+systems = {
+},
+version = 2,

@@ -1,5 +1,5 @@
 format = "ogrethrone-project",
-mainLevel = "levels/characters.level.lton",
+mainLevel = 7609907136942080,
 name = "Animated Characters Sample",
 rendering = {
     vsync = true^,

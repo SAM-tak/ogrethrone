@@ -1,0 +1,527 @@
+format = "ogrethrone-scene",
+id = 7609852468854784,
+lighting = {
+    ambientDirection = {
+        0.0,
+        1.0,
+        0.0,
+    },
+    ambientLower = {
+        0.06,
+        0.07,
+        0.09,
+    },
+    ambientUpper = {
+        0.22,
+        0.25,
+        0.3,
+    },
+    defaultSun = true^,
+    environmentScale = 1.0,
+    environmentTemperature = 0.0,
+    exposure = 0.0,
+    sky = true^,
+    toneMapping = false^,
+},
+nodes = {
+    {
+        components = {
+            audioListener = {
+                enabled = true^,
+                priority = 0,
+            },
+            camera = {
+                antiAliasing = "TAA",
+                fStop = 0.0,
+                farClip = 1000.0,
+                fieldOfView = 45.0,
+                focusDistance = 10.0,
+                nearClip = 0.10000000149011612,
+            },
+            transform = {
+                position = {
+                    0.0,
+                    1.0,
+                    0.0,
+                },
+                rotation = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
+        },
+        id = 1,
+        name = "Listener",
+        parent = 0,
+    },
+    {
+        components = {
+            audioSource = {
+                autoPlay = true^,
+                bus = 3,
+                clip = 7609851734851584,
+                enabled = true^,
+                loop = true^,
+                maxDistance = 15.0,
+                minDistance = 1.0,
+                occlusion = true^,
+                reflectionVolume = 0.699999988079071,
+                reflections = true^,
+                spatial = true^,
+                streaming = false^,
+                transmission = true^,
+                volume = 1.0,
+            },
+            behaviour = {
+                {
+                    data = {
+                    },
+                    id = 20,
+                    script = 7609852523380736,
+                },
+            },
+            sphere = {
+                colour = {
+                    0.32,
+                    0.62,
+                    0.82,
+                },
+                radius = 0.25,
+            },
+            transform = {
+                position = {
+                    3.0,
+                    1.0,
+                    -3.0,
+                },
+                rotation = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
+        },
+        id = 2,
+        name = "Moving Footstep",
+        parent = 0,
+    },
+    {
+        components = {
+            audioSource = {
+                autoPlay = true^,
+                bus = 4,
+                clip = 7609852028452864,
+                enabled = true^,
+                loop = false^,
+                maxDistance = 100.0,
+                minDistance = 1.0,
+                occlusion = true^,
+                reflectionVolume = 1.0,
+                reflections = false^,
+                spatial = false^,
+                streaming = false^,
+                transmission = true^,
+                volume = 1.0,
+            },
+        },
+        id = 3,
+        name = "UI Sound",
+        parent = 0,
+    },
+    {
+        components = {
+            audioSource = {
+                autoPlay = false^,
+                bus = 2,
+                clip = 7609851621605376,
+                enabled = true^,
+                loop = true^,
+                maxDistance = 100.0,
+                minDistance = 1.0,
+                occlusion = true^,
+                reflectionVolume = 1.0,
+                reflections = false^,
+                spatial = false^,
+                streaming = true^,
+                transmission = true^,
+                volume = 0.20000000298023224,
+            },
+        },
+        id = 4,
+        name = "Streaming Stereo",
+        parent = 0,
+    },
+    {
+        components = {
+            acousticGeometry = {
+                absorption = {
+                    0.2,
+                    0.3,
+                    0.4,
+                },
+                boxSize = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+                enabled = true^,
+                scattering = 0.5,
+                shape = "Render",
+                transmission = {
+                    0.25,
+                    0.08,
+                    0.01,
+                },
+            },
+            box = {
+                colour = {
+                    0.35,
+                    0.45,
+                    0.55,
+                },
+            },
+            transform = {
+                position = {
+                    0.0,
+                    1.0,
+                    -1.5,
+                },
+                rotation = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                scale = {
+                    3.0,
+                    3.0,
+                    0.15,
+                },
+            },
+        },
+        id = 5,
+        name = "Acoustic Wall",
+        parent = 0,
+    },
+    {
+        components = {
+            acousticGeometry = {
+                absorption = {
+                    0.2,
+                    0.3,
+                    0.4,
+                },
+                boxSize = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+                enabled = true^,
+                scattering = 0.5,
+                shape = "Render",
+                transmission = {
+                    0.02,
+                    0.01,
+                    0.005,
+                },
+            },
+            plane = {
+                colour = {
+                    0.35,
+                    0.45,
+                    0.35,
+                },
+                depth = 12.0,
+                width = 14.0,
+            },
+            transform = {
+                position = {
+                    0.0,
+                    -0.5,
+                    -2.0,
+                },
+                rotation = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
+        },
+        id = 6,
+        name = "Floor",
+        parent = 0,
+    },
+    {
+        components = {
+            acousticGeometry = {
+                absorption = {
+                    0.15,
+                    0.2,
+                    0.3,
+                },
+                boxSize = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+                enabled = true^,
+                scattering = 0.5,
+                shape = "Render",
+                transmission = {
+                    0.02,
+                    0.01,
+                    0.005,
+                },
+            },
+            box = {
+                colour = {
+                    0.3,
+                    0.35,
+                    0.4,
+                },
+            },
+            transform = {
+                position = {
+                    -7.0,
+                    2.0,
+                    -2.0,
+                },
+                rotation = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                scale = {
+                    0.2,
+                    5.0,
+                    12.0,
+                },
+            },
+        },
+        id = 7,
+        name = "Room Left",
+        parent = 0,
+    },
+    {
+        components = {
+            acousticGeometry = {
+                absorption = {
+                    0.15,
+                    0.2,
+                    0.3,
+                },
+                boxSize = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+                enabled = true^,
+                scattering = 0.5,
+                shape = "Render",
+                transmission = {
+                    0.02,
+                    0.01,
+                    0.005,
+                },
+            },
+            box = {
+                colour = {
+                    0.3,
+                    0.35,
+                    0.4,
+                },
+            },
+            transform = {
+                position = {
+                    7.0,
+                    2.0,
+                    -2.0,
+                },
+                rotation = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                scale = {
+                    0.2,
+                    5.0,
+                    12.0,
+                },
+            },
+        },
+        id = 8,
+        name = "Room Right",
+        parent = 0,
+    },
+    {
+        components = {
+            acousticGeometry = {
+                absorption = {
+                    0.15,
+                    0.2,
+                    0.3,
+                },
+                boxSize = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+                enabled = true^,
+                scattering = 0.5,
+                shape = "Render",
+                transmission = {
+                    0.02,
+                    0.01,
+                    0.005,
+                },
+            },
+            box = {
+                colour = {
+                    0.3,
+                    0.35,
+                    0.4,
+                },
+            },
+            transform = {
+                position = {
+                    0.0,
+                    2.0,
+                    -8.0,
+                },
+                rotation = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                scale = {
+                    14.0,
+                    5.0,
+                    0.2,
+                },
+            },
+        },
+        id = 9,
+        name = "Room Back",
+        parent = 0,
+    },
+    {
+        components = {
+            acousticGeometry = {
+                absorption = {
+                    0.15,
+                    0.2,
+                    0.3,
+                },
+                boxSize = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+                enabled = true^,
+                scattering = 0.5,
+                shape = "Render",
+                transmission = {
+                    0.02,
+                    0.01,
+                    0.005,
+                },
+            },
+            box = {
+                colour = {
+                    0.3,
+                    0.35,
+                    0.4,
+                },
+            },
+            transform = {
+                position = {
+                    0.0,
+                    2.0,
+                    4.0,
+                },
+                rotation = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                scale = {
+                    14.0,
+                    5.0,
+                    0.2,
+                },
+            },
+        },
+        id = 10,
+        name = "Room Front",
+        parent = 0,
+    },
+    {
+        components = {
+            acousticGeometry = {
+                absorption = {
+                    0.15,
+                    0.2,
+                    0.3,
+                },
+                boxSize = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+                enabled = true^,
+                scattering = 0.5,
+                shape = "Render",
+                transmission = {
+                    0.02,
+                    0.01,
+                    0.005,
+                },
+            },
+            box = {
+                colour = {
+                    0.3,
+                    0.35,
+                    0.4,
+                },
+            },
+            transform = {
+                position = {
+                    0.0,
+                    4.5,
+                    -2.0,
+                },
+                rotation = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                scale = {
+                    14.0,
+                    0.2,
+                    12.0,
+                },
+            },
+        },
+        id = 11,
+        name = "Ceiling",
+        parent = 0,
+    },
+},
+systems = {
+},
+version = 2,

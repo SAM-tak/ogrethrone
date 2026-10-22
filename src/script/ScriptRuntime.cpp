@@ -188,6 +188,8 @@ struct ScriptRuntime::State {
     const World& world;
     LevelExpansion& expanded;
     std::filesystem::path root;
+    /// Finds scripts referred to by ID; null when references name them by path.
+    const AssetDatabase* assets = nullptr;
     Log log;
     ScriptRuntime::JointQuery jointQuery;
     ScriptRuntime::AudioAction audioAction;
@@ -240,6 +242,9 @@ struct ScriptRuntime::State {
 
     State(const World& world, LevelExpansion& expanded, std::filesystem::path root, Log log)
         : world(world), expanded(expanded), root(std::move(root)), log(std::move(log)) {}
+
+    /// The path, in the assets folder, of the script @p ref names.
+    std::string path(const AssetRef& ref) const { return assets ? assets->path(ref) : ref.path; }
 
     /// Runs coroutine finalizers while host state and the machine pointer are still valid.
     ~State() {
@@ -370,7 +375,8 @@ struct ScriptRuntime::State {
 namespace {
 using State = ScriptRuntime::State;
 
-/// Reads a script for the L^ loader, refusing paths outside the project root.
+/// Reads a script for the L^ loader: main.lh from the project's root, every other path from
+/// its assets folder (TDDja/15 5.4), refusing paths that leave it.
 char* loadScript(void* context, const char* path, std::size_t* length) {
     if (std::string_view(path) == lifecyclePath) {
         constexpr char source[] = "module^ ogrethrone_internal.lifecycle\npublic^let^ dispose=p^task:c^{p^ -> * -> *} { task.dispose() }\n";
@@ -384,7 +390,7 @@ char* loadScript(void* context, const char* path, std::size_t* length) {
     const auto relative = std::filesystem::u8path(path).lexically_normal();
     if (relative.is_absolute() || relative.has_root_name() || (!relative.empty() && *relative.begin() == ".."))
         return nullptr;
-    std::ifstream stream(state.root / relative, std::ios::binary);
+    std::ifstream stream((std::string_view(path) == mainPath ? state.root : state.root / "assets") / relative, std::ios::binary);
     if (!stream) return nullptr;
     const std::string bytes((std::istreambuf_iterator<char>(stream)), {});
     auto* copy = static_cast<char*>(lhat_alloc(bytes.size() + 1));
@@ -1268,7 +1274,7 @@ BehaviourInfo ScriptRuntime::inspectBehaviour(const std::filesystem::path& root,
 namespace {
 /// Instantiates one attachment with isolated state and retained, releasable VM roots.
 void instantiate(State& s,const Pending& item) {
-        const auto& path = item.behaviour->script;
+        const auto path = s.path(item.behaviour->script);
         const auto key = path + "#" + item.symbol;
         const auto* unit = s.units.at(key);
         const auto instance = s.check(
@@ -1367,18 +1373,18 @@ void ScriptRuntime::State::reconcile() {
                 auto* entry=existing[{static_cast<int>(scene),node.path,b.id}];
                 if(entry && entry->config.script!=b.script) entry=nullptr;
                 if(!entry) {
-                    const auto key=b.script+"#"+column->symbol;
+                    const auto key=path(b.script)+"#"+column->symbol;
                     if(!definitions.count(key)) {
                         std::string errors;
-                        const auto* unit=checkBehaviour(*this,b.script,errors,1,column->symbol);
+                        const auto* unit=checkBehaviour(*this,path(b.script),errors,1,column->symbol);
                         diagnostics(program.get(),errors);
                         if(!errors.empty()) throw ScriptError(errors);
                         compile(*this); lhat_program_install(program.get(),machine.get());
-                        units[key]=unit; definitions[key]=definition(*this,unit,b.script,column->symbol);
+                        units[key]=unit; definitions[key]=definition(*this,unit,path(b.script),column->symbol);
                     }
                     auto prefix=node.path;
                     if(!prefix.empty() && !node.root) prefix.pop_back();
-                    instantiate(*this,{static_cast<int>(scene),prefix,0,&b,node.node.name+" "+b.script,n,"",column->symbol});
+                    instantiate(*this,{static_cast<int>(scene),prefix,0,&b,node.node.name+" "+path(b.script),n,"",column->symbol});
                     entry=instances.back().get();
                 }
                 entry->alive=true; entry->config=b;
@@ -1488,15 +1494,16 @@ std::vector<BehaviourMatch> ScriptRuntime::behaviourMatches(const std::string& s
         for(const auto& call:entry->calls) waiting|=!lhat_is_nil(call.coroutine) && call.waiting==system;
         result.push_back({entry->scene,entry->node,entry->attachment,
             phase>=0?effectivePriority(entry->config,entry->defaults,phase):entry->config.priority.value_or(entry->defaults.priority),
-            entry->config.script,waiting});
+            state_->path(entry->config.script),waiting});
     }
     return result;
 }
 
 ScriptRuntime::ScriptRuntime(const World& world, LevelExpansion& expanded, const std::filesystem::path& root, Log log,
-                             PlayScope scope)
+                             PlayScope scope, const AssetDatabase* assets)
     : state_(std::make_unique<State>(world, expanded, root, std::move(log))) {
     auto& s = *state_;
+    s.assets = assets;
     if (scope == PlayScope::RenderEvents) {
         s.column = &renderColumn;
         s.readOnly = true;
@@ -1520,7 +1527,7 @@ ScriptRuntime::ScriptRuntime(const World& world, LevelExpansion& expanded, const
         s.systems.push_back(&system);
         for (const auto& behaviour : system.behaviour)
             pending.push_back({scene, prefix, s.systems.size() - 1, &behaviour,
-                               owner + " " + system.name + " " + behaviour.script, Expansion::npos, system.name, "Behaviour"});
+                               owner + " " + system.name + " " + s.path(behaviour.script), Expansion::npos, system.name, "Behaviour"});
     };
     // Scene and prefab systems come expanded, one copy per instance (TDDja/06 2).
     for (std::size_t i = 0; i < expanded.instances.size(); ++i)
@@ -1539,12 +1546,12 @@ ScriptRuntime::ScriptRuntime(const World& world, LevelExpansion& expanded, const
             if (!prefix.empty() && !nodes[n].root) prefix.pop_back();
             for (const auto& behaviour : nodes[n].node.*s.column->list)
                 pending.push_back({static_cast<int>(scene), prefix, 0, &behaviour,
-                                   nodes[n].node.name + " " + behaviour.script, n, "", s.column->symbol});
+                                   nodes[n].node.name + " " + s.path(behaviour.script), n, "", s.column->symbol});
         }
     }
     std::map<std::string, const LhatUnit*> units;
     for (const auto& item : pending)
-        units[item.behaviour->script + "#" + item.symbol] = checkBehaviour(s, item.behaviour->script, errors,
+        units[s.path(item.behaviour->script) + "#" + item.symbol] = checkBehaviour(s, s.path(item.behaviour->script), errors,
             item.node != Expansion::npos, item.symbol);
     for (const auto& item : pending) {
         if (item.node!=Expansion::npos) continue;

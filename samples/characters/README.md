@@ -9,8 +9,9 @@ skinned motion vectors.
 The asset is not part of this repository. Download
 [`rpg_characters_-_nov_2020.zip`](https://opengameart.org/sites/default/files/rpg_characters_-_nov_2020.zip)
 from [OpenGameArt](https://opengameart.org/content/lowpoly-rpg-characters) (12.9 MB) and
-extract it here, so that this folder contains `RPG Characters - Nov 2020/` with its `FBX/`
-and `Textures/` folders. The folder is ignored by Git.
+extract it into `assets/`, so that it contains `RPG Characters - Nov 2020/` with its `FBX/`
+and `Textures/` folders. The folder is ignored by Git except for the `.meta` files that keep
+the files' IDs, which the scene refers to.
 
 ```powershell
 out/build/windows-clang-ninja/bin/Release/ogrethrone.exe samples/characters

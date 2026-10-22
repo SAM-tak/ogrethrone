@@ -177,6 +177,7 @@ struct AcousticWorld::State {
     std::future<void> reflectionFuture;
     // Last member, destroyed first; destructor explicitly joins before native handles.
     std::unique_ptr<TaskPool> reflectionWorker;
+    const AssetDatabase* assets=nullptr;
     State(AudioSystem& audio,std::filesystem::path root,Log log):audio(audio),root(std::move(root)),log(std::move(log)) {}
     ~State() {
         reflectionWorker.reset(); job.reset(); reflectionResults.clear();
@@ -222,9 +223,10 @@ struct AcousticWorld::State {
         check(iplInstancedMeshCreate(scene,&instance,&g.instance)); iplInstancedMeshAdd(g.instance,scene);
     }
 };
-AcousticWorld::AcousticWorld(AudioSystem& audio,std::filesystem::path root,Log log)
+AcousticWorld::AcousticWorld(AudioSystem& audio,std::filesystem::path root,Log log,const AssetDatabase* assets)
     :state_(std::make_unique<State>(audio,std::move(root),std::move(log))) {
     auto& s=*state_;
+    s.assets=assets;
     IPLSceneSettings scene{}; scene.type=IPL_SCENETYPE_DEFAULT; check(iplSceneCreate(audio.steam(),&scene,&s.scene));
     IPLSimulationSettings settings{}; settings.flags=IPL_SIMULATIONFLAGS_DIRECT; settings.sceneType=IPL_SCENETYPE_DEFAULT;
     settings.maxNumOcclusionSamples=1; settings.maxNumSources=1024; settings.numThreads=1;
@@ -245,7 +247,8 @@ void AcousticWorld::syncGeometry(const LevelExpansion& world,const std::vector<s
             const auto key=std::make_pair(instance.id,node.path); seen.insert(key);
             auto& entry=s.geometry[key];
             const auto shape=c->shape==AcousticShape::Render?primitiveShape(node.node):PrimitiveShape{};
-            const auto model=(c->shape==AcousticShape::Render && node.node.model)?node.node.model->path:std::string{};
+            const auto* ref=c->shape==AcousticShape::Render && node.node.model ? &node.node.model->path : nullptr;
+            const auto model=!ref ? std::string{} : s.assets ? s.assets->path(*ref) : ref->path;
             std::error_code error;
             const auto stamp=model.empty()?std::filesystem::file_time_type{}:std::filesystem::last_write_time(s.root/std::filesystem::u8path(model),error);
             const auto transform=matrix(poses.at(i).at(n));

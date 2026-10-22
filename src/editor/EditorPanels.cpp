@@ -96,11 +96,11 @@ NodePath after(const NodePath& path, std::size_t count) { return NodePath(path.b
 std::string Editor::instanceLabel(std::size_t instance) {
     if (content()) {
         const auto kind = contexts_.back().kind == Context::Kind::Scene ? " [Scene]" : " [Prefab]";
-        return nameOf(contexts_.back().path) + kind;
+        return nameOf(shown(contexts_.back().path)) + kind;
     }
     const auto* placed = doc_.world.level.findScene(view_.instances[instance].id);
     if (!placed) return "? [Scene]";
-    auto label = nameOf(placed->scene) + " [Scene]";
+    auto label = nameOf(shown(placed->scene)) + " [Scene]";
     // The same scene placed more than once is told apart by the instance's ID.
     const auto& scenes = doc_.world.level.scenes;
     if (std::count_if(scenes.begin(), scenes.end(), [&](const SceneInstance& each) { return each.scene == placed->scene; }) > 1)
@@ -118,8 +118,8 @@ void Editor::breadcrumb() {
         }
         const auto kind = contexts_[i].kind;
         const auto label = i == 0 ? (levelPath_[0] ? nameOf(levelPath_) : std::string("untitled")) + " [Level]"
-                           : kind == Context::Kind::Model ? std::filesystem::u8path(contexts_[i].path).filename().u8string() + " [Model]"
-                                                          : nameOf(contexts_[i].path) + (kind == Context::Kind::Scene ? " [Scene]" : " [Prefab]");
+                           : kind == Context::Kind::Model ? std::filesystem::u8path(shown(contexts_[i].path)).filename().u8string() + " [Model]"
+                                                          : nameOf(shown(contexts_[i].path)) + (kind == Context::Kind::Scene ? " [Scene]" : " [Prefab]");
         if (ImGui::SmallButton(label.c_str()) && i + 1 < contexts_.size() && !runtime_)
             navigate_.emplace(contexts_.begin(), contexts_.begin() + static_cast<std::ptrdiff_t>(i + 1));
         ImGui::PopID();
@@ -141,7 +141,7 @@ void Editor::scenePanel() {
             ImGui::SetNextItemWidth(-1);
             ImGui::InputText("##ScenePath", newScenePath_, sizeof newScenePath_);
         } else if (content()->variant()) {
-            ImGui::TextColored(variantColour, "Variant of %s", content()->base.c_str());
+            ImGui::TextColored(variantColour, "Variant of %s", shown(content()->base).c_str());
             ImGui::SameLine();
             if (ImGui::SmallButton("Open Base")) enter({Context::Kind::Prefab, content()->base});
             if (!view_.instances.empty()) overridesList(content()->overrides, view_.instances[0].expansion, {}, false);
@@ -271,7 +271,7 @@ void Editor::nodeTree(std::size_t instance, std::size_t parent) {
         if (!expanded.node.prefab.empty()) {
             ImGui::SameLine();
             ImGui::TextColored(isVariant(expanded.node.prefab) ? variantColour : instanceColour, "[%s]",
-                               expanded.node.prefab.c_str());
+                               shown(expanded.node.prefab).c_str());
         }
         if (open) {
             nodeTree(instance, k);
@@ -293,7 +293,7 @@ const ModelLibrary::Contents* Editor::modelContents() {
 }
 
 void Editor::modelTree() {
-    ImGui::TextUnformatted(contexts_.back().path.c_str());
+    ImGui::TextUnformatted(shown(contexts_.back().path).c_str());
     ImGui::Separator();
     const auto* contents = modelContents();
     if (!contents) {
@@ -402,7 +402,7 @@ void Editor::modelInspector() {
         ImGui::SeparatorText("Textures");
         // Shown relative to the project when they lie in it.
         const auto texture = [&](const char* label, const std::filesystem::path& path) {
-            auto shown = path.lexically_relative(project_->root);
+            auto shown = path.lexically_relative(project_->resolve(""));
             if (shown.empty() || *shown.begin() == "..") shown = path;
             ImGui::Text("%-9s %s", label, path.empty() ? "none" : shown.generic_u8string().c_str());
         };
@@ -449,7 +449,7 @@ void Editor::systemsPanel() {
             const auto label = system.name + "###system";
             if (ImGui::Selectable(label.c_str())) selected_ = {Selection::Kind::System, instance, path, system.id};
             for (const auto& behaviour : system.behaviour)
-                ImGui::BulletText("%s [Behaviour]", behaviour.script.c_str());
+                ImGui::BulletText("%s [Behaviour]", shown(behaviour.script).c_str());
             ImGui::PopID();
         };
         // Native engine stages are leaves; OGRE's Inspector holds the rendering settings.
@@ -521,7 +521,7 @@ void Editor::systemsPanel() {
                                 const bool startOnly=cached.behaviour.start &&
                                     std::none_of(cached.behaviour.methods.begin(),cached.behaviour.methods.end(),[](bool present) { return present; });
                                 if(!cached.error.empty() || (!cached.behaviour.methods[phase] && !(phase==0 && startOnly))) continue;
-                                matches.push_back({static_cast<int>(i),n,k,effectivePriority(b,cached.behaviour.defaults,phase),b.script,false});
+                                matches.push_back({static_cast<int>(i),n,k,effectivePriority(b,cached.behaviour.defaults,phase),shown(b.script),false});
                             }
                         }
                     std::stable_sort(matches.begin(),matches.end(),[](const auto& a,const auto& b) { return a.priority<b.priority; });
@@ -595,7 +595,7 @@ void Editor::inspector() {
         else if (auto* placed = selectedScene()) sceneInspector(*placed);
         else if (selected_.kind==Selection::Kind::Level && !content()) levelInspector();
         else if (selected_.kind==Selection::Kind::Level && contexts_.back().kind==Context::Kind::Scene) {
-            ImGui::TextUnformatted(contexts_.back().path.c_str());
+            ImGui::TextUnformatted(shown(contexts_.back().path).c_str());
             lightingInspector(contexts_.back().path);
         }
         else ImGui::TextDisabled("Nothing selected");
@@ -644,34 +644,34 @@ void Editor::rendererInspector() {
                        "environment and global illumination in the scene's.");
 }
 
-void Editor::lightingInspector(const std::string& path) {
+void Editor::lightingInspector(const AssetRef& path) {
     const auto found=doc_.world.scenes.find(path);
     if(found==doc_.world.scenes.end()) return;
     auto& lighting=found->second.lighting;
     // The view shows one scene's environment and GI: the scene edited, or the level's first.
-    const bool shown=path==lightingScenePath() && giInstance()>=0;
+    const bool visible=path==lightingScenePath() && giInstance()>=0;
     const auto track=[&] {
         if(ImGui::IsItemActivated()) editStart_=doc_;
         if(ImGui::IsItemDeactivatedAfterEdit()) commit(std::move(editStart_));
     };
     ImGui::SeparatorText("Environment");
-    if(!shown) ImGui::TextDisabled("Not shown: the view uses the level's first scene's environment.");
+    if(!visible) ImGui::TextDisabled("Not shown: the view uses the level's first scene's environment.");
     bool defaultSun=lighting.defaultSun;
     if(ImGui::Checkbox("Default Sun",&defaultSun)) { checkpoint(); lighting.defaultSun=defaultSun; }
     ImGui::SameLine();
     bool sky=lighting.sky;
     if(ImGui::Checkbox("Sky",&sky)) {
         checkpoint(); lighting.sky=sky;
-        if(shown) setSkyboxEnabled(sky);
+        if(visible) setSkyboxEnabled(sky);
     }
     auto ambientUpper=lighting.ambientUpper,ambientLower=lighting.ambientLower;
     const bool ambientUpperEdited=ImGui::ColorEdit3("Ambient Upper",ambientUpper.data()); track();
     const bool ambientLowerEdited=ImGui::ColorEdit3("Ambient Lower",ambientLower.data()); track();
     if(ambientUpperEdited) lighting.ambientUpper=ambientUpper;
     if(ambientLowerEdited) lighting.ambientLower=ambientLower;
-    char environment[256]; std::snprintf(environment,sizeof environment,"%s",lighting.environment.c_str());
+    char environment[256]; std::snprintf(environment,sizeof environment,"%s",shown(lighting.environment).c_str());
     if(ImGui::InputText("Environment (HDR)",environment,sizeof environment,ImGuiInputTextFlags_EnterReturnsTrue)) {
-        checkpoint(); lighting.environment=environment;
+        checkpoint(); lighting.environment=assets_.bind(std::string(environment));
     }
     float scale=lighting.environmentScale;
     const bool scaleEdited=ImGui::DragFloat("Environment Scale",&scale,.01f,0,100); track();
@@ -728,7 +728,7 @@ void Editor::lightingInspector(const std::string& path) {
     if(ImGui::Checkbox("Fill Empty Spaces",&fill)) { checkpoint(); gi.fillEmptySpaces=fill; }
     if(ImGui::IsItemHovered()) ImGui::SetTooltip("Also covers empty space far from any surface, with the coarsest cells.");
     // The probes placed and baked are those of the scene whose GI is shown.
-    if(shown) updateProbeLayout();
+    if(visible) updateProbeLayout();
     unsigned perLevel[ProbeOctree::levels]={};
     for(const auto& cell:octree_.cells) ++perLevel[cell.level];
     std::size_t rendered=0;
@@ -756,12 +756,12 @@ void Editor::lightingInspector(const std::string& path) {
     // A bake renders a cubemap from every probe once per bounce: the reflection probes and the
     // diffuse probes that are not interpolated (TDDja/12 4).
     ImGui::TextDisabled("Cubemap renders per bake: %zu (x%u bounces: %u reflection + %zu diffuse)",gi.bounces*(reflectionCount+rendered),gi.bounces,reflectionCount,rendered);
-    ImGui::BeginDisabled(!shown);
+    ImGui::BeginDisabled(!visible);
     if(ImGui::Button("Bake")) requestGlobalIlluminationBake();
     ImGui::EndDisabled();
-    if(!shown) ImGui::TextDisabled("Only the GI of the level's first scene is shown and baked for now.");
+    if(!visible) ImGui::TextDisabled("Only the GI of the level's first scene is shown and baked for now.");
     ImGui::EndDisabled();
-    if(!shown) return;
+    if(!visible) return;
     bool probes=gi_->debugVisible();
     if(ImGui::Checkbox("Show Probes",&probes)) gi_->setDebugVisible(probes);
     ImGui::SameLine();
@@ -887,9 +887,17 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
             else if(target.overrides) target.overrides->node(target.relative).*overrideMember=shown;
         },[&] { (own->*member).reset(); });
     };
-    const auto texturePath=[&](const char* label,std::string& path) {
-        char text[256]; fill(text,path); bool edited=ImGui::InputText(label,text,sizeof text); track();
-        if(edited) path=text; return edited;
+    // A text field for a name, or a file reference: it shows the file's path, and a path typed
+    // in refers to the asset there (TDDja/15 5.2).
+    const auto texturePath=[&](const char* label,auto& value) {
+        constexpr bool reference=std::is_same_v<std::decay_t<decltype(value)>,AssetRef>;
+        char text[256];
+        if constexpr (reference) fill(text,shown(value)); else fill(text,value);
+        const bool edited=ImGui::InputText(label,text,sizeof text); track();
+        if(edited) {
+            if constexpr (reference) value=assets_.bind(std::string(text)); else value=text;
+        }
+        return edited;
     };
     // Light passing through thin surfaces from behind; black turns it off.
     const auto translucency=[&](Translucency& t) {
@@ -1144,9 +1152,8 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         };
             char buffer[512];
             setting("script", change && change->script, [&] {
-                fill(buffer, behaviour.script);
-                changed |= ImGui::InputText("Script", buffer, sizeof buffer);
-                behaviour.script = buffer;
+                fill(buffer, shown(behaviour.script));
+                if (ImGui::InputText("Script", buffer, sizeof buffer)) behaviour.script = assets_.bind(std::string(buffer)), changed = true;
                 track();
             }, [&](AttachmentOverride& part) { part.script = change->script; });
             const auto& cached = fieldsOf(behaviour.script, symbol);
@@ -1263,8 +1270,8 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         };
         componentSection(title,true,layered,[&] {
             ImGui::Indent();
-            const auto& shown = value.*list;
-            auto attachments = shown;
+            const auto& listed = value.*list;
+            auto attachments = listed;
             bool attachmentsChanged = false;
             // Dragging an attachment's header onto another's moves it to that place.
             const auto payload = std::string("THRONE_ATTACHMENT_") + symbol;
@@ -1279,11 +1286,11 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
                 ImGui::PushID(static_cast<int>(k));
                 bool keep = true;
                 if (added || change) ImGui::PushStyleColor(ImGuiCol_Text, overriddenColour);
-                const bool shownOpen = ImGui::CollapsingHeader((behaviour.script + "###attachment").c_str(), &keep, open);
+                const bool shownOpen = ImGui::CollapsingHeader((shown(behaviour.script) + "###attachment").c_str(), &keep, open);
                 if (added || change) ImGui::PopStyleColor();
                 if ((own || target.overrides) && ImGui::BeginDragDropSource()) {
                     ImGui::SetDragDropPayload(payload.c_str(), &k, sizeof k);
-                    ImGui::TextUnformatted(behaviour.script.c_str());
+                    ImGui::TextUnformatted(shown(behaviour.script).c_str());
                     ImGui::EndDragDropSource();
                 }
                 if (ImGui::BeginDragDropTarget()) {
@@ -1305,7 +1312,7 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
                         attachmentsChanged = true;
                     } else if (target.overrides) {
                         // Only what differs from the prefab's attachment becomes an override.
-                        const auto& before = shown[k];
+                        const auto& before = listed[k];
                         AttachmentsOverride part;
                         auto& differs = part.change(behaviour.id);
                         if (behaviour.script != before.script) differs.script = behaviour.script;
@@ -1341,7 +1348,7 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
                     const auto name = view_.instances[selected_.instance].expansion.removedAttachments.find({selected_.path, id});
                     if (name == view_.instances[selected_.instance].expansion.removedAttachments.end()) continue;
                     ImGui::PushID(static_cast<int>(id));
-                    ImGui::TextColored(overriddenColour, "Removed %s", name->second.c_str());
+                    ImGui::TextColored(overriddenColour, "Removed %s", shown(name->second).c_str());
                     AttachmentsOverride part;
                     part.removed.push_back(id);
                     item(std::move(part), "Restore");
@@ -1415,7 +1422,7 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
 
     if (!expanded.node.prefab.empty()) {
         ImGui::Separator();
-        ImGui::Text("Instance of %s", expanded.node.prefab.c_str());
+        ImGui::Text("Instance of %s", shown(expanded.node.prefab).c_str());
         if (ImGui::Button("Open Prefab")) enter({Context::Kind::Prefab, expanded.node.prefab});
         // Only an instance the edited file holds itself can be unpacked into it.
         if (target.node && !target.addedTo) {
@@ -1504,12 +1511,12 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
 
 void Editor::levelInspector() {
     ImGui::SeparatorText("Audio");
-    char mixer[256]; fill(mixer,doc_.world.level.mixer);
+    char mixer[256]; fill(mixer,doc_.world.level.mixer.empty()?std::string():shown(doc_.world.level.mixer));
     if(ImGui::InputText("Mixer",mixer,sizeof mixer,ImGuiInputTextFlags_EnterReturnsTrue)) {
         try {
             const std::string path=mixer;
             if(path.empty()) { checkpoint(); doc_.world.level.mixer.clear(); }
-            else { openMixer(path); checkpoint(); doc_.world.level.mixer=path; }
+            else { openMixer(path); checkpoint(); doc_.world.level.mixer=assets_.bind(path); }
         } catch(const std::exception& e) { log(e.what()); }
     }
     if(!doc_.world.level.mixer.empty() && ImGui::Button("Edit Mixer")) {
@@ -1583,7 +1590,7 @@ void Editor::sceneInspector(SceneInstance& instance) {
         if (ImGui::IsItemDeactivatedAfterEdit()) commit(std::move(editStart_));
     };
     ImGui::TextDisabled("Scene instance #%u", instance.id);
-    ImGui::TextUnformatted(instance.scene.c_str());
+    ImGui::TextUnformatted(shown(instance.scene).c_str());
     auto& transform = instance.transform;
     axisDrag3("Position", transform.position.data(), 0.05f, -1.0e6f, 1.0e6f, "%.3f");
     track();
@@ -1661,7 +1668,7 @@ std::optional<Overrides> Editor::overridesList(Overrides& overrides, const Expan
     return applied;
 }
 
-void Editor::systemInspector(const System& shown) {
+void Editor::systemInspector(const System& system) {
     const auto track = [this] {
         if (ImGui::IsItemActivated()) editStart_ = doc_;
         if (ImGui::IsItemDeactivatedAfterEdit()) commit(std::move(editStart_));
@@ -1676,7 +1683,7 @@ void Editor::systemInspector(const System& shown) {
         if (ImGui::InputText("Name", text, sizeof text) && text[0]) target.system->name = text;
         track();
     } else {
-        ImGui::Text("%s", shown.name.c_str());
+        ImGui::Text("%s", system.name.c_str());
     }
     // The layer field values are written to: the system itself, or this instance's overrides.
     const auto layer = [&](std::size_t k) -> std::map<std::string, FieldValue>* {
@@ -1696,15 +1703,15 @@ void Editor::systemInspector(const System& shown) {
     std::optional<std::size_t> remove;
     // A field override to write into the instance's prefab, once nothing here points into it.
     std::optional<Overrides> applying;
-    for (std::size_t k = 0; k < shown.behaviour.size(); ++k) {
-        const auto& behaviour = shown.behaviour[k];
+    for (std::size_t k = 0; k < system.behaviour.size(); ++k) {
+        const auto& behaviour = system.behaviour[k];
         ImGui::PushID(static_cast<int>(k));
-        const auto title = (behaviour.script.empty() ? std::string("(no script)") : behaviour.script) + "###behaviour";
+        const auto title = (behaviour.script.empty() ? std::string("(no script)") : shown(behaviour.script)) + "###behaviour";
         if (ImGui::CollapsingHeader(title.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
             if (target.system) {
-                fill(text, behaviour.script);
+                fill(text, shown(behaviour.script));
                 if (ImGui::InputTextWithHint("Script", "scripts/....lh", text, sizeof text))
-                    target.system->behaviour[k].script = text;
+                    target.system->behaviour[k].script = assets_.bind(std::string(text));
                 track();
             }
             const auto& cached = fieldsOf(behaviour.script, "Behaviour");
@@ -1838,7 +1845,8 @@ void Editor::systemInspector(const System& shown) {
     }
 }
 
-const Editor::CachedFields& Editor::fieldsOf(const std::string& script, const std::string& symbol) {
+const Editor::CachedFields& Editor::fieldsOf(const AssetRef& ref, const std::string& symbol) {
+    const auto script = assets_.path(ref);
     auto& entry = fieldCache_[script + "#" + symbol];
     std::error_code error;
     const auto stamp = script.empty() ? std::filesystem::file_time_type() :

@@ -1,1 +1,7 @@
-format = "ogrethrone-project", version = 1, name = "Audio", mainLevel = "levels/main.level.lton",
+format = "ogrethrone-project",
+mainLevel = 7609852359802880,
+name = "Audio",
+rendering = {
+    vsync = true^,
+},
+version = 1,

@@ -63,14 +63,20 @@ A project is a folder containing `project.throne.lton`:
     project.throne.lton   # name and optional mainLevel
     main.lh               # the game's entry point (generated, optional)
     lhat-host.json        # written by the editor for the L^ language server
-    levels/               # *.level.lton
-    scenes/               # *.scene.lton
-    prefabs/              # *.prefab.lton
-    scripts/              # *.lh
+    assets/               # levels, scenes, prefabs, mixers, scripts, models, textures, sounds
+    baked/                # GI bakes, by scene ID
+    .throne/              # the editor's cache (asset index); not for version control
 ```
 
-Paths stored in levels and scenes are relative to the project folder; texture
-paths starting with `@ogre/` refer to the pinned OGRE sample media. [`samples/basic`](samples/basic) is a sample project; the VS Code
+Files under `assets/` can be arranged freely. Each has a persistent ID: levels, scenes,
+prefabs and mixers hold theirs as a top-level `id`, every other file in a `<name>.meta`
+beside it, created when the project is opened. Files refer to each other by these IDs, so
+moving or renaming one keeps every reference to it; move a file's `.meta` along when moving
+it outside the editor. A reference may also be written by hand as a path relative to
+`assets/`, which becomes an ID the next time the file is saved. `ogrethrone --resave-assets
+<project>` gives every file its ID and rewrites every reference by ID. Paths starting with
+`@ogre/` refer to the pinned OGRE sample media. Scripts are read from `assets/` (main.lh from
+the project's root) and cannot read files outside it. [`samples/basic`](samples/basic) is a sample project; the VS Code
 launch configurations open it or show the launcher.
 
 [`samples/showcase`](samples/showcase) ports the OGRE Forward3D, PBS Materials,
@@ -166,7 +172,7 @@ overrides of an instance whose prefab cannot be read are kept, but not listed.
 Unpack in the Inspector replaces an instance with plain nodes holding what it
 shows, nested instances included, and copies its systems into the file.
 Dragging a node onto the Browser's Prefabs tab saves it as
-`prefabs/<name>.prefab.lton` and leaves an instance in its place; dragging an
+`assets/prefabs/<name>.prefab.lton` and leaves an instance in its place; dragging an
 instance makes a variant of its prefab. Dropping a node on an existing prefab
 file asks before replacing that prefab with it; dropping an instance on its own
 prefab applies the instance's overrides to the prefab. Variants are shown in violet.
@@ -342,7 +348,7 @@ The other engine stages (Box3DStep, Animation, the Sync barriers) are selectable
 their Inspectors currently show only the stage name, reserving the same place for
 future settings.
 
-Paths are relative to the project folder. `main.lh` at the top of the project is the
+`main.lh` at the top of the project is the
 game's entry point and organizer (which levels to play, in what order); new
 projects get a placeholder one. It is a plain script (no `module^`); an `await^`
 at its top level makes it a coroutine that the whole-game Play will resume once
@@ -562,9 +568,9 @@ without opening a window:
 
 The file defaults to `lhat-host.json` in the working directory.
 
-In [`samples/basic`](samples/basic), [`spin.lh`](samples/basic/scripts/spin.lh)
+In [`samples/basic`](samples/basic), [`spin.lh`](samples/basic/assets/scripts/spin.lh)
 is attached to SpinningCube, Cube 2 and the rotor prefab's Hub. SpinningCube also
-has [`pop.lh`](samples/basic/scripts/pop.lh), hopping upward every 1.5 seconds
+has [`pop.lh`](samples/basic/assets/scripts/pop.lh), hopping upward every 1.5 seconds
 while continuing to spin. The hop lasts 0.4 seconds and reaches 0.5 units above
 its starting position; `interval`, `duration` and `height` are editable in the Inspector.
 The fast variant overrides its Hub attachment's speed with 360 degrees per second, which the
@@ -683,11 +689,12 @@ probes and cubemap renders a bake needs.
 instance is placed, rendering the probes from everything drawn (other scenes too), once per
 **Bounces** (each pass lit by the previous one), a few probes per frame under a progress
 window (it waits for files being read). It saves the result, in the scene's coordinates, in
-`scenes/<scene>.gi/` beside the scene, with the time it took (shown in the Inspector beside
+`baked/gi/<scene ID>/`, so it follows the scene when it moves, with the time it took (shown in the Inspector beside
 the bake's name); opening a level reads its first scene's bake back without rendering it
 again, and the bake moves with its scene instance. For now only the first scene's GI is shown
 and baked. `ogrethrone --bake-gi <folder> [file] [level]` bakes from the command line, then
-captures like `--capture`. Bakes of levels (`levels/<level>.gi/`) are no longer read; bake again.
+captures like `--capture`. Bakes kept beside scenes (`<scene>.gi/`) are no longer read; move
+them to `baked/gi/<scene ID>/` or bake again.
 While a bake is in use it replaces the ambient light, and the environment map is drawn only
 as the sky. The bake is used while Global Illumination is enabled and its files exist, with
 the settings it was made with; after the settings change, the Inspector warns until it is

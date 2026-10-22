@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <string_view>
 #include <mutex>
 #include <stdexcept>
 #include <thread>
@@ -15,7 +16,11 @@ void require(bool condition, const char* message) {
 }
 /// Writes a script fixture.
 void write(const std::filesystem::path& root, const char* name, const char* source) {
-    std::ofstream(root / name, std::ios::binary) << source;
+    // Scripts lie in the assets folder, which script paths start from.
+    const std::string_view text(name);
+    const bool script = text.size() > 3 && text.substr(text.size() - 3) == ".lh";
+    std::filesystem::create_directories(root / "assets");
+    std::ofstream(script ? root / "assets" / name : root / name, std::ios::binary) << source;
 }
 }
 

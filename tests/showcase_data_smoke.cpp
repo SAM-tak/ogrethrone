@@ -10,6 +10,9 @@ int main(int argc,char** argv) {
     try {
         if(argc!=2) throw std::runtime_error("Expected showcase project path");
         const auto project=throne::Project::open(argv[1]);
+        throne::AssetDatabase assets(project.resolve(""),{});
+        assets.scan([](const std::string&) {});
+        const auto file=[&](const throne::AssetRef& ref) { return project.resolve(assets.path(ref)); };
         const auto temporary=std::filesystem::temp_directory_path()/"throne-showcase-data";
         std::filesystem::create_directories(temporary);
         const auto require=[](bool ok,const char* message) { if(!ok) throw std::runtime_error(message); };
@@ -18,9 +21,9 @@ int main(int argc,char** argv) {
             auto level=throne::Level::load(project.resolve(std::string("levels/")+name+".level.lton"));
             require(level.scenes.size()==2,"Showcase scenes missing");
             // The second scene holds the level's view: one Camera node.
-            const auto view=throne::Scene::load(project.resolve(level.scenes[1].scene));
+            const auto view=throne::Scene::load(file(level.scenes[1].scene));
             require(view.nodes.size()==1 && view.nodes[0].camera && view.nodes[0].transform,"Showcase view camera missing");
-            auto scene=throne::Scene::load(project.resolve(level.scenes[0].scene));
+            auto scene=throne::Scene::load(file(level.scenes[0].scene));
             // The scene keeps the environment (TDDja/13): no default sun, dim ambient light.
             require(!scene.lighting.defaultSun && scene.lighting.ambientUpper.y<.1f,"Showcase environment missing");
             require(scene.nodes.size()==(particles?10u:forward?212u:84u),"Unexpected showcase node count");
@@ -52,7 +55,7 @@ int main(int argc,char** argv) {
             // The subsurface level compares scattering widths and translucent surfaces.
             const auto level=throne::Level::load(project.resolve("levels/subsurface.level.lton"));
             require(level.scenes.size()==2,"Subsurface showcase scenes missing");
-            const auto scene=throne::Scene::load(project.resolve(level.scenes[0].scene));
+            const auto scene=throne::Scene::load(file(level.scenes[0].scene));
             unsigned scattering=0,translucent=0;
             for(const auto& node:scene.nodes) if(node.material) {
                 scattering+=node.material->subsurfaceWidth>0;
@@ -63,7 +66,7 @@ int main(int argc,char** argv) {
         {
             // The skinned level poses OGRE's sample characters with Animators.
             const auto level=throne::Level::load(project.resolve("levels/skinned.level.lton"));
-            const auto scene=throne::Scene::load(project.resolve(level.scenes[0].scene));
+            const auto scene=throne::Scene::load(file(level.scenes[0].scene));
             unsigned animated=0;
             for(const auto& node:scene.nodes) animated+=node.animator && node.model && !node.animator->clip.empty();
             require(level.scenes.size()==2 && animated==3,"Skinned showcase animators missing");

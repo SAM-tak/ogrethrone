@@ -209,17 +209,17 @@ private:
     /// Everything the editor edits; one undo step is a copy of it.
     struct Document {
         World world;
-        std::map<std::string, MixerDefinition> mixers;
+        std::map<AssetRef, MixerDefinition> mixers;
         /// Project-wide game output settings participate in Save and Undo with the document.
         GameRendering gameRendering;
         /// Prefabs opened for editing (TDDja/06 6), by path; saved with the level.
-        std::map<std::string, Prefab> prefabs;
+        std::map<AssetRef, Prefab> prefabs;
     };
     /// One step of the drill-down (TDDja/06 6).
     struct Context {
         enum class Kind { Level, Scene, Prefab, Model } kind;
         /// The scene, prefab or model file; empty for the level.
-        std::string path;
+        AssetRef path;
     };
     /// What the inspector shows: a node of view_, a system, or a scene instance of the level.
     struct Selection {
@@ -310,8 +310,14 @@ private:
     void drawSkyAfterOpaque();
     /// Loads one project texture with a project-qualified cache key; masks share an R8 pool.
     /// A project-relative path's file; @ogre/ refers to the pinned OGRE sample media.
-    std::filesystem::path mediaFile(const std::string& path) const;
-    Ogre::TextureGpu* projectTexture(const std::string& path, int kind, bool mask = false);
+    /// The file @p ref names: an asset of the project, or OGRE's sample media for `@ogre/...`.
+    std::filesystem::path mediaFile(const AssetRef& ref) const;
+    /// What @p ref names, for display: its path in the assets folder, or that it is missing.
+    std::string shown(const AssetRef& ref) const { return assets_.describe(ref); }
+    /// Binds every reference held by path in the open files to its asset's ID, also those the
+    /// files are kept by (after loading, and after saving made new assets).
+    void bindDocument();
+    Ogre::TextureGpu* projectTexture(const AssetRef& ref, int kind, bool mask = false);
     /// Replaces the mipmaps of an environment cubemap with GGX-prefiltered radiance.
     void prefilter(Ogre::TextureGpu& cubemap);
     /// The cubemap surfaces without their own reflection map reflect: the environment's,
@@ -319,7 +325,7 @@ private:
     Ogre::TextureGpu* environmentReflection() const;
     /// The scene whose environment and global illumination the view shows (TDDja/13): the
     /// scene being edited, else the level's first scene; empty when there is none.
-    std::string lightingScenePath() const;
+    AssetRef lightingScenePath() const;
     /// That scene's lighting, or the defaults when it is not loaded.
     const SceneLighting& lighting() const;
     /// The view instance whose scene's bake is shown: the first; -1 inside a prefab.
@@ -329,7 +335,7 @@ private:
     /// The project folder holding the baked global illumination of the scene shown.
     std::filesystem::path giFolder() const;
     /// Loads the standard ParticleFX2 resources and any project particle definitions.
-    void loadParticleResources(const std::string& script);
+    void loadParticleResources(const AssetRef& script);
     /// Reconciles particle instances after transforms; template/enable changes reset shared pools.
     void syncParticles(const LevelExpansion& shown);
     /// Clears all live particles and instance handles, including shared definition state.
@@ -363,15 +369,15 @@ private:
     /// Whether node @p id is the root of the prefab being edited.
     bool isPrefabRoot(NodeId id);
     /// Whether the prefab at @p prefab is a variant; false when it cannot be read.
-    bool isVariant(const std::string& prefab);
+    bool isVariant(const AssetRef& prefab);
     /// Moves node @p id of the file view instance @p instance shows into a prefab saved at once, and leaves
     /// an instance of it in its place (TDDja/06 7). An instance becomes a variant of
     /// its prefab carrying its overrides. The prefab is @p file, replacing what it
     /// held, or a new file under prefabs/ when @p file is empty.
-    void prefabify(int instance, NodeId id, std::string file = {});
+    void prefabify(int instance, NodeId id, AssetRef file = {});
     /// Handles node @p id (of view instance @p instance) dropped on prefab @p file: an instance of that prefab
     /// applies its overrides to it; any other node asks to replace it.
-    void dropOnPrefab(int instance, NodeId id, const std::string& file);
+    void dropOnPrefab(int instance, NodeId id, const AssetRef& file);
     /// Writes @p piece, part of (or all) the overrides of instance node @p holder, into its prefab,
     /// saved at once, and removes it from them (TDDja/06 4.1).
     void applyOverrides(SceneNode& holder, Overrides piece);
@@ -387,7 +393,7 @@ private:
     /// Deletes the selected node (with its children) or system, when the edited file owns it.
     void erase();
     /// Returns the fields of @p script, reading it again when the file has changed.
-    const CachedFields& fieldsOf(const std::string& script, const std::string& symbol);
+    const CachedFields& fieldsOf(const AssetRef& script, const std::string& symbol);
     /// Replaces the document with the level at levelPath_ and its scenes; undoable.
     /// @return false on failure, with the reason in fileError_.
     bool open();
@@ -402,17 +408,17 @@ private:
     void readGlobalIllumination();
     /// The scene whose bake is in use (empty for none) and whether its GI was enabled, as last
     /// applied: the bake is read again when either changes.
-    std::string giScene_;
+    AssetRef giScene_;
     bool giEnabled_ = false;
     /// The scene whose environment was last applied; its sky setting applies when it changes.
-    std::optional<std::string> lightingScene_;
+    std::optional<AssetRef> lightingScene_;
     /// Shows newly placed model parts a few materials per frame, under a progress entry.
     void revealModels();
     /// Reads a model on a worker thread, then adds it to the library under @p key.
     void readModel(const ModelComponent& model, const std::string& key);
     /// Reads the project-relative environment @p path on a worker thread, then uploads it
     /// into environments_[@p key].
-    void readEnvironmentFile(const std::string& path, const Ogre::Vector3& scale, const std::string& key);
+    void readEnvironmentFile(const AssetRef& path, const Ogre::Vector3& scale, const std::string& key);
     /// Draws the modal open/save dialog requested through showFiles_.
     void fileDialog();
     /// Enters Play mode on the level's expansion (TDDja/02 3, 06 6); scripts change
@@ -462,7 +468,7 @@ private:
     /// Draws the open level's properties: its rendering, and the view's camera, which is not saved.
     void levelInspector();
     /// Draws the environment and global illumination of the scene at @p path, written to its file.
-    void lightingInspector(const std::string& path);
+    void lightingInspector(const AssetRef& path);
     /// Sets the view to node @p index of view instance @p instance and its Camera component:
     /// its position, its direction (without roll) and its field of view; with @p lookThrough,
     /// also its clip distances, depth of field and anti-aliasing, to show what it shows.
@@ -488,7 +494,7 @@ private:
     void browser();
     void audioBrowser();
     void mixerPanel();
-    void openMixer(const std::string& path);
+    void openMixer(const AssetRef& path);
     /// Draws the Console panel: the log, and an L^ prompt below it.
     void console();
     /// The runtime console lines run on: the playing one, or else one of the
@@ -662,11 +668,13 @@ private:
     struct Replace {
         int instance;
         NodeId id;
-        std::string file;
+        AssetRef file;
     };
     std::optional<Replace> replacing_, pendingReplace_;
     /// The drill-down to switch to at the start of the next frame.
     std::optional<std::vector<Context>> navigate_;
+    /// The project's assets by ID (TDDja/15 4.3), scanned when the project opens.
+    AssetDatabase assets_;
     Library library_;
     /// What the current step shows, expanded; the runtime moves its nodes while playing.
     LevelExpansion view_;
@@ -675,7 +683,7 @@ private:
     std::unique_ptr<PhysicsWorld> physics_;
     AudioSystem* audioDevice_ = nullptr;
     std::unique_ptr<AudioWorld> audioWorld_;
-    std::string mixerPath_;
+    AssetRef mixerPath_;
     char newMixerPath_[256] = "mixers/main.mixer.lton";
     /// Which system fields refer to each node of view_; rebuilt with it.
     References references_;

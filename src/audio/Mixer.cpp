@@ -1,5 +1,6 @@
 #include "audio/Mixer.h"
 #include "editor/Lton.h"
+#include "editor/Assets.h"
 #include <cmath>
 #include <algorithm>
 #include <limits>
@@ -38,6 +39,7 @@ void MixerDefinition::save(const std::filesystem::path& path) const {
     lton::Writer out;
     const auto root=out.table(), list=out.table();
     out.set(root,"format",out.string("ogrethrone-mixer")); out.set(root,"version",lhat_integer(1));
+    out.set(root,"id",lhat_integer(static_cast<LhatInteger>(id)));
     for (const auto& bus : buses) {
         const auto t=out.table();
         out.set(t,"id",lhat_integer(bus.id)); out.set(t,"parent",lhat_integer(bus.parent));
@@ -52,6 +54,7 @@ void MixerDefinition::save(const std::filesystem::path& path) const {
 MixerDefinition MixerDefinition::load(const std::filesystem::path& path) {
     lton::Document doc(path); doc.expect("ogrethrone-mixer",1);
     MixerDefinition m; m.buses.clear();
+    if(const auto own=lton::field(doc.root(),"id"); !lhat_is_nil(own)) m.id=lton::assetId(own);
     const auto& list=lton::table(lton::field(doc.root(),"buses"));
     for (std::size_t i=0,n=lton::sequence(list);i<n;++i) {
         const auto& t=lton::table(lton::at(list,i));

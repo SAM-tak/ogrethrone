@@ -1,4 +1,5 @@
 #include "editor/Scene.h"
+#include "editor/Assets.h"
 #include "editor/PrimitiveGeometry.h"
 #include "core/Ids.h"
 #include <algorithm>
@@ -151,11 +152,11 @@ void readExtraComponents(const LhatTable& table, Node& node) {
     };
     read("particles", node.particles, [&](const auto& t, auto& c) {
         if(const auto v=lton::field(t,"definition"); !lhat_is_nil(v)) c.definition=name(v);
-        if(const auto v=lton::field(t,"script"); !lhat_is_nil(v)) c.script=lton::relativePath(v);
+        if(const auto v=lton::field(t,"script"); !lhat_is_nil(v)) c.script=lton::assetRef(v);
         c.enabled=flag(t,"enabled",c.enabled);
     });
     read("audioSource", node.audioSource, [&](const auto& t, auto& c) {
-        if(const auto v=lton::field(t,"clip"); !lhat_is_nil(v)) c.clip=lton::relativePath(v);
+        if(const auto v=lton::field(t,"clip"); !lhat_is_nil(v)) c.clip=lton::assetRef(v);
         c.enabled=flag(t,"enabled",c.enabled); c.spatial=flag(t,"spatial",c.spatial);
         c.loop=flag(t,"loop",c.loop); c.autoPlay=flag(t,"autoPlay",c.autoPlay); c.streaming=flag(t,"streaming",c.streaming);
         c.occlusion=flag(t,"occlusion",c.occlusion); c.transmission=flag(t,"transmission",c.transmission);
@@ -211,7 +212,7 @@ void readExtraComponents(const LhatTable& table, Node& node) {
         }
     });
     read("model", node.model, [&](const auto& t, auto& c) {
-        if(const auto v=lton::field(t,"path"); !lhat_is_nil(v)) c.path=lton::relativePath(v);
+        if(const auto v=lton::field(t,"path"); !lhat_is_nil(v)) c.path=lton::assetRef(v);
         c.directXNormals=flag(t,"directXNormals",c.directXNormals);
         c.emission=scalar(t,"emission",c.emission,0,100000);
         c.alphaHashing=flag(t,"alphaHashing",c.alphaHashing);
@@ -227,7 +228,7 @@ void readExtraComponents(const LhatTable& table, Node& node) {
                 for(const float a:{m.absorption.x,m.absorption.y,m.absorption.z}) if(!(a>=0)) lton::invalid();
                 readTranslucency(item,m.translucency);
                 m.subsurfaceWidth=scalar(item,"subsurfaceWidth",m.subsurfaceWidth,0,10);
-                if(const auto v=lton::field(item,"diffuseMap"); !lhat_is_nil(v)) m.diffuseMap=lton::relativePath(v);
+                if(const auto v=lton::field(item,"diffuseMap"); !lhat_is_nil(v)) m.diffuseMap=lton::assetRef(v);
                 c.materials.push_back(m);
             }
         }
@@ -253,7 +254,7 @@ void readExtraComponents(const LhatTable& table, Node& node) {
         }
         for (const auto& entry : {std::pair{"diffuseMap",&c.diffuseMap},std::pair{"normalMap",&c.normalMap},
             std::pair{"roughnessMap",&c.roughnessMap},std::pair{"specularMap",&c.specularMap},std::pair{"reflectionMap",&c.reflectionMap}})
-            if (const auto v=lton::field(t,entry.first); !lhat_is_nil(v)) *entry.second=lton::relativePath(v);
+            if (const auto v=lton::field(t,entry.first); !lhat_is_nil(v)) *entry.second=lton::assetRef(v);
     });
     read("light", node.light, [&](const auto& t, auto& c) {
         if (const auto v=lton::field(t,"type"); !lhat_is_nil(v)) {
@@ -277,7 +278,7 @@ void readExtraComponents(const LhatTable& table, Node& node) {
         c.showEmitter=flag(t,"showEmitter",c.showEmitter); c.castShadows=flag(t,"castShadows",c.castShadows);
         if(const auto v=lton::field(t,"direction"); !lhat_is_nil(v)) lton::vector(v,c.direction.data());
         if(c.direction.x*c.direction.x+c.direction.y*c.direction.y+c.direction.z*c.direction.z < 1.0e-10f) lton::invalid();
-        if(const auto v=lton::field(t,"mask"); !lhat_is_nil(v)) c.mask=lton::relativePath(v);
+        if(const auto v=lton::field(t,"mask"); !lhat_is_nil(v)) c.mask=lton::assetRef(v);
     });
     read("sphere", node.sphere, [&](const auto& t, auto& c) {
         colour(t, c); c.radius = scalar(t, "radius", c.radius, 0.001f);
@@ -348,11 +349,11 @@ void writeExtraComponents(lton::Writer& out, LhatValue table, const Node& node) 
     const auto colour = [&](LhatValue t, const auto& c) { out.set(t, "colour", out.vector(c.colour.data())); };
     write("particles", node.particles, [&](auto t,const auto& c) {
         out.set(t,"definition",out.string(c.definition)); out.set(t,"enabled",lhat_bool(c.enabled));
-        if(!c.script.empty()) out.set(t,"script",out.string(c.script));
+        if(!c.script.empty()) out.set(t,"script",lton::assetRef(out,c.script));
     });
     write("audioSource", node.audioSource, [&](auto t,const auto& c) {
         c.validate();
-        if(!c.clip.empty()) out.set(t,"clip",out.string(c.clip));
+        if(!c.clip.empty()) out.set(t,"clip",lton::assetRef(out,c.clip));
         out.set(t,"enabled",lhat_bool(c.enabled)); out.set(t,"spatial",lhat_bool(c.spatial));
         out.set(t,"loop",lhat_bool(c.loop)); out.set(t,"autoPlay",lhat_bool(c.autoPlay)); out.set(t,"streaming",lhat_bool(c.streaming));
         out.set(t,"occlusion",lhat_bool(c.occlusion)); out.set(t,"transmission",lhat_bool(c.transmission));
@@ -382,7 +383,7 @@ void writeExtraComponents(lton::Writer& out, LhatValue table, const Node& node) 
         out.set(t,"antiAliasing",out.string(modes[static_cast<int>(c.antiAliasing)]));
     });
     write("model", node.model, [&](auto t,const auto& c) {
-        out.set(t,"path",out.string(c.path)); out.set(t,"directXNormals",lhat_bool(c.directXNormals));
+        out.set(t,"path",lton::assetRef(out,c.path)); out.set(t,"directXNormals",lhat_bool(c.directXNormals));
         out.set(t,"emission",lhat_real(c.emission));
         if(c.alphaHashing) out.set(t,"alphaHashing",lhat_bool(true));
         if(!c.materials.empty()) {
@@ -394,7 +395,7 @@ void writeExtraComponents(lton::Writer& out, LhatValue table, const Node& node) 
                 out.set(item,"thickness",lhat_real(m.thickness));
                 writeTranslucency(out,item,m.translucency);
                 if(m.subsurfaceWidth>0) out.set(item,"subsurfaceWidth",lhat_real(m.subsurfaceWidth));
-                if(!m.diffuseMap.empty()) out.set(item,"diffuseMap",out.string(m.diffuseMap));
+                if(!m.diffuseMap.empty()) out.set(item,"diffuseMap",lton::assetRef(out,m.diffuseMap));
                 out.push(list,item);
             }
             out.set(t,"materials",list);
@@ -413,7 +414,7 @@ void writeExtraComponents(lton::Writer& out, LhatValue table, const Node& node) 
         if(c.subsurfaceWidth>0) out.set(t,"subsurfaceWidth",lhat_real(c.subsurfaceWidth));
         for(const auto& entry:{std::pair{"diffuseMap",&c.diffuseMap},std::pair{"normalMap",&c.normalMap},
             std::pair{"roughnessMap",&c.roughnessMap},std::pair{"specularMap",&c.specularMap},std::pair{"reflectionMap",&c.reflectionMap}})
-            if(!entry.second->empty()) out.set(t,entry.first,out.string(*entry.second));
+            if(!entry.second->empty()) out.set(t,entry.first,lton::assetRef(out,*entry.second));
     });
     write("light", node.light, [&](auto t,const auto& c) {
         const char* types[]={"Directional","Point","Spot","AreaApprox","AreaLtc"};
@@ -424,7 +425,7 @@ void writeExtraComponents(lton::Writer& out, LhatValue table, const Node& node) 
             out.set(t,entry.first,lhat_real(entry.second));
         out.set(t,"enabled",lhat_bool(c.enabled)); out.set(t,"twoSided",lhat_bool(c.twoSided));
         out.set(t,"showEmitter",lhat_bool(c.showEmitter)); out.set(t,"castShadows",lhat_bool(c.castShadows));
-        if(!c.mask.empty()) out.set(t,"mask",out.string(c.mask));
+        if(!c.mask.empty()) out.set(t,"mask",lton::assetRef(out,c.mask));
     });
     write("sphere", node.sphere, [&](auto t, const auto& c) { colour(t, c); out.set(t, "radius", lhat_real(c.radius)); });
     write("capsule", node.capsule, [&](auto t, const auto& c) {
@@ -483,7 +484,7 @@ SceneNode readNode(const LhatTable& entry) {
         }
     }
     if (const auto prefab = lton::field(entry, "prefab"); !lhat_is_nil(prefab)) {
-        node.prefab = lton::relativePath(prefab);
+        node.prefab = lton::assetRef(prefab);
         node.overrides = readOverrides(lton::field(entry, "overrides"));
     }
     if (const auto components = lton::field(entry, "components"); !lhat_is_nil(components))
@@ -517,7 +518,7 @@ LhatValue writeNode(lton::Writer& out, const SceneNode& node) {
     writeExtraComponents(out, components, node);
     out.set(entry, "components", components);
     if (!node.prefab.empty()) {
-        out.set(entry, "prefab", out.string(node.prefab));
+        out.set(entry, "prefab", lton::assetRef(out, node.prefab));
         if (!node.overrides.empty()) out.set(entry, "overrides", writeOverrides(out, node.overrides));
     }
     return entry;
@@ -848,6 +849,65 @@ Overrides readOverrides(LhatValue value) {
     return overrides;
 }
 
+namespace {
+// The file references of each kind of component; most have none.
+template <class T> void references(T&, const AssetVisitor&) {}
+void references(PbsMaterial& c, const AssetVisitor& visit) {
+    for (auto* map : {&c.diffuseMap, &c.normalMap, &c.roughnessMap, &c.specularMap, &c.reflectionMap}) visit(*map);
+}
+void references(LightComponent& c, const AssetVisitor& visit) { visit(c.mask); }
+void references(ModelComponent& c, const AssetVisitor& visit) {
+    visit(c.path);
+    for (auto& material : c.materials) visit(material.diffuseMap);
+}
+void references(ParticleSystemComponent& c, const AssetVisitor& visit) { visit(c.script); }
+void references(AudioSourceComponent& c, const AssetVisitor& visit) { visit(c.clip); }
+void references(std::vector<Behaviour>& list, const AssetVisitor& visit) {
+    for (auto& attachment : list) visit(attachment.script);
+}
+void references(AttachmentsOverride& overrides, const AssetVisitor& visit) {
+    for (auto& change : overrides.changed)
+        if (change.script) visit(*change.script);
+    references(overrides.added, visit);
+}
+void references(std::vector<System>& systems, const AssetVisitor& visit) {
+    for (auto& system : systems) references(system.behaviour, visit);
+}
+void references(Overrides& overrides, const AssetVisitor& visit) {
+    for (auto& entry : overrides.nodes) {
+        forEachComponent([&](const char*, auto& component) {
+            if (component) references(*component, visit);
+        }, entry);
+        references(entry.behaviour, visit);
+        references(entry.renderEvent, visit);
+    }
+    for (auto& entry : overrides.added) forEachAssetRef(entry.node, visit);
+    references(overrides.addedSystems, visit);
+}
+}
+
+void forEachAssetRef(SceneNode& node, const AssetVisitor& visit) {
+    visit(node.prefab);
+    forEachComponent([&](const char*, auto& component) {
+        if (component) references(*component, visit);
+    }, node);
+    references(node.behaviour, visit);
+    references(node.renderEvent, visit);
+    references(node.overrides, visit);
+}
+
+void forEachAssetRef(Prefab& prefab, const AssetVisitor& visit) {
+    for (auto& node : prefab.nodes) forEachAssetRef(node, visit);
+    references(prefab.systems, visit);
+    visit(prefab.base);
+    references(prefab.overrides, visit);
+}
+
+void forEachAssetRef(Scene& scene, const AssetVisitor& visit) {
+    forEachAssetRef(static_cast<Prefab&>(scene), visit);
+    visit(scene.lighting.environment);
+}
+
 NodeId newNodeId() {
     // Counting from 2026-01-01 UTC, the 41 bits of time last until 2095.
     static Ids ids(1767225600000);
@@ -923,6 +983,7 @@ bool Prefab::reparent(NodeId id, NodeId parent, NodeId before) {
 }
 
 void Prefab::read(const LhatTable& root) {
+    if (const auto own = lton::field(root, "id"); !lhat_is_nil(own)) id = lton::assetId(own);
     const auto& list = lton::table(lton::field(root, "nodes"));
     std::set<NodeId> seen;
     for (std::size_t i = 0, count = lton::sequence(list); i < count; ++i) {
@@ -935,6 +996,7 @@ void Prefab::read(const LhatTable& root) {
 }
 
 void Prefab::write(lton::Writer& out, LhatValue root) const {
+    out.set(root, "id", lhat_integer(static_cast<LhatInteger>(id)));
     const auto list = out.table();
     for (const auto& node : nodes) out.push(list, writeNode(out, node));
     out.set(root, "nodes", list);
@@ -947,7 +1009,7 @@ Prefab Prefab::load(const std::filesystem::path& path) {
     Prefab result;
     result.read(document.root());
     if (const auto base = lton::field(document.root(), "base"); !lhat_is_nil(base)) {
-        result.base = lton::relativePath(base);
+        result.base = lton::assetRef(base);
         result.overrides = readOverrides(lton::field(document.root(), "overrides"));
     }
     return result;
@@ -960,7 +1022,7 @@ void Prefab::save(const std::filesystem::path& path) const {
     out.set(root, "version", lhat_integer(prefabVersion));
     write(out, root);
     if (variant()) {
-        out.set(root, "base", out.string(base));
+        out.set(root, "base", lton::assetRef(out, base));
         out.set(root, "overrides", writeOverrides(out, overrides));
     }
     out.save(root, path);
@@ -999,7 +1061,7 @@ LhatValue writeBehaviourList(lton::Writer& out, const std::vector<Behaviour>& be
     const auto list = out.table();
     for (const auto& behaviour : behaviour) {
         const auto item = out.table();
-        out.set(item, "script", out.string(behaviour.script));
+        out.set(item, "script", lton::assetRef(out, behaviour.script));
         out.set(item,"id",lhat_integer(static_cast<LhatInteger>(behaviour.id)));
         if(!behaviour.enabled) out.set(item,"enabled",lhat_bool(false));
         const auto priority=[&](const char* key,const std::optional<double>& value) {
@@ -1026,7 +1088,7 @@ std::vector<Behaviour> readBehaviourList(LhatValue value) {
         const auto& item = lton::table(lton::at(list, i));
         Behaviour behaviour;
         if (!lhat_is_nil(lton::field(item,"fields"))) lton::invalid();
-        behaviour.script = lton::relativePath(lton::field(item, "script"));
+        behaviour.script = lton::assetRef(lton::field(item, "script"));
         // Without an ID, its place in the list: a prefab's attachment keeps the ID overrides find it by.
         behaviour.id = i + 1;
         if(const auto value=lton::field(item,"id");!lhat_is_nil(value)) behaviour.id=nodeId(value);
@@ -1059,7 +1121,7 @@ LhatValue writeAttachmentsOverride(lton::Writer& out, const AttachmentsOverride&
         for (const auto& entry : overrides.changed) {
             const auto item = out.table();
             out.set(item, "id", lhat_integer(static_cast<LhatInteger>(entry.id)));
-            if (entry.script) out.set(item, "script", out.string(*entry.script));
+            if (entry.script) out.set(item, "script", lton::assetRef(out, *entry.script));
             if (entry.enabled) out.set(item, "enabled", lhat_bool(*entry.enabled));
             const auto priority = [&](const char* key, const std::optional<std::optional<double>>& value) {
                 if (!value) return;
@@ -1098,7 +1160,7 @@ AttachmentsOverride readAttachmentsOverride(LhatValue value) {
             const auto& item = lton::table(lton::at(list, i));
             AttachmentOverride entry;
             entry.id = nodeId(lton::field(item, "id"));
-            if (const auto script = lton::field(item, "script"); !lhat_is_nil(script)) entry.script = lton::relativePath(script);
+            if (const auto script = lton::field(item, "script"); !lhat_is_nil(script)) entry.script = lton::assetRef(script);
             if (const auto enabled = lton::field(item, "enabled"); !lhat_is_nil(enabled)) {
                 if (!lhat_is_bool(enabled)) lton::invalid();
                 entry.enabled = lhat_as_bool(enabled);

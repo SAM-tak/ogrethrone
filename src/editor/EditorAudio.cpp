@@ -14,29 +14,26 @@ void mixerPath(const std::string& path) {
     for(const auto& part:file) if(part=="..") throw std::runtime_error("Mixer path escapes project");
 }
 }
-void Editor::openMixer(const std::string& path) {
-    mixerPath(path);
-    if(!doc_.mixers.count(path)) doc_.mixers.emplace(path,MixerDefinition::load(project_->resolve(path)));
-    mixerPath_=path;
+void Editor::openMixer(const AssetRef& ref) {
+    const auto bound=assets_.bind(ref);
+    mixerPath(assets_.path(bound));
+    if(!doc_.mixers.count(bound)) doc_.mixers.emplace(bound,MixerDefinition::load(mediaFile(bound)));
+    mixerPath_=bound;
 }
 void Editor::audioBrowser() {
     if(!ImGui::BeginTabItem("Mixers")) return;
-    std::set<std::string> paths;
-    std::error_code error;
-    for(const auto& entry:std::filesystem::recursive_directory_iterator(project_->resolve("mixers"),error)) {
-        if(!entry.is_regular_file()) continue;
-        const auto path=entry.path().lexically_relative(project_->root).generic_u8string();
-        if(path.size()>11 && path.compare(path.size()-11,11,".mixer.lton")==0) paths.insert(path);
-    }
-    for(const auto& [path,mixer]:doc_.mixers) paths.insert(path);
-    for(const auto& path:paths) if(ImGui::Selectable(path.c_str(),path==mixerPath_)) {
-        try { openMixer(path); } catch(const std::exception& e) { log(e.what()); }
+    std::set<AssetRef> mixers;
+    for(const auto& [path,id]:assets_.assets())
+        if(path.size()>11 && path.compare(path.size()-11,11,".mixer.lton")==0) mixers.insert(AssetRef::of(id));
+    for(const auto& [ref,mixer]:doc_.mixers) mixers.insert(ref);
+    for(const auto& ref:mixers) if(ImGui::Selectable(shown(ref).c_str(),ref==mixerPath_)) {
+        try { openMixer(ref); } catch(const std::exception& e) { log(e.what()); }
     }
     ImGui::InputText("New Mixer",newMixerPath_,sizeof newMixerPath_);
     if(ImGui::Button("Create Mixer")) {
         try {
             const std::string path=newMixerPath_; mixerPath(path);
-            if(doc_.mixers.count(path) || std::filesystem::exists(project_->resolve(path)))
+            if(doc_.mixers.count(assets_.bind(path)) || std::filesystem::exists(project_->resolve(path)))
                 throw std::runtime_error("Mixer already exists: "+path);
             checkpoint(); doc_.mixers.emplace(path,MixerDefinition::defaults()); mixerPath_=path;
         } catch(const std::exception& e) { log(e.what()); }
@@ -48,7 +45,7 @@ void Editor::mixerPanel() {
     const auto at=doc_.mixers.find(mixerPath_); if(at==doc_.mixers.end()) return;
     bool open=true;
     if(ImGui::Begin("Mixer",&open)) {
-        ImGui::TextUnformatted(mixerPath_.c_str());
+        ImGui::TextUnformatted(shown(mixerPath_).c_str());
         ImGui::TextDisabled("%s",dirty_?"Unsaved changes":"Saved");
         if(ImGui::Button("Save")) save();
         ImGui::SameLine();

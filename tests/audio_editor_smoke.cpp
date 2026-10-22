@@ -14,7 +14,7 @@ void audioEditorSmoke(Editor& editor) {
     e.openMixer("mixers/main.mixer.lton");
     for(int i=0;i<3;++i) frame();
     const auto* panel=ImGui::FindWindowByName("Mixer"); require(panel && panel->Active,"Mixer panel not rendered");
-    const auto scene="scenes/main.scene.lton";
+    const auto scene=e.assets_.bind(std::string("scenes/main.scene.lton"));
     const auto gain=[&]{return e.doc_.world.scenes.at(scene).nodes[1].audioSource->volume;};
     e.checkpoint(); e.doc_.world.scenes.at(scene).nodes[1].audioSource->volume=.25f;
     e.undo(); require(gain()==1,"Source undo failed");
@@ -29,10 +29,10 @@ void audioEditorSmoke(Editor& editor) {
     e.undo(); require(e.doc_.world.scenes.at(scene).nodes[4].acousticGeometry->transmission.x==.25f,"Acoustic material undo failed");
     e.redo(); require(e.doc_.world.scenes.at(scene).nodes[4].acousticGeometry->transmission.x==.4f,"Acoustic material redo failed");
     require(e.save(),"Audio document save failed");
-    require(Scene::load(e.project_->resolve(scene)).nodes[4].acousticGeometry->transmission.x==.4f,"Acoustic material edit not saved");
-    require(Scene::load(e.project_->resolve(scene)).nodes[1].audioSource->volume==.25f,"Source edit not saved");
-    require(Scene::load(e.project_->resolve(scene)).nodes[1].audioSource->reflectionVolume==.4f,"Reflection edit not saved");
-    require(MixerDefinition::load(e.project_->resolve(e.mixerPath_)).buses[2].volume==.5f,"Mixer edit not saved");
+    require(Scene::load(e.mediaFile(scene)).nodes[4].acousticGeometry->transmission.x==.4f,"Acoustic material edit not saved");
+    require(Scene::load(e.mediaFile(scene)).nodes[1].audioSource->volume==.25f,"Source edit not saved");
+    require(Scene::load(e.mediaFile(scene)).nodes[1].audioSource->reflectionVolume==.4f,"Reflection edit not saved");
+    require(MixerDefinition::load(e.mediaFile(e.mixerPath_)).buses[2].volume==.5f,"Mixer edit not saved");
     e.selected_={Editor::Selection::Kind::Level}; frame();
     require(e.viewAudioListener_,"Scene view listener should default to enabled");
     // Render both new component inspectors.

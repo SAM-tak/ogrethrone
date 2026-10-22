@@ -24,7 +24,7 @@ NodePath join(const NodePath& prefix, const NodePath& rest) {
 struct Expander {
     Library& library;
     /// Prefabs being expanded, outermost first, for cycle checks.
-    std::vector<std::string> stack;
+    std::vector<AssetRef> stack;
     Expansion& out;
     std::vector<Pending> pending;
 
@@ -33,7 +33,7 @@ struct Expander {
     /// Expands prefab @p file at @p prefix. Its root takes @p placed's name and
     /// transform, or keeps its own when @p placed is null. Returns the root's
     /// index, or npos when nothing could be placed.
-    std::size_t prefab(const std::string& file, const SceneNode* placed, const NodePath& prefix, std::size_t parent);
+    std::size_t prefab(const AssetRef& file, const SceneNode* placed, const NodePath& prefix, std::size_t parent);
     /// Appends the nodes @p overrides adds to the instance at @p prefix; @p own as in Pending.
     void add(const Overrides& overrides, const NodePath& prefix, bool own);
 };
@@ -73,17 +73,18 @@ std::size_t Expander::place(const SceneNode& node, const NodePath& path, std::si
     return at;
 }
 
-std::size_t Expander::prefab(const std::string& file, const SceneNode* placed, const NodePath& prefix,
+std::size_t Expander::prefab(const AssetRef& file, const SceneNode* placed, const NodePath& prefix,
                              std::size_t parent) {
+    const auto name = library.describe(file);
     // What cannot be expanded stays in the hierarchy as a plain node, with an error.
     const auto broken = [&](const std::string& error) {
-        out.errors.push_back((placed ? placed->name : file) + ": " + error);
+        out.errors.push_back((placed ? placed->name : name) + ": " + error);
         out.broken.push_back(prefix);
         if (!placed) return Expansion::npos;
         out.nodes.push_back({prefix, parent, *placed});
         return out.nodes.size() - 1;
     };
-    if (std::find(stack.begin(), stack.end(), file) != stack.end()) return broken(file + " instantiates itself");
+    if (std::find(stack.begin(), stack.end(), file) != stack.end()) return broken(name + " instantiates itself");
     const Prefab* content;
     try {
         content = &library.prefab(file);
@@ -100,9 +101,9 @@ std::size_t Expander::prefab(const std::string& file, const SceneNode* placed, c
     }
     const auto roots = std::count_if(content->nodes.begin(), content->nodes.end(),
                                      [](const SceneNode& node) { return node.parent == 0; });
-    if (roots != 1) return broken(file + " must have exactly one root node");
+    if (roots != 1) return broken(name + " must have exactly one root node");
     const auto& root = content->nodes.front();
-    if (!root.prefab.empty()) return broken(file + ": its root cannot be an instance; make a variant instead");
+    if (!root.prefab.empty()) return broken(name + ": its root cannot be an instance; make a variant instead");
     auto merged = root;
     // The instance gives the root its name and Transform.
     if (placed) {
@@ -217,11 +218,13 @@ void apply(Expansion& out, const Pending& pending, std::set<std::size_t>& gone) 
 }
 }
 
-Library::Library(std::filesystem::path root) : root_(std::move(root)) {}
+Library::Library(std::filesystem::path root, const AssetDatabase* assets) : root_(std::move(root)), assets_(assets) {}
 
-const Prefab& Library::prefab(const std::string& path) {
-    auto& entry = entries_[path];
+const Prefab& Library::prefab(const AssetRef& ref) {
+    auto& entry = entries_[ref];
     if (entry.pinned) return entry.prefab;
+    const auto path = assets_ ? assets_->path(ref) : ref.path;
+    if (path.empty()) throw std::runtime_error(describe(ref));
     const auto file = root_ / std::filesystem::u8path(path);
     const auto stamp = std::filesystem::last_write_time(file);
     if (entry.stamp != stamp) {
@@ -231,9 +234,9 @@ const Prefab& Library::prefab(const std::string& path) {
     return entry.prefab;
 }
 
-void Library::put(const std::string& path, Prefab prefab) { entries_[path] = {std::move(prefab), {}, true}; }
+void Library::put(const AssetRef& ref, Prefab prefab) { entries_[ref] = {std::move(prefab), {}, true}; }
 
-void Library::forget(const std::string& path) { entries_.erase(path); }
+void Library::forget(const AssetRef& ref) { entries_.erase(ref); }
 
 std::size_t Expansion::find(const NodePath& path) const {
     // Whether node i lies below node at (npos: the top).
@@ -278,7 +281,7 @@ std::vector<std::size_t> Expansion::hierarchy() const {
     return result;
 }
 
-Expansion expand(const Prefab& content, Library& library, const std::string& self) {
+Expansion expand(const Prefab& content, Library& library, const AssetRef& self) {
     Expansion out;
     Expander expander{library, {}, out, {}};
     if (!self.empty()) expander.stack.push_back(self);
@@ -331,7 +334,7 @@ LevelExpansion expand(const World& world, Library& library) {
         const auto scene = world.scenes.find(instance.scene);
         if (scene == world.scenes.end()) {
             Expansion missing;
-            missing.errors.push_back(instance.scene + " is not loaded");
+            missing.errors.push_back(library.describe(instance.scene) + " is not loaded");
             result.instances.push_back({instance.id, std::move(missing), instance.transform});
             continue;
         }

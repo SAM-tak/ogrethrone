@@ -1,4 +1,5 @@
 #include "editor/Level.h"
+#include "editor/Assets.h"
 #include <algorithm>
 #include <limits>
 
@@ -8,10 +9,17 @@ constexpr std::string_view levelFormat = "ogrethrone-level";
 constexpr LhatInteger levelVersion = 3;
 }
 
-SceneInstance& Level::addScene(const std::string& path) {
+SceneInstance& Level::addScene(const AssetRef& scene) {
     if (nextSceneId == std::numeric_limits<std::uint32_t>::max()) throw std::runtime_error("Scene ID limit reached");
-    scenes.push_back({nextSceneId++, path});
+    scenes.push_back({nextSceneId++, scene});
     return scenes.back();
+}
+
+void Level::forEachAssetRef(const AssetVisitor& visit) {
+    for (auto& instance : scenes) visit(instance.scene);
+    visit(mixer);
+    for (auto& system : systems)
+        for (auto& attachment : system.behaviour) visit(attachment.script);
 }
 
 SceneInstance* Level::findScene(std::uint32_t id) {
@@ -25,6 +33,7 @@ void Level::save(const std::filesystem::path& path) const {
     const auto root = out.table();
     out.set(root, "format", out.string(levelFormat));
     out.set(root, "version", lhat_integer(levelVersion));
+    out.set(root, "id", lhat_integer(static_cast<LhatInteger>(id)));
     const auto settings=out.table();
     const auto& r=rendering;
     for(const auto& v:{std::pair{"grid",r.grid},std::pair{"clustered",r.clustered},std::pair{"debugClusters",r.debugClusters}})
@@ -36,7 +45,7 @@ void Level::save(const std::filesystem::path& path) const {
     for (const auto& instance : scenes) {
         const auto item = out.table();
         out.set(item, "id", lhat_integer(instance.id));
-        out.set(item, "scene", out.string(instance.scene));
+        out.set(item, "scene", lton::assetRef(out, instance.scene));
         out.set(item, "position", out.vector(instance.transform.position.data()));
         out.set(item, "rotation", out.vector(instance.transform.rotation.data()));
         out.set(item, "scale", out.vector(instance.transform.scale.data()));
@@ -48,7 +57,7 @@ void Level::save(const std::filesystem::path& path) const {
     const auto schedule = out.table();
     for (const auto& stage : stages) out.push(schedule, out.string(stage));
     out.set(root, "stages", schedule);
-    if(!mixer.empty()) out.set(root,"mixer",out.string(mixer));
+    if(!mixer.empty()) out.set(root,"mixer",lton::assetRef(out,mixer));
     out.set(root, "serialExecution", lhat_bool(serialExecution));
     out.save(root, path);
 }
@@ -57,7 +66,8 @@ Level Level::load(const std::filesystem::path& path) {
     const lton::Document document(path);
     document.expect(levelFormat, levelVersion);
     Level result;
-    if(const auto v=lton::field(document.root(),"mixer"); !lhat_is_nil(v)) result.mixer=lton::relativePath(v);
+    if (const auto own = lton::field(document.root(), "id"); !lhat_is_nil(own)) result.id = lton::assetId(own);
+    if(const auto v=lton::field(document.root(),"mixer"); !lhat_is_nil(v)) result.mixer=lton::assetRef(v);
     if(const auto value=lton::field(document.root(),"rendering"); !lhat_is_nil(value)) {
         const auto& t=lton::table(value); auto& r=result.rendering;
         for(const auto& v:{std::pair{"grid",&r.grid},std::pair{"clustered",&r.clustered},std::pair{"debugClusters",&r.debugClusters}})
@@ -74,7 +84,7 @@ Level Level::load(const std::filesystem::path& path) {
         const auto id = lton::integer(lton::field(item, "id"));
         if (id <= 0 || id >= std::numeric_limits<std::uint32_t>::max() || result.findScene(static_cast<std::uint32_t>(id)))
             lton::invalid();
-        result.scenes.push_back({static_cast<std::uint32_t>(id), lton::relativePath(lton::field(item, "scene"))});
+        result.scenes.push_back({static_cast<std::uint32_t>(id), lton::assetRef(lton::field(item, "scene"))});
         // An instance without a transform sits at the level's origin.
         auto& transform = result.scenes.back().transform;
         for (const auto& [key, out] : {std::pair{"position", &transform.position}, std::pair{"rotation", &transform.rotation},

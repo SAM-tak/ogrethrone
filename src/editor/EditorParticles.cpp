@@ -12,7 +12,7 @@
 #include <ParticleSystem/OgreParticleSystemManager2.h>
 
 namespace throne {
-void Editor::loadParticleResources(const std::string& script) {
+void Editor::loadParticleResources(const AssetRef& script) {
     auto& resources=Ogre::ResourceGroupManager::getSingleton();
     if(!particleResourcesLoaded_) {
         const Ogre::String group="ThroneParticles";
@@ -34,7 +34,7 @@ void Editor::loadParticleResources(const std::string& script) {
         particleResourcesLoaded_=true;
     }
     if(script.empty()) return;
-    const auto file=project_->resolve(script);
+    const auto file=mediaFile(script);
     const auto key=file.generic_u8string();
     if(particleScripts_.count(key)) return;
     if(!std::filesystem::is_regular_file(file)) throw std::runtime_error("Particle script not found: "+key);

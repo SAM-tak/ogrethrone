@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/AssetRef.h"
 #include "core/Math.h"
 #include "audio/AudioComponents.h"
 #include "editor/Lton.h"
@@ -8,6 +9,7 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -49,8 +51,8 @@ using FieldValue = std::variant<double, bool, std::string, NodeRef>;
 /// One object-oriented script attachment: a script reference and its instance data.
 /// Also one RenderEvent attachment, whose script publishes `RenderEvent` instead.
 struct Behaviour {
-    /// Project-relative path of a module^ publishing `Behaviour = def^{ ... }`.
-    std::string script;
+    /// A module^ publishing `Behaviour = def^{ ... }` (or RenderEvent).
+    AssetRef script;
     /// Saved instance data; omitted fields retain the script's defaults.
     std::map<std::string, FieldValue> data;
     /// Attachment identity, retained across field changes and prefab overrides.
@@ -138,8 +140,8 @@ struct PbsMaterial {
     /// A negative value selects the specular/Fresnel workflow, otherwise metallic [0,1].
     float metalness = -1;
     std::array<float,3> emissive{0,0,0};
-    /// Project-relative textures; @ogre/ refers to the pinned OGRE sample media.
-    std::string diffuseMap, normalMap, roughnessMap, specularMap, reflectionMap;
+    /// Textures (TDDja/15 5); a path starting with @ogre/ refers to the pinned OGRE sample media.
+    AssetRef diffuseMap, normalMap, roughnessMap, specularMap, reflectionMap;
     float uvScale = 1;
     AlphaMode alpha = AlphaMode::Opaque;
     /// The alpha below which Test cuts the surface out.
@@ -169,7 +171,7 @@ struct LightComponent {
     /// directional lights always cast shadows.
     bool castShadows = false;
     /// A project-relative mask texture, used by AreaApprox only.
-    std::string mask;
+    AssetRef mask;
 };
 
 /// What a Model component changes in one of its file's materials (TDDja/09 8).
@@ -186,9 +188,9 @@ struct ModelMaterial {
     Translucency translucency;
     /// Subsurface scattering width in metres (PbsMaterial::subsurfaceWidth).
     float subsurfaceWidth = 0;
-    /// A project-relative base colour map replacing the file's (files often name their texture
-    /// only in the material's name); empty keeps the file's.
-    std::string diffuseMap;
+    /// A base colour map replacing the file's (files often name their texture only in the
+    /// material's name); empty keeps the file's.
+    AssetRef diffuseMap;
     /// Equality, to tell when the drawn model must be rebuilt.
     bool operator==(const ModelMaterial& other) const {
         return name == other.name && absorption == other.absorption && thickness == other.thickness &&
@@ -199,8 +201,8 @@ struct ModelMaterial {
 /// A model file (FBX) drawn at the node: its meshes with their own hierarchy and
 /// PBS materials (TDDja/09 8). Lights and cameras in the file are not imported.
 struct ModelComponent {
-    /// Project-relative path of the model file.
-    std::string path;
+    /// The model file (FBX, or an OGRE .mesh such as @ogre/models/Stickman.mesh).
+    AssetRef path;
     /// Whether the file's normal maps use DirectX's convention (green pointing down).
     bool directXNormals = true;
     /// Radiance of its emissive maps' full value. Files carry no strength (lamps are 1),
@@ -224,7 +226,7 @@ struct ModelComponent {
 struct ParticleSystemComponent {
     std::string definition = "Examples/PurpleFountain";
     /// Optional project-relative .particle2 file; empty uses the built-in OGRE examples.
-    std::string script;
+    AssetRef script;
     bool enabled = true;
     /// Whether renderer resources can be reused for this authored instance.
     bool operator==(const ParticleSystemComponent& other) const {
@@ -310,7 +312,7 @@ struct RigidBody {
 /// ID (TDDja/07 4). Unset settings and fields keep the prefab's.
 struct AttachmentOverride {
     NodeId id = 0;
-    std::optional<std::string> script;
+    std::optional<AssetRef> script;
     std::optional<bool> enabled;
     /// Priority overrides; an empty inner value returns to the script's default.
     std::optional<std::optional<double>> priority;
@@ -484,8 +486,8 @@ struct SceneNode {
     /// The RenderEvent component: script instances run on the render thread before and
     /// after OGRE draws, reading the render snapshot only.
     std::vector<Behaviour> renderEvent;
-    /// Project-relative path of the prefab this node instantiates; empty for a plain node.
-    std::string prefab;
+    /// The prefab this node instantiates; empty for a plain node.
+    AssetRef prefab;
     /// What this instance changes in the prefab.
     Overrides overrides;
 };
@@ -566,10 +568,12 @@ struct SystemSet {
 /// file has exactly one root node, or is a variant (TDDja/06 3.2): no nodes, only
 /// a base prefab and overrides of it.
 struct Prefab : SystemSet {
+    /// The file's own asset ID (TDDja/15 2); a new one for a new prefab or scene.
+    AssetId id = newAssetId();
     /// Nodes with every parent before its children; siblings keep this order.
     std::vector<SceneNode> nodes;
-    /// For a variant, the project-relative path of the prefab it is based on.
-    std::string base;
+    /// For a variant, the prefab it is based on.
+    AssetRef base;
     /// For a variant, what it changes in its base.
     Overrides overrides;
 
@@ -622,6 +626,16 @@ NodeId newNodeId();
 /// Returns a random system ID from 0x80000000 up, for systems an instance adds:
 /// a file numbers its own systems from 1, so the two do not meet.
 std::uint32_t newSystemId();
+
+/// Receives each file reference forEachAssetRef() finds, and may change it.
+using AssetVisitor = std::function<void(AssetRef&)>;
+/// Calls @p visit on every file reference of @p node: its prefab, components, attachments and
+/// overrides (TDDja/15 5.4).
+void forEachAssetRef(SceneNode& node, const AssetVisitor& visit);
+/// Calls @p visit on every file reference of @p prefab: its nodes', systems', base and overrides.
+void forEachAssetRef(Prefab& prefab, const AssetVisitor& visit);
+/// Calls @p visit on every file reference of @p scene, its environment included.
+void forEachAssetRef(Scene& scene, const AssetVisitor& visit);
 /// Writes @p overrides as an LTON table; shared by prefab instances and scene instances.
 LhatValue writeOverrides(lton::Writer& out, const Overrides& overrides);
 /// Reads what writeOverrides wrote (nil^ reads as no overrides). @throws lton::Invalid on malformed data.

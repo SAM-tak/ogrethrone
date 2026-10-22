@@ -1,4 +1,7 @@
 format = "ogrethrone-project",
-mainLevel = "levels/main.level.lton",
+mainLevel = 7609909848920064,
 name = "Box3D Playground Sample",
+rendering = {
+    vsync = true^,
+},
 version = 1,

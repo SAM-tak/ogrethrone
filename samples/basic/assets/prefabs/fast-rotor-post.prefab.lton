@@ -1,0 +1,41 @@
+base = 7609853172715520,
+format = "ogrethrone-prefab",
+id = 7609853046886400,
+nodes = {
+},
+overrides = {
+    nodes = {
+        {
+            behaviour = {
+                changed = {
+                    {
+                        data = {
+                            degreesPerSecond = 360.0,
+                        },
+                        id = 1,
+                    },
+                },
+            },
+            path = {
+                105248190270967814,
+            },
+        },
+        {
+            box = {
+                colour = {
+                    0.85,
+                    0.2,
+                    0.2,
+                },
+            },
+            path = {
+                105248190270967815,
+            },
+        },
+    },
+    systems = {
+    },
+},
+systems = {
+},
+version = 3,

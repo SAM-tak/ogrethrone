@@ -1,5 +1,0 @@
-format = "ogrethrone-level",
-version = 3,
-scenes = {{id = 1, scene = "scenes/pbs-materials.scene.lton"}, {id = 2, scene = "scenes/pbs-materials-view.scene.lton"}},
-systems = {},
-rendering = {grid = false^, clustered = true^, minDistance = 0.1, maxDistance = 100},

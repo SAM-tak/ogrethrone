@@ -114,10 +114,12 @@ int main() {
     // A new project reopens with its main level, which loads the example scene.
     const auto project = throne::Project::create(directory, "My Game");
     const auto reopened = throne::Project::open(project.root / throne::Project::markerName);
-    const auto level = throne::Level::load(reopened.resolve(reopened.mainLevel));
+    throne::AssetDatabase assets(reopened.resolve(""), {});
+    assets.scan([](const std::string&) {});
+    const auto level = throne::Level::load(reopened.resolve(assets.path(reopened.mainLevel)));
     if (reopened.name != "My Game" || level.scenes.size() != 1 ||
-        throne::Scene::load(reopened.resolve(level.scenes[0].scene)).nodes.size() != 2 ||
-        !fs::exists(reopened.resolve("main.lh")))
+        throne::Scene::load(reopened.resolve(assets.path(level.scenes[0].scene))).nodes.size() != 2 ||
+        !fs::exists(reopened.root / "main.lh"))
         return fail("Created project did not reopen with main.lh, its main level and scene");
     if(!reopened.rendering.vsync) return fail("New projects must default to game VSync on");
     auto configured=project;

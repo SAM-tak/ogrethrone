@@ -1,5 +1,6 @@
 #pragma once
 
+#include "editor/Assets.h"
 #include "editor/Level.h"
 #include <cstddef>
 #include <filesystem>
@@ -12,16 +13,19 @@ namespace throne {
 /// A prefab being edited can be put in place of its file so instances show the edit.
 class Library {
 public:
-    /// @param root Project directory prefab paths are relative to.
-    explicit Library(std::filesystem::path root = {});
+    /// @param root The assets folder references' paths are relative to.
+    /// @param assets Finds the files of references by ID; without it, references name files by path.
+    explicit Library(std::filesystem::path root = {}, const AssetDatabase* assets = nullptr);
 
-    /// Returns the prefab at @p path: the one put() there, or the file, read again when it changed.
+    /// Returns the prefab @p ref names: the one put() there, or the file, read again when it changed.
     /// @throws std::runtime_error when the file is missing or malformed.
-    const Prefab& prefab(const std::string& path);
-    /// Uses @p prefab for @p path instead of the file until forget().
-    void put(const std::string& path, Prefab prefab);
-    /// Goes back to reading @p path from its file.
-    void forget(const std::string& path);
+    const Prefab& prefab(const AssetRef& ref);
+    /// Uses @p prefab for @p ref instead of the file until forget().
+    void put(const AssetRef& ref, Prefab prefab);
+    /// Goes back to reading @p ref from its file.
+    void forget(const AssetRef& ref);
+    /// What @p ref names, for messages.
+    std::string describe(const AssetRef& ref) const { return assets_ ? assets_->describe(ref) : ref.path; }
 
 private:
     struct Entry {
@@ -30,7 +34,8 @@ private:
         bool pinned = false;
     };
     std::filesystem::path root_;
-    std::map<std::string, Entry> entries_;
+    const AssetDatabase* assets_;
+    std::map<AssetRef, Entry> entries_;
 };
 
 /// One node of an expanded hierarchy, with every override applied.
@@ -83,7 +88,7 @@ struct Expansion {
     /// the override's instance path, and the system's ID.
     std::map<std::pair<NodePath, std::uint32_t>, std::string> removedSystems;
     /// Scripts of the attachments overrides removed, by the node's path and the attachment's ID.
-    std::map<std::pair<NodePath, NodeId>, std::string> removedAttachments;
+    std::map<std::pair<NodePath, NodeId>, AssetRef> removedAttachments;
     /// Overrides of the expanded content and its instances that change nothing. Those
     /// inside an instance that could not be expanded are not listed: they may apply again.
     std::vector<UnusedOverride> unused;
@@ -102,13 +107,13 @@ struct Expansion {
 /// Expands @p content; a variant expands its base, the base's root at the empty
 /// path, with its overrides. Overrides apply inner instances first, then outer
 /// ones. @p self is the content's own path, for cycle checks.
-Expansion expand(const Prefab& content, Library& library, const std::string& self = {});
+Expansion expand(const Prefab& content, Library& library, const AssetRef& self = {});
 
 /// A level with the scene files its instances use: what the editor edits.
 struct World {
     Level level;
     /// Scene files by project-relative path.
-    std::map<std::string, Scene> scenes;
+    std::map<AssetRef, Scene> scenes;
 };
 
 /// Every scene instance of a world, expanded: what the viewport shows and Play runs.

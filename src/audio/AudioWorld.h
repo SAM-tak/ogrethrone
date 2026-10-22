@@ -12,7 +12,10 @@ namespace throne {
 class AudioWorld {
 public:
     using Log = std::function<void(const std::string&)>;
-    AudioWorld(AudioSystem& audio, std::filesystem::path root, const MixerDefinition& mixer, Log log = {});
+    /// @param root The assets folder clips are found in; @param assets finds clips referred to by
+    /// ID (null: by path). Assets must not change while it plays.
+    AudioWorld(AudioSystem& audio, std::filesystem::path root, const MixerDefinition& mixer, Log log = {},
+               const AssetDatabase* assets = nullptr);
     ~AudioWorld();
     struct ListenerPose {
         Vec3 position, right{1,0,0}, up{0,1,0}, forward{0,0,-1};

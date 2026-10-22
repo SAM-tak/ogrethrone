@@ -315,7 +315,8 @@ std::string ModelLibrary::key(const ModelComponent& component, const std::filesy
                std::to_string(m.absorption.z) + "/" + std::to_string(m.thickness) + "/" + std::to_string(m.translucency.colour.x) +
                "," + std::to_string(m.translucency.colour.y) + "," + std::to_string(m.translucency.colour.z) + "," +
                std::to_string(m.translucency.distortion) + "," + std::to_string(m.translucency.power) + "," +
-               std::to_string(m.translucency.scale) + "/" + std::to_string(m.subsurfaceWidth) + "/" + m.diffuseMap;
+               std::to_string(m.translucency.scale) + "/" + std::to_string(m.subsurfaceWidth) + "/" +
+               std::to_string(m.diffuseMap.id) + m.diffuseMap.path;
     return key;
 }
 
@@ -510,11 +511,12 @@ ModelLibrary::Parsed ModelLibrary::parse(const std::filesystem::path& file, cons
         material.name = source->name.data;
         const auto change = std::find_if(component.materials.begin(), component.materials.end(),
                                          [&](const ModelMaterial& m) { return m.name == material.name; });
-        // A material change's base colour map (resolved by the caller) replaces the file's.
+        // A material change's base colour map (resolved by the caller to a file, in its path)
+        // replaces the file's.
         if (change != component.materials.end() && !change->diffuseMap.empty()) {
-            material.diffuse = std::filesystem::u8path(change->diffuseMap);
+            material.diffuse = std::filesystem::u8path(change->diffuseMap.path);
             if (!std::filesystem::exists(material.diffuse)) {
-                out.messages.push_back("Model texture not found: " + change->diffuseMap);
+                out.messages.push_back("Model texture not found: " + change->diffuseMap.path);
                 material.diffuse.clear();
             }
         } else {

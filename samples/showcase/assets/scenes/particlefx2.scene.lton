@@ -1,0 +1,436 @@
+format = "ogrethrone-scene",
+id = 7609914537787392,
+lighting = {
+    ambientDirection = {
+        1.0,
+        1.34641,
+        1.0,
+    },
+    ambientLower = {
+        0.02925,
+        0.0219375,
+        0.014625,
+    },
+    ambientUpper = {
+        0.0225,
+        0.0375,
+        0.0525,
+    },
+    defaultSun = false^,
+    environmentScale = 1.0,
+    environmentTemperature = 0.0,
+    exposure = 0.0,
+    sky = false^,
+    toneMapping = false^,
+},
+nodes = {
+    {
+        components = {
+            material = {
+                diffuseMap = "@ogre/materials/textures/MRAMOR6X6.jpg",
+                emissive = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                fresnel = {
+                    0.04,
+                    0.04,
+                    0.04,
+                },
+                metalness = -1.0,
+                roughness = 1.0,
+                roughnessMap = "@ogre/materials/textures/MRAMOR-bump.jpg",
+                uvScale = 5.0,
+            },
+            plane = {
+                colour = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+                depth = 50.0,
+                width = 50.0,
+            },
+            transform = {
+                position = {
+                    0.0,
+                    -2.0,
+                    0.0,
+                },
+                rotation = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
+        },
+        id = 1,
+        name = "Ground",
+        parent = 0,
+    },
+    {
+        components = {
+            light = {
+                castShadows = false^,
+                colour = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+                direction = {
+                    -1.0,
+                    -1.0,
+                    -1.0,
+                },
+                enabled = true^,
+                height = 1.0,
+                innerAngle = 30.0,
+                outerAngle = 45.0,
+                power = 3.1415927410125732,
+                radius = 10.0,
+                showEmitter = true^,
+                temperature = 0.0,
+                threshold = 0.009999999776482582,
+                twoSided = false^,
+                type = "Directional",
+                width = 1.0,
+            },
+            transform = {
+                position = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                rotation = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
+        },
+        id = 2,
+        name = "Sun",
+        parent = 0,
+    },
+    {
+        components = {
+            particles = {
+                definition = "Particle/SpherePBS",
+                enabled = true^,
+            },
+            transform = {
+                position = {
+                    -150.0,
+                    0.0,
+                    0.0,
+                },
+                rotation = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
+        },
+        id = 3,
+        name = "PBS sphere particles",
+        parent = 0,
+    },
+    {
+        components = {
+            particles = {
+                definition = "Examples/PurpleFountain",
+                enabled = true^,
+            },
+            transform = {
+                position = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                rotation = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
+        },
+        id = 4,
+        name = "Purple fountain",
+        parent = 0,
+    },
+    {
+        components = {
+            particles = {
+                definition = "Examples/Aureola",
+                enabled = true^,
+            },
+            transform = {
+                position = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                rotation = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
+        },
+        id = 5,
+        name = "Aureola",
+        parent = 0,
+    },
+    {
+        components = {
+            particles = {
+                definition = "Particle/SmokePBS",
+                enabled = true^,
+            },
+            transform = {
+                position = {
+                    10.0,
+                    0.0,
+                    0.0,
+                },
+                rotation = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
+        },
+        id = 6,
+        name = "PBS smoke",
+        parent = 0,
+    },
+    {
+        components = {
+            behaviour = {
+                {
+                    data = {
+                    },
+                    id = 1,
+                    script = 7609915426979840,
+                },
+            },
+            particles = {
+                definition = "Particle/SmokeUnlit",
+                enabled = true^,
+            },
+            transform = {
+                position = {
+                    25.0,
+                    2.0,
+                    -50.0,
+                },
+                rotation = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
+        },
+        id = 7,
+        name = "Moving Unlit smoke",
+        parent = 0,
+    },
+    {
+        components = {
+            material = {
+                diffuseMap = "@ogre/materials/textures/MRAMOR6X6.jpg",
+                emissive = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                fresnel = {
+                    0.04,
+                    0.04,
+                    0.04,
+                },
+                metalness = -1.0,
+                roughness = 1.0,
+                roughnessMap = "@ogre/materials/textures/MRAMOR-bump.jpg",
+                uvScale = 5.0,
+            },
+            plane = {
+                colour = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+                depth = 50.0,
+                width = 50.0,
+            },
+            transform = {
+                position = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                rotation = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                scale = {
+                    0.2,
+                    0.2,
+                    0.2,
+                },
+            },
+        },
+        id = 8,
+        name = "Moving platform",
+        parent = 7,
+    },
+    {
+        components = {
+            behaviour = {
+                {
+                    data = {
+                        marker = true^,
+                    },
+                    id = 1,
+                    script = 7609915426979840,
+                },
+            },
+            material = {
+                diffuseMap = "@ogre/materials/textures/MRAMOR6X6.jpg",
+                emissive = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                fresnel = {
+                    0.04,
+                    0.04,
+                    0.04,
+                },
+                metalness = -1.0,
+                roughness = 1.0,
+                roughnessMap = "@ogre/materials/textures/MRAMOR-bump.jpg",
+                uvScale = 5.0,
+            },
+            plane = {
+                colour = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+                depth = 50.0,
+                width = 50.0,
+            },
+            transform = {
+                position = {
+                    -10.0,
+                    0.5,
+                    -10.0,
+                },
+                rotation = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                scale = {
+                    0.01,
+                    0.01,
+                    0.01,
+                },
+            },
+        },
+        id = 9,
+        name = "Emitter marker",
+        parent = 7,
+    },
+    {
+        components = {
+            material = {
+                diffuseMap = "@ogre/materials/textures/MRAMOR6X6.jpg",
+                emissive = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                fresnel = {
+                    0.04,
+                    0.04,
+                    0.04,
+                },
+                metalness = -1.0,
+                roughness = 1.0,
+                roughnessMap = "@ogre/materials/textures/MRAMOR-bump.jpg",
+                uvScale = 5.0,
+            },
+            plane = {
+                colour = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+                depth = 9.0,
+                width = 15.0,
+            },
+            transform = {
+                position = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                rotation = {
+                    90.0,
+                    0.0,
+                    0.0,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
+        },
+        id = 10,
+        name = "Marble billboard",
+        parent = 0,
+    },
+},
+systems = {
+},
+version = 2,

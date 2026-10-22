@@ -66,6 +66,24 @@ void registerHlms(Ogre::Root& root, std::initializer_list<const char*> extra = {
 }
 
 int main(int argc, char** argv) {
+    // --resave-assets <project>: gives every asset its ID and writes every reference by ID; no
+    // window is opened (TDDja/15 10).
+    if (argc > 2 && std::strcmp(argv[1], "--resave-assets") == 0) {
+        try {
+            auto project = throne::Project::open(argv[2]);
+            throne::AssetDatabase assets(project.resolve(""), project.root / ".throne" / "assets.lton");
+            const auto log = [](const std::string& line) { std::puts(line.c_str()); };
+            assets.scan(log);
+            assets.resave(log);
+            project.mainLevel = assets.bind(project.mainLevel);
+            project.save();
+            std::printf("Resaved %zu assets of %s\n", assets.assets().size(), project.root.u8string().c_str());
+            return 0;
+        } catch (const std::exception& error) {
+            std::fprintf(stderr, "%s\n", error.what());
+            return 1;
+        }
+    }
     // --dump-host-api [file]: the API scripts see, for the L^ language server; no window is opened.
     if (argc > 1 && std::strcmp(argv[1], "--dump-host-api") == 0) {
         const char* path = argc > 2 ? argv[2] : "lhat-host.json";

@@ -1,0 +1,44 @@
+format = "ogrethrone-level",
+id = 7609852912668672,
+rendering = {
+    clustered = true^,
+    debugClusters = false^,
+    grid = true^,
+    maxDistance = 100.0,
+    minDistance = 0.10000000149011612,
+},
+scenes = {
+    {
+        id = 1,
+        position = {
+            0.0,
+            0.0,
+            0.0,
+        },
+        rotation = {
+            0.0,
+            0.0,
+            0.0,
+        },
+        scale = {
+            1.0,
+            1.0,
+            1.0,
+        },
+        scene = 7609853248212992,
+    },
+},
+serialExecution = false^,
+stages = {
+    "FetchInput",
+    "UpdateBehaviourSystem",
+    "LateUpdateBehaviourSystem",
+    "Animation",
+    "Box3DStep",
+    "SteamAudio",
+    "SoLoud",
+    "EndOfFrameBehaviourSystem",
+},
+systems = {
+},
+version = 3,

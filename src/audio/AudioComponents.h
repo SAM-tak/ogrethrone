@@ -1,4 +1,5 @@
 #pragma once
+#include "core/AssetRef.h"
 #include "core/Math.h"
 #include <cstdint>
 #include <filesystem>
@@ -12,14 +13,15 @@ struct AudioSourceComponent {
     bool enabled = true, spatial = true, loop = false, autoPlay = false, streaming = false;
     bool occlusion = true, transmission = true, reflections = false;
     float reflectionVolume = 1;
-    std::string clip;
+    /// The clip's file (TDDja/15 5).
+    AssetRef clip;
     float volume = 1, minDistance = 1, maxDistance = 100;
     std::uint32_t bus = 1;
     void validate() const {
-        const auto path=std::filesystem::u8path(clip);
-        if(clip.size()>255 || clip.find('\0')!=std::string::npos || path.is_absolute() || path.has_root_name())
-            throw std::runtime_error("Audio clip must be a project-relative path");
-        for(const auto& part:path) if(part=="..") throw std::runtime_error("Audio clip escapes project");
+        const auto path=std::filesystem::u8path(clip.path);
+        if(clip.path.size()>255 || clip.path.find('\0')!=std::string::npos || path.is_absolute() || path.has_root_name())
+            throw std::runtime_error("Audio clip must be a path relative to the assets");
+        for(const auto& part:path) if(part=="..") throw std::runtime_error("Audio clip escapes the assets");
         if (!std::isfinite(reflectionVolume) || reflectionVolume<0 || reflectionVolume>10)
             throw std::runtime_error("Invalid reflection volume");
         if (!std::isfinite(volume) || volume < 0 || volume > 100 || !std::isfinite(minDistance) ||

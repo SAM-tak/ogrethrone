@@ -168,12 +168,15 @@ int main() {
         {
             const std::filesystem::path root = THRONE_PHYSICS_SAMPLE;
             throne::World world;
-            world.level = throne::Level::load(root / "levels/main.level.lton");
-            world.scenes["scenes/physics.scene.lton"] = throne::Scene::load(root / "scenes/physics.scene.lton");
-            throne::Library library(root);
+            throne::AssetDatabase assets(root / "assets", {});
+            assets.scan([](const std::string&) {});
+            world.level = throne::Level::load(root / "assets/levels/main.level.lton");
+            for (const auto& instance : world.level.scenes)
+                world.scenes[instance.scene] = throne::Scene::load(root / "assets" / std::filesystem::u8path(assets.path(instance.scene)));
+            throne::Library library(root / "assets", &assets);
             auto growing = throne::expand(world, library);
             const auto initial = growing.instances[0].expansion.nodes.size();
-            throne::ScriptRuntime scripts(world, growing, root, [](const std::string&) {}, throne::PlayScope::Level);
+            throne::ScriptRuntime scripts(world, growing, root, [](const std::string&) {}, throne::PlayScope::Level, &assets);
             throne::PhysicsWorld simulation;
             simulation.load(growing);
             const auto bodies = simulation.bodyCount();
@@ -196,7 +199,7 @@ int main() {
             require(simulation.bodyCount() == bodies + nodes.size() - initial, "Incremental physics duplicated or missed bodies");
             require(nodes[initial].node.transform->position.y < -2, "Spawned box did not fall below its spawn point");
             require(nodes[initial].node.transform->scale == throne::Vec3{.6f,.6f,.6f}, "Spawned box size changed");
-            require(world.scenes.at("scenes/physics.scene.lton").nodes.size() == initial, "Spawning modified the source scene");
+            require(world.scenes.at(world.level.scenes.front().scene).nodes.size() == initial, "Spawning modified the source scene");
             auto restored = throne::expand(world, library);
             require(restored.instances[0].expansion.nodes.size() == initial, "Re-expansion retained spawned boxes");
             require(scripts.evaluate("import^ throne").text.empty(), "Could not import spawning API in console");

@@ -1,5 +1,0 @@
-format = "ogrethrone-level",
-version = 3,
-scenes = {{id = 1, scene = "scenes/forward3d.scene.lton"}, {id = 2, scene = "scenes/forward3d-view.scene.lton"}},
-systems = {},
-rendering = {grid = false^, clustered = true^, minDistance = 5, maxDistance = 500},

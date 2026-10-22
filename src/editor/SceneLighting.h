@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/AssetRef.h"
 #include "core/Math.h"
 #include "editor/Lton.h"
 #include <array>
@@ -61,7 +62,7 @@ struct SceneLighting {
     /// Optional project-relative equirectangular HDR file lighting the scene and drawn as its
     /// sky; environmentScale multiplies its radiance (sky, reflections and ambient light),
     /// tinted by environmentTemperature like a light's (K; 0 leaves its colour as it is).
-    std::string environment;
+    AssetRef environment;
     float environmentScale = 1, environmentTemperature = 0;
     /// Baked global illumination; the bake lives in the `<scene>.gi` folder beside the scene.
     GiSettings gi;

@@ -122,8 +122,8 @@ int main() {
         emitter.audioSource->reflections=true; emitter.audioSource->bus=3;
         auto& divider=scene.addNode("Divider"); divider.box.reset(); divider.acousticGeometry=AcousticGeometryComponent{};
         divider.acousticGeometry->shape=AcousticShape::Box; divider.acousticGeometry->boxSize={.1f,8,8};
-        Library sampleLibrary(THRONE_AUDIO_SAMPLE); auto live=expand(world,sampleLibrary);
-        AudioWorld runtime(audio,THRONE_AUDIO_SAMPLE,MixerDefinition::defaults(),[&](const auto& e){errors.push_back(e);});
+        Library sampleLibrary(std::filesystem::path(THRONE_AUDIO_SAMPLE)/"assets"); auto live=expand(world,sampleLibrary);
+        AudioWorld runtime(audio,std::filesystem::path(THRONE_AUDIO_SAMPLE)/"assets",MixerDefinition::defaults(),[&](const auto& e){errors.push_back(e);});
         const auto tick=[&]{runtime.spatialStep(live); runtime.step(live);};
         tick(); const auto baseline=render(audio,20);
         require(baseline<1.0e-9,"Opaque divider leaked direct sound before reflection result");

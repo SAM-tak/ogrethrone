@@ -277,7 +277,7 @@ Ogre::Matrix4 fromColumnMajor(const float* in) {
 }
 
 /// Level a project opens when it names no main level.
-constexpr const char* defaultLevelPath = "levels/main.level.lton";
+constexpr const char* defaultLevelPath = "main.level.lton";
 
 /// Where the launcher suggests creating projects: Documents/OgreThrone.
 std::filesystem::path defaultProjectParent() {
@@ -702,9 +702,16 @@ void Editor::openProject(const std::filesystem::path& path) {
         projects_.touch(project_->root);
         projectsChanged();
         writeHostApi();
-        const auto level = project_->mainLevel.empty() ? std::string(defaultLevelPath) : project_->mainLevel;
+        // Assets get their IDs before anything is read (TDDja/15 4.3).
+        assets_ = AssetDatabase(project_->resolve(""), project_->root / ".throne" / "assets.lton");
+        assets_.scan([this](const std::string& line) { log(line); });
+        auto level = project_->mainLevel.empty() ? std::string(defaultLevelPath) : assets_.path(project_->mainLevel);
+        if (level.empty()) {
+            log("The main level is missing: " + shown(project_->mainLevel));
+            level = defaultLevelPath;
+        }
         std::snprintf(levelPath_, sizeof levelPath_, "%s", level.c_str());
-        library_ = Library(project_->root);
+        library_ = Library(project_->resolve(""), &assets_);
         doc_ = Document();
         doc_.gameRendering=project_->rendering;
         contexts_.resize(1);
@@ -740,7 +747,7 @@ void Editor::closeProject() {
 
 void Editor::writeHostApi() {
     const auto json = ScriptRuntime::hostApi();
-    const auto path = project_->resolve("lhat-host.json");
+    const auto path = project_->root / "lhat-host.json";
     std::ifstream current(path, std::ios::binary);
     if (current && std::string((std::istreambuf_iterator<char>(current)), {}) == json) return;
     current.close();
@@ -880,7 +887,7 @@ void Editor::play() {
     try {
         // Play runs the open level; playing the whole game (with main.lh) comes later.
         runtime_ = std::make_unique<ScriptRuntime>(
-            doc_.world, view_, project_->root, [this](const std::string& line) { log(line); }, PlayScope::Level);
+            doc_.world, view_, project_->root, [this](const std::string& line) { log(line); }, PlayScope::Level, &assets_);
         // Scripts read the poses the Animation stage samples, on the same thread.
         runtime_->setJointQuery([this](std::size_t instance, std::size_t node, std::string_view joint, float matrix[16]) {
             return animation_.jointMatrix(instance, node, joint, matrix);
@@ -888,8 +895,9 @@ void Editor::play() {
         if(audioDevice_) {
             const auto& path=doc_.world.level.mixer;
             const auto mixer=path.empty()?MixerDefinition{}:
-                (doc_.mixers.count(path)?doc_.mixers.at(path):MixerDefinition::load(project_->resolve(path)));
-            audioWorld_=std::make_unique<AudioWorld>(*audioDevice_,project_->root,mixer,[this](const std::string& line){log(line);});
+                (doc_.mixers.count(path)?doc_.mixers.at(path):MixerDefinition::load(mediaFile(path)));
+            audioWorld_=std::make_unique<AudioWorld>(*audioDevice_,project_->resolve(""),mixer,[this](const std::string& line){log(line);},
+                                                     &assets_);
             runtime_->setAudioCallbacks([this](std::size_t i,std::size_t n,AudioCommand command){audioWorld_->command(i,n,command);},
                 [this](std::size_t i,std::size_t n){return audioWorld_->playing(i,n);});
         }
@@ -899,7 +907,7 @@ void Editor::play() {
         renderSnapshot_ = view_;
         renderEvents_ = std::make_unique<ScriptRuntime>(
             doc_.world, *renderSnapshot_, project_->root, [this](const std::string& line) { log(line); },
-            PlayScope::RenderEvents);
+            PlayScope::RenderEvents, &assets_);
         clearParticles();
         log("Play");
     } catch (const std::exception& error) {
@@ -1297,7 +1305,7 @@ void Editor::refreshView() {
     } else {
         view_ = expand(doc_.world, library_);
     }
-    references_ = findReferences(view_, content() ? nullptr : &doc_.world.level);
+    references_ = findReferences(view_, content() ? nullptr : &doc_.world.level, assets_);
     decltype(viewShape_) shape;
     for (std::size_t i = 0; i < view_.instances.size(); ++i)
         for (const auto& node : view_.instances[i].expansion.nodes) shape.emplace_back(i, node.path, node.parent);
@@ -1313,12 +1321,13 @@ void Editor::refreshView() {
 }
 
 void Editor::enter(Context context) {
+    context.path = assets_.bind(context.path);
     if (context.kind == Context::Kind::Scene && !doc_.world.scenes.count(context.path)) {
-        const auto file = project_->resolve(context.path);
+        const auto file = mediaFile(context.path);
         try {
             doc_.world.scenes[context.path] = std::filesystem::exists(file) ? Scene::load(file) : Scene();
         } catch (const std::exception& error) {
-            log("Cannot open " + context.path + ": " + error.what());
+            log("Cannot open " + shown(context.path) + ": " + error.what());
             return;
         }
     }
@@ -1326,7 +1335,7 @@ void Editor::enter(Context context) {
         try {
             doc_.prefabs[context.path] = library_.prefab(context.path);
         } catch (const std::exception& error) {
-            log("Cannot open " + context.path + ": " + error.what());
+            log("Cannot open " + shown(context.path) + ": " + error.what());
             return;
         }
     }
@@ -1338,7 +1347,7 @@ void Editor::enter(Context context) {
 
 void Editor::enterModel(const ModelComponent& model) {
     modelPreview_ = {};
-    auto& node = modelPreview_.addNode(std::filesystem::u8path(model.path).filename().u8string());
+    auto& node = modelPreview_.addNode(std::filesystem::u8path(shown(model.path)).filename().u8string());
     node.box.reset();
     node.transform = Transform{};
     node.model = model;
@@ -1527,13 +1536,32 @@ void Editor::destroyRenderObjects() {
     sceneNodes_.clear();
 }
 
-std::filesystem::path Editor::mediaFile(const std::string& path) const {
+std::filesystem::path Editor::mediaFile(const AssetRef& ref) const {
+    const auto path=assets_.path(ref);
     return path.rfind("@ogre/",0)==0 ? std::filesystem::path(THRONE_OGRE_MEDIA_DIR)/path.substr(6) : project_->resolve(path);
 }
 
-Ogre::TextureGpu* Editor::projectTexture(const std::string& path,int kind,bool mask) {
-    if(path.empty() || !project_) return nullptr;
-    const auto file=mediaFile(path);
+void Editor::bindDocument() {
+    const auto bind=[this](AssetRef& ref) { ref=assets_.bind(ref); };
+    doc_.world.level.forEachAssetRef(bind);
+    // The maps holding the open files are keyed by references too.
+    const auto rekey=[&](auto& files) {
+        std::remove_reference_t<decltype(files)> bound;
+        for(auto& [ref,file]:files) bound.emplace(assets_.bind(ref),std::move(file));
+        files=std::move(bound);
+    };
+    rekey(doc_.world.scenes);
+    rekey(doc_.prefabs);
+    rekey(doc_.mixers);
+    for(auto& [ref,scene]:doc_.world.scenes) forEachAssetRef(scene,bind);
+    for(auto& [ref,prefab]:doc_.prefabs) forEachAssetRef(prefab,bind);
+    for(auto& context:contexts_) bind(context.path);
+    bind(mixerPath_);
+}
+
+Ogre::TextureGpu* Editor::projectTexture(const AssetRef& ref,int kind,bool mask) {
+    if(ref.empty() || !project_) return nullptr;
+    const auto file=mediaFile(ref);
     const auto key=std::make_tuple(file.generic_u8string(),kind,mask);
     if(const auto it=projectTextures_.find(key); it!=projectTextures_.end()) return it->second;
     if(!std::filesystem::exists(file)) {
@@ -1725,15 +1753,15 @@ void Editor::readModel(const ModelComponent& model, const std::string& key) {
     const auto file=mediaFile(model.path);
     // The worker gets material changes' maps as files.
     auto resolved=model;
-    for(auto& m:resolved.materials) if(!m.diffuseMap.empty()) m.diffuseMap=mediaFile(m.diffuseMap).u8string();
-    tasks_.background<ModelLibrary::Parsed>("Reading "+model.path,[file,resolved] { return ModelLibrary::parse(file,resolved); },
+    for(auto& m:resolved.materials) if(!m.diffuseMap.empty()) m.diffuseMap=AssetRef(mediaFile(m.diffuseMap).u8string());
+    tasks_.background<ModelLibrary::Parsed>("Reading "+shown(model.path),[file,resolved] { return ModelLibrary::parse(file,resolved); },
         [this,key,path=model.path](ModelLibrary::Parsed& parsed) {
             models_->add(key,parsed);
             // The Animation stage finds its skeleton by the component's path.
             if(auto skeleton=models_->skeleton(key)) {
                 std::string clips;
                 for(const auto& clip:skeleton->clips) clips+=(clips.empty()?"":", ")+clip.name;
-                log(path+": "+std::to_string(skeleton->skeleton->num_joints())+" joints; clips: "+(clips.empty()?"none":clips));
+                log(shown(path)+": "+std::to_string(skeleton->skeleton->num_joints())+" joints; clips: "+(clips.empty()?"none":clips));
                 animations_.put(path,std::move(skeleton));
             }
             modelsReading_.erase(key);
@@ -1741,12 +1769,12 @@ void Editor::readModel(const ModelComponent& model, const std::string& key) {
         });
 }
 
-void Editor::readEnvironmentFile(const std::string& path, const Ogre::Vector3& scale, const std::string& key) {
+void Editor::readEnvironmentFile(const AssetRef& path, const Ogre::Vector3& scale, const std::string& key) {
     ++reads_;
     environments_[key];
     struct Read { EnvironmentImage image; std::string error; };
-    const auto file=project_->resolve(path);
-    tasks_.background<Read>("Reading environment "+path,[file,scale] {
+    const auto file=mediaFile(path);
+    tasks_.background<Read>("Reading environment "+shown(path),[file,scale] {
         Read read;
         try { read.image=readEnvironment(file,scale); } catch(const std::exception& error) { read.error=error.what(); }
         return read;
@@ -1762,18 +1790,17 @@ void Editor::readEnvironmentFile(const std::string& path, const Ogre::Vector3& s
 }
 
 std::filesystem::path Editor::giFolder() const {
-    // scenes/exterior.scene.lton keeps its bake in scenes/exterior.gi.
-    const auto path=lightingScenePath();
-    const auto scene=project_ ? project_->resolve(path) : std::filesystem::path(path);
-    auto name=scene.filename().u8string();
-    return scene.parent_path()/std::filesystem::u8path(name.substr(0,name.find('.'))+".gi");
+    // A scene keeps its bake by its ID, so the bake follows it when it moves (TDDja/15 4.5).
+    const auto scene=lightingScenePath();
+    const auto id=scene.id ? scene.id : assets_.id(scene.path);
+    return project_->root/"baked"/"gi"/std::to_string(id);
 }
 
-std::string Editor::lightingScenePath() const {
+AssetRef Editor::lightingScenePath() const {
     if (contexts_.back().kind == Context::Kind::Scene) return contexts_.back().path;
     // A model is seen alone in the default lighting: a scene's may rely on its own light nodes.
     if (contexts_.back().kind == Context::Kind::Model) return {};
-    return doc_.world.level.scenes.empty() ? std::string() : doc_.world.level.scenes.front().scene;
+    return doc_.world.level.scenes.empty() ? AssetRef() : doc_.world.level.scenes.front().scene;
 }
 
 const SceneLighting& Editor::lighting() const {
@@ -1810,7 +1837,7 @@ void Editor::syncLighting(const LevelExpansion& shown) {
     // An environment is read once per file, scale and temperature, which multiply its radiance.
     const auto environmentScale=toOgre(blackBody(r.environmentTemperature)*r.environmentScale);
     const auto environmentFile=r.environment.empty() || !project_ ? std::string{}
-        : project_->resolve(r.environment).generic_u8string()+"#"+std::to_string(r.environmentScale)+"#"+std::to_string(r.environmentTemperature);
+        : mediaFile(r.environment).generic_u8string()+"#"+std::to_string(r.environmentScale)+"#"+std::to_string(r.environmentTemperature);
     if(environmentFile!=environmentFile_) {
         environmentFile_=environmentFile;
         if(!environmentFile.empty() && !environments_.count(environmentFile)) readEnvironmentFile(r.environment,environmentScale,environmentFile);
@@ -1823,7 +1850,7 @@ void Editor::syncLighting(const LevelExpansion& shown) {
     params->setNamedConstant("filmic",r.toneMapping?1.0f:0.0f);
     // The shown scene's bake is used while its GI is enabled, whatever settings it was made with
     // (the Inspector warns when they differ); enabling GI or showing another scene reads it again.
-    const auto giScene=giInstance()>=0 ? lightingScenePath() : std::string();
+    const auto giScene=giInstance()>=0 ? lightingScenePath() : AssetRef();
     const bool giEnabled=!giScene.empty() && r.gi.enabled;
     if(!baking_ && (giScene!=giScene_ || giEnabled!=giEnabled_)) {
         giScene_=giScene;
@@ -1970,7 +1997,7 @@ void Editor::syncTransforms(const LevelExpansion* snapshot) {
         else render.material->setMetalness(surface.metalness);
         render.material->setEmissive(Ogre::Vector3(surface.emissive.data()));
         const auto previous=render.surface.value_or(PbsMaterial{});
-        const auto texture=[&](Ogre::PbsTextureTypes slot,const std::string& path,const std::string& old,int kind) {
+        const auto texture=[&](Ogre::PbsTextureTypes slot,const AssetRef& path,const AssetRef& old,int kind) {
             if(path!=old) render.material->setTexture(slot,projectTexture(path,kind));
         };
         texture(Ogre::PBSM_DIFFUSE,surface.diffuseMap,previous.diffuseMap,Ogre::CommonTextureTypes::Diffuse);
@@ -2275,7 +2302,7 @@ bool Editor::isPrefabRoot(NodeId id) {
     return node && node->parent == 0 && contexts_.back().kind == Context::Kind::Prefab;
 }
 
-bool Editor::isVariant(const std::string& prefab) {
+bool Editor::isVariant(const AssetRef& prefab) {
     try {
         return library_.prefab(prefab).variant();
     } catch (const std::exception&) {
@@ -2283,7 +2310,7 @@ bool Editor::isVariant(const std::string& prefab) {
     }
 }
 
-void Editor::prefabify(int instance, NodeId id, std::string file) {
+void Editor::prefabify(int instance, NodeId id, AssetRef file) {
     auto* edited = fileOf(instance);
     auto* node = edited ? edited->findNode(id) : nullptr;
     if (!node || edited->variant()) return;
@@ -2303,11 +2330,13 @@ void Editor::prefabify(int instance, NodeId id, std::string file) {
                 character = '_';
         for (int number = 1;; ++number) {
             file = "prefabs/" + stem + (number > 1 ? " " + std::to_string(number) : "") + ".prefab.lton";
-            if (!doc_.prefabs.count(file) && !std::filesystem::exists(project_->resolve(file))) break;
+            if (!doc_.prefabs.count(file) && !std::filesystem::exists(mediaFile(file))) break;
         }
     }
     // An instance becomes a variant of its prefab with its overrides; a plain node takes its subtree along.
+    // A prefab replaced keeps its ID, so what refers to it still does.
     Prefab made;
+    if (const auto id = file.id ? file.id : assets_.id(file.path)) made.id = id;
     std::set<NodeId> moved;
     if (!node->prefab.empty()) {
         made.base = node->prefab;
@@ -2321,13 +2350,14 @@ void Editor::prefabify(int instance, NodeId id, std::string file) {
     }
     // Replacing a prefab with a node that contains an instance of it would make a cycle.
     if (const auto check = expand(made, library_, file); !check.errors.empty()) {
-        log("Cannot save " + file + ": " + check.errors.front());
+        log("Cannot save " + shown(file) + ": " + check.errors.front());
         return;
     }
     try {
-        made.save(project_->resolve(file));
+        made.save(mediaFile(file));
+        file = AssetRef::of(assets_.add(assets_.path(file)));
     } catch (const std::exception& error) {
-        log("Could not write " + file + ": " + error.what());
+        log("Could not write " + shown(file) + ": " + error.what());
         return;
     }
     auto before = doc_;
@@ -2342,10 +2372,10 @@ void Editor::prefabify(int instance, NodeId id, std::string file) {
     node->overrides = {};
     selected_ = {Selection::Kind::Node, instance, {id}};
     commit(std::move(before));
-    log("Saved " + file);
+    log("Saved " + shown(file));
 }
 
-void Editor::dropOnPrefab(int instance, NodeId id, const std::string& file) {
+void Editor::dropOnPrefab(int instance, NodeId id, const AssetRef& file) {
     auto* edited = fileOf(instance);
     auto* node = edited ? edited->findNode(id) : nullptr;
     if (!node) return;
@@ -2442,9 +2472,9 @@ void Editor::applyOverrides(SceneNode& holder, Overrides piece) {
         }
     }
     try {
-        prefab.save(project_->resolve(holder.prefab));
+        prefab.save(mediaFile(holder.prefab));
     } catch (const std::exception& error) {
-        log("Could not write " + holder.prefab + ": " + error.what());
+        log("Could not write " + shown(holder.prefab) + ": " + error.what());
         return;
     }
     auto before = doc_;
@@ -2452,7 +2482,7 @@ void Editor::applyOverrides(SceneNode& holder, Overrides piece) {
     library_.forget(holder.prefab);
     holder.overrides.subtract(piece);
     commit(std::move(before));
-    log("Applied the overrides to " + holder.prefab);
+    log("Applied the overrides to " + shown(holder.prefab));
 }
 
 void Editor::unpack(int instance, NodeId id) {
@@ -2551,7 +2581,7 @@ void Editor::replaceDialog() {
         replacing_.reset();
     }
     if (!ImGui::BeginPopupModal("Replace Prefab", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
-    ImGui::Text("Replace %s with this node?", pendingReplace_ ? pendingReplace_->file.c_str() : "");
+    ImGui::Text("Replace %s with this node?", pendingReplace_ ? shown(pendingReplace_->file).c_str() : "");
     ImGui::TextDisabled("Every instance of it will show the new content.");
     if (ImGui::Button("Replace")) {
         ImGui::CloseCurrentPopup();
@@ -2768,21 +2798,22 @@ bool Editor::open() {
         loaded.gameRendering=doc_.gameRendering;
         loaded.world.level = Level::load(project_->resolve(levelPath_));
         if(!loaded.world.level.mixer.empty()) {
-            try { loaded.mixers.emplace(loaded.world.level.mixer,MixerDefinition::load(project_->resolve(loaded.world.level.mixer))); }
+            try { loaded.mixers.emplace(loaded.world.level.mixer,MixerDefinition::load(mediaFile(loaded.world.level.mixer))); }
             catch(const std::exception& e) { log(e.what()); }
         }
         for (const auto& instance : loaded.world.level.scenes) {
             if (loaded.world.scenes.count(instance.scene)) continue;
-            const auto file = project_->resolve(instance.scene);
+            const auto file = mediaFile(instance.scene);
             if (std::filesystem::exists(file)) {
                 loaded.world.scenes[instance.scene] = Scene::load(file);
             } else {
-                log("Scene " + instance.scene + " does not exist yet; it will be created on save");
+                log("Scene " + shown(instance.scene) + " does not exist yet; it will be created on save");
                 loaded.world.scenes[instance.scene] = Scene();
             }
         }
         checkpoint();
         doc_ = std::move(loaded);
+        bindDocument();
         contexts_.resize(1);
         navigate_.reset();
         dirty_ = doc_.gameRendering.vsync!=project_->rendering.vsync;
@@ -2809,10 +2840,22 @@ bool Editor::open() {
 
 bool Editor::save() {
     try {
-        for (const auto& [scenePath, scene] : doc_.world.scenes) scene.save(project_->resolve(scenePath));
-        for (const auto& [prefabPath, prefab] : doc_.prefabs) prefab.save(project_->resolve(prefabPath));
-        for(const auto& [path,mixer]:doc_.mixers) mixer.save(project_->resolve(path));
+        // Files new to the assets (kept by path until now) are recorded, then referred to by ID.
+        std::vector<std::string> made;
+        const auto saved=[&](const AssetRef& ref) { if(!ref.id) made.push_back(ref.path); };
+        for (const auto& [ref, scene] : doc_.world.scenes) scene.save(mediaFile(ref)), saved(ref);
+        for (const auto& [ref, prefab] : doc_.prefabs) prefab.save(mediaFile(ref)), saved(ref);
+        for(const auto& [ref,mixer]:doc_.mixers) mixer.save(mediaFile(ref)), saved(ref);
         doc_.world.level.save(project_->resolve(levelPath_));
+        if(!assets_.id(levelPath_)) made.push_back(levelPath_);
+        for(const auto& path:made) assets_.add(path);
+        if(!made.empty()) {
+            bindDocument();
+            // Saving again writes the new IDs in place of the paths.
+            for (const auto& [ref, scene] : doc_.world.scenes) scene.save(mediaFile(ref));
+            for (const auto& [ref, prefab] : doc_.prefabs) prefab.save(mediaFile(ref));
+            doc_.world.level.save(project_->resolve(levelPath_));
+        }
         auto project=*project_;
         project.rendering=doc_.gameRendering;
         project.save();
@@ -3162,12 +3205,12 @@ void Editor::browser() {
             if (ImGui::BeginTabItem("Levels")) {
                 constexpr std::string_view suffix = ".level.lton";
                 std::error_code error;
-                for (const auto& entry : std::filesystem::directory_iterator(project_->resolve("levels"), error)) {
-                    const auto file = entry.path().filename().u8string();
+                for (const auto& entry : std::filesystem::recursive_directory_iterator(project_->resolve(""), error)) {
+                    const auto file = entry.path().lexically_relative(project_->resolve("")).generic_u8string();
                     if (file.size() <= suffix.size() ||
                         file.compare(file.size() - suffix.size(), suffix.size(), suffix) != 0)
                         continue;
-                    const auto path = "levels/" + file;
+                    const auto& path = file;
                     if (ImGui::Selectable(file.c_str(), path == levelPath_) && !runtime_ &&
                         path.size() < sizeof levelPath_) {
                         std::memcpy(levelPath_, path.c_str(), path.size() + 1);
@@ -3177,16 +3220,16 @@ void Editor::browser() {
                 ImGui::EndTabItem();
             }
             // One click picks the file for Add Scene / Add Instance; a double click opens it.
-            const auto files = [&](const char* tab, const char* folder, std::string_view suffix, char* pick,
+            const auto files = [&](const char* tab, std::string_view suffix, char* pick,
                                    std::size_t capacity, Context::Kind kind) {
                 if (!ImGui::BeginTabItem(tab)) return;
                 std::error_code error;
-                for (const auto& entry : std::filesystem::directory_iterator(project_->resolve(folder), error)) {
-                    const auto file = entry.path().filename().u8string();
+                for (const auto& entry : std::filesystem::recursive_directory_iterator(project_->resolve(""), error)) {
+                    const auto file = entry.path().lexically_relative(project_->resolve("")).generic_u8string();
                     if (file.size() <= suffix.size() ||
                         file.compare(file.size() - suffix.size(), suffix.size(), suffix) != 0)
                         continue;
-                    const auto relative = std::string(folder) + "/" + file;
+                    const auto& relative = file;
                     const bool variant = kind == Context::Kind::Prefab && isVariant(relative);
                     if (variant) ImGui::PushStyleColor(ImGuiCol_Text, variantColour);
                     if (ImGui::Selectable(file.c_str(), relative == pick, ImGuiSelectableFlags_AllowDoubleClick) &&
@@ -3215,15 +3258,15 @@ void Editor::browser() {
                 }
                 ImGui::EndTabItem();
             };
-            files("Scenes", "scenes", ".scene.lton", newScenePath_, sizeof newScenePath_, Context::Kind::Scene);
-            files("Prefabs", "prefabs", ".prefab.lton", newPrefabPath_, sizeof newPrefabPath_, Context::Kind::Prefab);
+            files("Scenes", ".scene.lton", newScenePath_, sizeof newScenePath_, Context::Kind::Scene);
+            files("Prefabs", ".prefab.lton", newPrefabPath_, sizeof newPrefabPath_, Context::Kind::Prefab);
             // Model files can lie anywhere in the project, among many textures: they are looked
             // for when the tab is first shown and on Refresh. A double click opens one alone.
             if (ImGui::BeginTabItem("Models")) {
                 if (ImGui::SmallButton("Refresh") || !modelFilesFound_) {
                     modelFiles_.clear();
                     std::error_code error;
-                    const auto& root = project_->root;
+                    const auto root = project_->resolve("");
                     for (std::filesystem::recursive_directory_iterator it(root, std::filesystem::directory_options::skip_permission_denied, error), end;
                          !error && it != end; it.increment(error)) {
                         auto extension = it->path().extension().u8string();
@@ -3292,7 +3335,8 @@ ScriptRuntime* Editor::consoleRuntime() {
     if (!consoleIdle_ && project_) {
         try {
             consoleIdle_ = std::make_unique<ScriptRuntime>(consoleWorld_, consoleView_, project_->root,
-                                                           [this](const std::string& line) { log(line); }, PlayScope::Level);
+                                                           [this](const std::string& line) { log(line); }, PlayScope::Level,
+                                                           &assets_);
         } catch (const ScriptError& error) {
             log(error.what());
         }

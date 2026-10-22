@@ -76,14 +76,14 @@ std::shared_ptr<const SkeletonAsset> buildSkeleton(const ozz::animation::offline
     return asset;
 }
 
-void AnimationLibrary::put(const std::string& path, std::shared_ptr<const SkeletonAsset> asset) {
+void AnimationLibrary::put(const AssetRef& model, std::shared_ptr<const SkeletonAsset> asset) {
     std::lock_guard lock(mutex_);
-    assets_[path] = std::move(asset);
+    assets_[model] = std::move(asset);
 }
 
-std::shared_ptr<const SkeletonAsset> AnimationLibrary::get(const std::string& path) const {
+std::shared_ptr<const SkeletonAsset> AnimationLibrary::get(const AssetRef& model) const {
     std::lock_guard lock(mutex_);
-    const auto found = assets_.find(path);
+    const auto found = assets_.find(model);
     return found != assets_.end() ? found->second : nullptr;
 }
 

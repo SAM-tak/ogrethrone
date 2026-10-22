@@ -31,5 +31,5 @@ using References = std::map<std::pair<std::size_t, std::size_t>, std::vector<Ref
 
 /// Resolves the node references of @p view's systems, and of @p level's own
 /// systems when it is given (at the Level step).
-References findReferences(const LevelExpansion& view, const Level* level);
+References findReferences(const LevelExpansion& view, const Level* level, const AssetDatabase& assets);
 }

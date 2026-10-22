@@ -73,12 +73,13 @@ public:
     /// @param expanded The world's scene instances, expanded; the scripts read and
     ///        modify these nodes, never the world itself, so re-expanding the world
     ///        undoes a session. Must outlive the runtime; spawned nodes are appended, never removed.
-    /// @param root Project directory that script paths are relative to.
+    /// @param root Project directory; script paths are relative to its assets folder.
+    /// @param assets Finds scripts referred to by ID; without it, references name scripts by path.
     /// @param log Destination of throne.log and of field warnings.
     /// @param scope Whether main.lh runs as well as the systems.
     /// @throws ScriptError when any script is missing, rejected or breaks the contract.
     ScriptRuntime(const World& world, LevelExpansion& expanded, const std::filesystem::path& root, Log log,
-                  PlayScope scope);
+                  PlayScope scope, const AssetDatabase* assets = nullptr);
     /// Releases the L^ machine and program.
     ~ScriptRuntime();
     ScriptRuntime(const ScriptRuntime&) = delete;

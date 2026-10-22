@@ -1,5 +1,5 @@
 format = "ogrethrone-project",
-mainLevel = "levels/exterior.level.lton",
+mainLevel = 7609905029468160,
 name = "Amazon Lumberyard Bistro",
 rendering = {
     vsync = true^,

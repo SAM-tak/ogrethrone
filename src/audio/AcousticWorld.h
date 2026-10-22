@@ -20,7 +20,8 @@ public:
     struct Source { Key key; Pose pose; bool transmission=true; std::string identity; };
     struct Direct { float occlusion=1; Vec3 transmission{1,1,1}; };
     using Log=std::function<void(const std::string&)>;
-    AcousticWorld(AudioSystem& audio,std::filesystem::path root,Log log);
+    /// @param root The assets folder; @param assets finds models referred to by ID (null: by path).
+    AcousticWorld(AudioSystem& audio,std::filesystem::path root,Log log,const AssetDatabase* assets=nullptr);
     ~AcousticWorld();
     void syncGeometry(const LevelExpansion& world,const std::vector<std::vector<Pose>>& poses);
     std::map<Key,Direct> simulate(const Pose& listener,const std::vector<Source>& sources);

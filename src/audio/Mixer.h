@@ -1,4 +1,5 @@
 #pragma once
+#include "core/AssetRef.h"
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -12,6 +13,8 @@ struct MixerBus {
     bool mute = false;
 };
 struct MixerDefinition {
+    /// The file's own asset ID (TDDja/15 2).
+    AssetId id = newAssetId();
     std::vector<MixerBus> buses{{}};
     /// High-water mark; deleting a bus never reuses an authored ID.
     std::uint64_t nextBusId = 2;

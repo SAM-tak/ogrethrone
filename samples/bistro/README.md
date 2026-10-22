@@ -5,8 +5,9 @@ Content Archive (ORCA), drawn through Model components.
 
 The asset is not part of this repository. Download **Bistro** (v5.2) from
 <https://developer.nvidia.com/orca/amazon-lumberyard-bistro> and extract it so that
-this folder contains `Bistro_v5_2/` with `BistroExterior.fbx`, `BistroInterior.fbx`,
-`BistroInterior_Wine.fbx`, the `Textures/` folder and `san_giuseppe_bridge_4k.hdr`. The folder is ignored by Git.
+`assets/` contains `Bistro_v5_2/` with `BistroExterior.fbx`, `BistroInterior.fbx`,
+`BistroInterior_Wine.fbx`, the `Textures/` folder and `san_giuseppe_bridge_4k.hdr`. The folder is ignored by Git
+except for the `.meta` files that keep the files' IDs, which the scenes refer to.
 
 Open this folder from the project launcher, or run from the repository root:
 

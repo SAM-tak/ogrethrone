@@ -1,0 +1,62 @@
+format = "ogrethrone-scene",
+id = 7609913057198080,
+lighting = {
+    ambientDirection = {
+        0.0,
+        1.0,
+        0.0,
+    },
+    ambientLower = {
+        0.06,
+        0.07,
+        0.09,
+    },
+    ambientUpper = {
+        0.22,
+        0.25,
+        0.3,
+    },
+    defaultSun = true^,
+    environmentScale = 1.0,
+    environmentTemperature = 0.0,
+    exposure = 0.0,
+    sky = true^,
+    toneMapping = false^,
+},
+nodes = {
+    {
+        components = {
+            camera = {
+                antiAliasing = "TAA",
+                fStop = 0.0,
+                farClip = 1000.0,
+                fieldOfView = 45.0,
+                focusDistance = 10.0,
+                nearClip = 0.10000000149011612,
+            },
+            transform = {
+                position = {
+                    20.9411,
+                    31.4547,
+                    103.3057,
+                },
+                rotation = {
+                    -16.6158,
+                    11.4592,
+                    0.0,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
+        },
+        id = 1,
+        name = "View",
+        parent = 0,
+    },
+},
+systems = {
+},
+version = 2,

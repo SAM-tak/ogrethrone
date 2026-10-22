@@ -1,7 +1,7 @@
 #include "editor/References.h"
 
 namespace throne {
-References findReferences(const LevelExpansion& view, const Level* level) {
+References findReferences(const LevelExpansion& view, const Level* level, const AssetDatabase& assets) {
     References result;
     // Resolves @p ref like ScriptRuntime does: relative to the system's instance
     // (@p base in view instance @p from), or from the scene instance it names.
@@ -28,7 +28,7 @@ References findReferences(const LevelExpansion& view, const Level* level) {
                 if (const auto* ref = std::get_if<NodeRef>(&value))
                     resolve(from, base, *ref,
                             {instance, base, system.id, k, name,
-                             system.name + " > " + system.behaviour[k].script + " > " + name});
+                             system.name + " > " + assets.describe(system.behaviour[k].script) + " > " + name});
     };
     for (std::size_t i = 0; i < view.instances.size(); ++i) {
         for (const auto& expanded : view.instances[i].expansion.systems)
@@ -40,7 +40,7 @@ References findReferences(const LevelExpansion& view, const Level* level) {
                 for (const auto& [name, value] : attachment.data)
                     if (const auto* ref = std::get_if<NodeRef>(&value))
                         resolve(i, base, *ref, {static_cast<int>(i), expanded.path, 0, k, name,
-                            expanded.node.name + " > " + attachment.script + " > " + name});
+                            expanded.node.name + " > " + assets.describe(attachment.script) + " > " + name});
             };
             for (std::size_t k = 0; k < expanded.node.behaviour.size(); ++k) fields(expanded.node.behaviour[k], k);
             for (const auto& attachment : expanded.node.renderEvent) fields(attachment, 0);

@@ -13,8 +13,8 @@ namespace throne {
 struct SceneInstance {
     /// Unique nonzero ID within the level; NodeRef::scene names it.
     std::uint32_t id = 0;
-    /// Project-relative path of the scene.
-    std::string scene;
+    /// The scene placed.
+    AssetRef scene;
     /// Where the scene is placed; every node of the scene lies below it.
     Transform transform;
 };
@@ -30,9 +30,11 @@ struct RenderingSettings {
 /// starts with and the systems that belong to the level itself. A level holds
 /// no scene nodes of its own. Independent of OGRE and the simulation world.
 struct Level : SystemSet {
+    /// The file's own asset ID (TDDja/15 2).
+    AssetId id = newAssetId();
     RenderingSettings rendering;
-    /// Project-relative *.mixer.lton; empty uses the built-in Master.
-    std::string mixer;
+    /// A *.mixer.lton; empty uses the built-in Master.
+    AssetRef mixer;
     /// Scene instances loaded when the level starts, in order.
     std::vector<SceneInstance> scenes;
     std::uint32_t nextSceneId = 1;
@@ -43,9 +45,11 @@ struct Level : SystemSet {
     bool serialExecution = false;
 
     /// Appends an instance of the scene at @p path and returns it.
-    SceneInstance& addScene(const std::string& path);
+    SceneInstance& addScene(const AssetRef& scene);
     /// Returns the scene instance with @p id, or nullptr.
     SceneInstance* findScene(std::uint32_t id);
+    /// Calls @p visit on every file reference: the scenes, the mixer and the systems' scripts.
+    void forEachAssetRef(const AssetVisitor& visit);
 
     /// Writes the level as `ogrethrone-level` version 3 LTON (L^ Table Object Notation).
     ///
