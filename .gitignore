@@ -19,3 +19,5 @@ samples/characters/assets/RPG Characters - Nov 2020/**
 !samples/characters/assets/RPG Characters - Nov 2020/**/*.meta
 .throne/
 samples/**/baked/
+samples/bistro/assets/odette/
+assetsource/

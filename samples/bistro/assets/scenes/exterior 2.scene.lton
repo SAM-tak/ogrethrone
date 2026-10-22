@@ -1,0 +1,199 @@
+format = "ogrethrone-scene",
+id = 7947673009512448,
+lighting = {
+    ambientDirection = {
+        0.0,
+        1.0,
+        0.0,
+    },
+    ambientLower = {
+        0.45,
+        0.4,
+        0.32,
+    },
+    ambientUpper = {
+        0.9,
+        1.05,
+        1.25,
+    },
+    defaultSun = false^,
+    environment = 7609856316821504,
+    environmentScale = 28.0,
+    environmentTemperature = 5000.0,
+    exposure = -2.5999999046325684,
+    gi = {
+        bounces = 2,
+        lower = {
+            -62.458244,
+            0.5,
+            -87.93698,
+        },
+        minObjectVolume = 0.30000001192092896,
+        probeOffset = {
+            0.0,
+            1.0,
+            0.0,
+        },
+        probeSpacing = {
+            6.0,
+            6.0,
+            6.0,
+        },
+        reflectionProbes = {
+            4.0,
+            1.0,
+            4.0,
+        },
+        upper = {
+            111.301956,
+            43.532352,
+            96.481476,
+        },
+    },
+    sky = true^,
+    toneMapping = true^,
+},
+nodes = {
+    {
+        components = {
+            model = {
+                directXNormals = true^,
+                emission = 30.0,
+                path = 7609855171776512,
+            },
+            transform = {
+                position = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                rotation = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
+        },
+        id = 1,
+        name = "Bistro Exterior",
+        parent = 0,
+    },
+    {
+        components = {
+            light = {
+                castShadows = false^,
+                colour = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+                direction = {
+                    -0.406,
+                    -0.707,
+                    0.579,
+                },
+                enabled = true^,
+                height = 1.0,
+                innerAngle = 30.0,
+                outerAngle = 45.0,
+                power = 41.5,
+                radius = 10.0,
+                showEmitter = true^,
+                temperature = 4300.0,
+                threshold = 0.009999999776482582,
+                twoSided = false^,
+                type = "Directional",
+                width = 1.0,
+            },
+            transform = {
+                position = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                rotation = {
+                    0.0,
+                    0.0,
+                    0.0,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
+        },
+        id = 2,
+        name = "Sun",
+        parent = 0,
+    },
+    {
+        components = {
+            camera = {
+                antiAliasing = "TAA",
+                fStop = 0.0,
+                farClip = 1000.0,
+                fieldOfView = 34.0,
+                focusDistance = 10.0,
+                nearClip = 0.10000000149011612,
+            },
+            transform = {
+                position = {
+                    14.611496,
+                    4.2943993,
+                    -41.8049,
+                },
+                rotation = {
+                    176.01788,
+                    18.597795,
+                    -180.0,
+                },
+                scale = {
+                    1.0,
+                    1.0,
+                    1.0,
+                },
+            },
+        },
+        id = 106879835712118785,
+        name = "Camera",
+        parent = 0,
+    },
+    {
+        components = {
+            model = {
+                directXNormals = true^,
+                emission = 1.0,
+                path = 7787237248593920,
+            },
+            transform = {
+                position = {
+                    8.225184,
+                    0.3,
+                    -29.910093,
+                },
+                rotation = {
+                    0.0,
+                    136.5,
+                    0.0,
+                },
+                scale = {
+                    2.0,
+                    2.0,
+                    2.0,
+                },
+            },
+        },
+        id = 106881966815162369,
+        name = "odette",
+        parent = 0,
+    },
+},
+systems = {
+},
+version = 2,
