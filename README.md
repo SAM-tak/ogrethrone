@@ -99,7 +99,9 @@ their labels sets the width of the label column (kept per user in `editor.lton`)
 
 The **Browser** shows `assets/`: its folders as a tree on the left, and the chosen folder's
 files on the right, as a grid of tiles (image files show a thumbnail; the slider sizes the
-tiles) or as a list, with a breadcrumb and a name filter. Double-clicking a file opens it: a
+tiles) or as a list, with a breadcrumb and a name filter. Files are shown without their
+extension (everything from the first dot, such as `.scene.lton`), which the icon and the
+tooltip tell; renaming keeps it, and names made in the Browser cannot hold a dot. Double-clicking a file opens it: a
 level replaces the open one, a scene or prefab is edited, a model opens alone, a mixer opens
 in the Mixer panel, and anything else (a script, a sound) opens in the operating system's
 application for it. Right-clicking a file renames (F2), duplicates (with a new ID), deletes

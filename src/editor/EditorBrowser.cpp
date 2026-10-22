@@ -116,11 +116,14 @@ std::pair<std::string, std::string> splitName(const std::string& name, bool fold
 /// @p folder joined with @p name, as paths in the assets folder are written.
 std::string join(const std::string& folder, const std::string& name) { return folder.empty() ? name : folder + "/" + name; }
 
+/// Whether @p c may be in a name: not a character a file name cannot hold, nor a dot, which
+/// would start the extension.
+bool nameCharacter(unsigned c) { return c >= 32 && std::string_view("<>:\"/\\|?*.").find(char(c)) == std::string_view::npos; }
+
 /// A path in @p folder named @p stem, numbered from @p first when taken, with @p extension.
 std::string freePath(const Project& project, const std::string& folder, std::string stem, const std::string& extension, int first = 1) {
-    // Characters a file name cannot hold become '_'.
     for (auto& c : stem)
-        if (std::string_view("<>:\"/\\|?*").find(c) != std::string_view::npos || (c >= 0 && c < 32)) c = '_';
+        if (static_cast<unsigned char>(c) < 128 && !nameCharacter(static_cast<unsigned char>(c))) c = '_';
     for (int number = first;; ++number) {
         const auto path = join(folder, stem + (number > 1 ? " " + std::to_string(number) : "") + extension);
         if (!fs::exists(project.resolve(path))) return path;
@@ -543,7 +546,11 @@ void Editor::browserFiles() {
     const auto rename = [&](const BrowserEntry& entry, float width) {
         if (renameFocus_) ImGui::SetKeyboardFocusHere(), renameFocus_ = false;
         ImGui::SetNextItemWidth(width);
-        if (ImGui::InputText("##rename", renameText_, sizeof renameText_, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll)) {
+        // The extension is kept, and cannot be typed.
+        const auto filter = [](ImGuiInputTextCallbackData* data) { return nameCharacter(data->EventChar) ? 0 : 1; };
+        if (ImGui::InputText("##rename", renameText_, sizeof renameText_,
+                             ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll | ImGuiInputTextFlags_CallbackCharFilter,
+                             filter)) {
             const auto extension = splitName(entry.name, entry.folder).second;
             if (renameText_[0]) moveAsset(entry.path, join(browserFolder_, renameText_ + extension));
             renaming_.clear();
@@ -574,9 +581,10 @@ void Editor::browserFiles() {
                     if (renaming_ == entry.path) {
                         rename(entry, -1);
                     } else {
-                        ImGui::Selectable(entry.name.c_str(), browserSelection_ == entry.path,
+                        ImGui::Selectable(splitName(entry.name, entry.folder).first.c_str(), browserSelection_ == entry.path,
                                           ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick);
                         interact(entry);
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", entry.name.c_str());
                     }
                     ImGui::TableNextColumn();
                     ImGui::TextDisabled("%s", styleOf(kind).name);
@@ -602,6 +610,8 @@ void Editor::browserFiles() {
                     const auto kind = kindOf(entry.name, entry.folder);
                     if (column) ImGui::SameLine();
                     ImGui::PushID(entry.path.c_str());
+                    // A group, so the next tile follows the tile's row and not its name field's.
+                    ImGui::BeginGroup();
                     const auto at = ImGui::GetCursorScreenPos();
                     ImGui::InvisibleButton("##tile", {tile, tile + label});
                     const bool hovered = ImGui::IsItemHovered();
@@ -621,16 +631,17 @@ void Editor::browserFiles() {
                         drawIcon(*draw, {at.x + inset, at.y + inset}, picture, kind);
                     }
                     if (renaming_ == entry.path) {
-                        const auto after = ImGui::GetCursorScreenPos();
-                        ImGui::SetCursorScreenPos({at.x, at.y + tile});
+                        // Its bottom on the tile's, so the group is no larger than the tile.
+                        ImGui::SetCursorScreenPos({at.x, at.y + tile + label - ImGui::GetFrameHeight()});
                         rename(entry, tile);
-                        ImGui::SetCursorScreenPos(after);
                     } else {
-                        const auto name = fitted(entry.name, tile - 4);
+                        // Without its extension, which the icon and the tooltip tell.
+                        const auto name = fitted(splitName(entry.name, entry.folder).first, tile - 4);
                         const auto width = ImGui::CalcTextSize(name.c_str()).x;
                         draw->AddText({at.x + (tile - width) * .5f, at.y + tile}, ImGui::GetColorU32(ImGuiCol_Text), name.c_str());
                         if (hovered && name != entry.name) ImGui::SetTooltip("%s", entry.name.c_str());
                     }
+                    ImGui::EndGroup();
                     ImGui::PopID();
                 }
     }
