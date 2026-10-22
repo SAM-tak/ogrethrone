@@ -177,5 +177,6 @@ L^ のスクリプトが読み込むファイルのパス（`require` など、�
 
 ## 改定履歴（要約）
 
+- 段階 2 実装: Browser（2 ペイン、グリッド・リスト、画像のサムネイル、作成・リネーム・複製・削除・移動、配置のドラッグ）。旧タブと Add Scene／Add Instance のパス入力欄を廃止。
 - 段階 1 実装: `assets/` 基準、AssetDatabase（索引は `.throne/assets.lton`）、`id`・`.meta`、参照の `AssetRef` 化、`baked/gi/<シーンの ID>/`、`--resave-assets` とサンプルの移行。
 - 初版: `assets/` への集約、永続 ID（管理対象の `.lton` は `id`、他は `.meta`）、ハード・ソフト参照、Browser の構成。参照にパスは併記しない。スクリプトの読み込みは `assets/` を根とする。

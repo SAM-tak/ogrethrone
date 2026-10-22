@@ -10,6 +10,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <shellapi.h>
 #include <commctrl.h>
 #include <dwmapi.h>
 #include <imm.h>
@@ -131,6 +132,21 @@ std::optional<std::filesystem::path> EditorPlatform::pickFolder(const std::files
     return std::filesystem::path(ownedName.get());
 #else
     throw std::runtime_error("The native folder picker is currently available on Windows only.");
+#endif
+}
+void EditorPlatform::openFile(const std::filesystem::path& file) const {
+#ifdef _WIN32
+    ShellExecuteW(static_cast<HWND>(handle_), L"open", file.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+#else
+    (void)file;
+#endif
+}
+void EditorPlatform::showInFolder(const std::filesystem::path& path) const {
+#ifdef _WIN32
+    const auto arguments = L"/select,\"" + path.wstring() + L"\"";
+    ShellExecuteW(static_cast<HWND>(handle_), L"open", L"explorer.exe", arguments.c_str(), nullptr, SW_SHOWNORMAL);
+#else
+    (void)path;
 #endif
 }
 void EditorPlatform::newFrame() {

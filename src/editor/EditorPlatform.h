@@ -34,6 +34,10 @@ public:
     /// Returns no path on cancellation; throws std::runtime_error on failure.
     /// On Windows, the calling thread must have an initialized COM STA.
     std::optional<std::filesystem::path> pickFolder(const std::filesystem::path& initial) const;
+    /// Opens @p file in the operating system's application for it. Windows only for now.
+    void openFile(const std::filesystem::path& file) const;
+    /// Shows @p path selected in the operating system's file manager. Windows only for now.
+    void showInFolder(const std::filesystem::path& path) const;
     /// Runs one frame of the application while a move or resize blocks its main loop.
     std::function<void()> modalFrame;
 private:

@@ -19,8 +19,10 @@
 #include <OgreMaterial.h>
 #include <OgreVector3.h>
 #include <imgui.h>
+#include <chrono>
 #include <filesystem>
 #include <functional>
+#include <future>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -31,6 +33,7 @@
 #include <vector>
 
 namespace Ogre {
+class Image2;
 class Root;
 class Window;
 class SceneManager;
@@ -351,13 +354,17 @@ private:
     /// Adds a cube to the edited scene or prefab, under the selected node when it is
     /// one of its own, and selects it.
     void addNode(PrimitiveKind kind = PrimitiveKind::Box);
-    /// Adds an instance of the prefab at newPrefabPath_ to the edited scene or prefab,
-    /// creating an empty prefab when the file is absent.
-    void addInstance();
+    /// Adds an instance of @p prefab to the edited scene or prefab, as insert() places nodes.
+    void addInstance(const AssetRef& prefab);
+    /// Adds a node drawing the model @p model, as insert() places nodes.
+    void addModel(const AssetRef& model);
+    /// Adds what the Browser file @p path places: a prefab's instance, a model's node, or at
+    /// the Level step a scene's instance. Returns false for other files.
+    bool place(const std::string& path);
     /// Adds a system to the level (at the Level step) or to the edited scene or prefab.
     void addSystem();
-    /// Adds an instance of the scene at newScenePath_ to the level, creating the file when absent.
-    void addScene();
+    /// Adds an instance of @p scene to the level.
+    void addScene(const AssetRef& scene);
     /// Removes scene instance @p id from the level.
     void removeScene(std::uint32_t id);
     /// Adds @p node, with a new ID, where the selection says, and selects it: into the
@@ -490,9 +497,27 @@ private:
     void applyDisplaySettings();
     /// Draws OGRE's game output settings and the current level's rendering controls.
     void rendererInspector();
-    /// Draws the Browser panel: the project's levels, scenes and prefabs.
+    /// Draws the Browser panel (TDDja/15 7): the assets folder's tree on the left, and the files
+    /// of the folder chosen there on the right, as a grid or a list.
     void browser();
-    void audioBrowser();
+    /// Draws the folders below @p relative (a folder in the assets folder; empty for its root).
+    void browserTree(const std::string& relative);
+    /// Draws the chosen folder's entries, filtered, with their menus, drags and drops.
+    void browserFiles();
+    /// Opens the Browser file @p path: a level, a scene or prefab to edit, a model alone, a
+    /// mixer in its panel, or anything else in the operating system's application for it.
+    void openAsset(const std::string& path);
+    /// Makes a new file named after @p stem with @p extension in the Browser's folder, holding
+    /// what @p write puts there, and starts renaming it.
+    void newAsset(const std::string& stem, const std::string& extension,
+                  const std::function<void(const std::filesystem::path&)>& write);
+    /// Moves (or renames) the Browser entry @p from to @p to, following the open level.
+    void moveAsset(const std::string& from, const std::string& to);
+    /// The small picture of the image file at @p path, read on a worker thread; null until read
+    /// or when it cannot be.
+    Ogre::TextureGpu* thumbnail(const std::string& path);
+    /// Releases the thumbnails' textures.
+    void clearThumbnails();
     void mixerPanel();
     void openMixer(const AssetRef& path);
     /// Draws the Console panel: the log, and an L^ prompt below it.
@@ -599,8 +624,36 @@ private:
     /// Whether the Model hierarchy opens and scrolls to the selected node on its next draw.
     bool modelReveal_ = false;
     /// The project's model files for the Browser, found when its Models tab is refreshed.
-    std::vector<std::string> modelFiles_;
-    bool modelFilesFound_ = false;
+    /// The Browser's folder and selected entry (paths in the assets folder), how it shows them
+    /// (a list, or a grid of tiles of this size), and its filter.
+    std::string browserFolder_, browserSelection_;
+    bool browserList_ = false;
+    float browserTile_ = 72;
+    char browserFilter_[128] = "";
+    /// The kind of file the Browser shows; 0 shows every kind.
+    int browserKind_ = 0;
+    /// The Browser entry being renamed, the name typed, and the entry to delete once confirmed.
+    std::string renaming_;
+    char renameText_[256] = "";
+    bool renameFocus_ = false;
+    std::optional<std::string> deleting_;
+    /// The chosen folder's entries, listed again when it changes, after an edit, or each second.
+    struct BrowserEntry {
+        std::string name, path;
+        bool folder = false;
+        std::filesystem::file_time_type time;
+        std::uintmax_t size = 0;
+    };
+    std::vector<BrowserEntry> browserEntries_;
+    std::string browserListed_;
+    std::chrono::steady_clock::time_point browserListedAt_;
+    /// Image files' thumbnails by path: being read on a worker, made, or unreadable.
+    struct Thumbnail {
+        std::future<std::shared_ptr<Ogre::Image2>> reading;
+        Ogre::TextureGpu* texture = nullptr;
+        bool failed = false;
+    };
+    std::map<std::string, Thumbnail> thumbnails_;
     /// The reflection last given to model materials.
     Ogre::TextureGpu* modelReflection_ = nullptr;
 
@@ -684,7 +737,6 @@ private:
     AudioSystem* audioDevice_ = nullptr;
     std::unique_ptr<AudioWorld> audioWorld_;
     AssetRef mixerPath_;
-    char newMixerPath_[256] = "mixers/main.mixer.lton";
     /// Which system fields refer to each node of view_; rebuilt with it.
     References references_;
     /// view_'s node structure (instance, path, parent) when the render objects were built.
@@ -712,8 +764,6 @@ private:
     /// and of overridden properties.
     static inline const ImVec4 instanceColour{0.55f, 0.75f, 1.0f, 1.0f}, variantColour{0.8f, 0.65f, 1.0f, 1.0f},
                                overriddenColour{1.0f, 0.75f, 0.3f, 1.0f};
-    char newScenePath_[256] = "scenes/new.scene.lton";
-    char newPrefabPath_[256] = "prefabs/new.prefab.lton";
     Ogre::Vector3 target_{0, 0.5f, 0};
     float yaw_ = 0.65f, pitch_ = 0.45f, distance_ = 9.0f;
     /// The view's projection: vertical field of view in degrees, and clip distances. Not saved;

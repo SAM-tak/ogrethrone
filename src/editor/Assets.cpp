@@ -139,24 +139,88 @@ void AssetDatabase::scan(const Log& log) {
         byPath_[path] = id;
         byId_[id] = path;
     }
-    if (index_.empty()) return;
     try {
-        lton::Writer out;
-        const auto root = out.table(), list = out.table();
-        out.set(root, "format", out.string(indexFormat));
-        out.set(root, "version", lhat_integer(indexVersion));
-        for (const auto& [path, id] : byPath_) {
-            const auto item = out.table();
-            out.set(item, "path", out.string(path));
-            out.set(item, "id", lhat_integer(static_cast<LhatInteger>(id)));
-            out.set(item, "time", lhat_integer(stamp(root_ / fs::u8path(managed(path) ? path : path + ".meta"))));
-            out.push(list, item);
-        }
-        out.set(root, "assets", list);
-        out.save(root, index_);
+        writeIndex();
     } catch (const std::exception& failure) {
         log(std::string("Could not save the asset index: ") + failure.what());
     }
+}
+
+void AssetDatabase::writeIndex() const {
+    if (index_.empty()) return;
+    lton::Writer out;
+    const auto root = out.table(), list = out.table();
+    out.set(root, "format", out.string(indexFormat));
+    out.set(root, "version", lhat_integer(indexVersion));
+    for (const auto& [path, id] : byPath_) {
+        const auto item = out.table();
+        out.set(item, "path", out.string(path));
+        out.set(item, "id", lhat_integer(static_cast<LhatInteger>(id)));
+        out.set(item, "time", lhat_integer(stamp(root_ / fs::u8path(managed(path) ? path : path + ".meta"))));
+        out.push(list, item);
+    }
+    out.set(root, "assets", list);
+    out.save(root, index_);
+}
+
+void AssetDatabase::move(const std::string& from, const std::string& to) {
+    const auto source = root_ / fs::u8path(from), target = root_ / fs::u8path(to);
+    if (fs::exists(target)) throw std::runtime_error(to + " already exists");
+    if (target.has_parent_path()) fs::create_directories(target.parent_path());
+    fs::rename(source, target);
+    auto meta = source;
+    meta += ".meta";
+    if (fs::is_regular_file(target) && fs::exists(meta)) {
+        auto moved = target;
+        moved += ".meta";
+        fs::rename(meta, moved);
+    }
+    // Every asset at or below @p from moves with it, keeping its ID.
+    std::map<std::string, AssetId> moved;
+    for (auto it = byPath_.begin(); it != byPath_.end();) {
+        if (it->first == from || it->first.rfind(from + "/", 0) == 0) {
+            moved[to + it->first.substr(from.size())] = it->second;
+            it = byPath_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (const auto& [path, id] : moved) byPath_[path] = id, byId_[id] = path;
+    writeIndex();
+}
+
+AssetId AssetDatabase::duplicate(const std::string& from, const std::string& to) {
+    const auto target = root_ / fs::u8path(to);
+    if (fs::exists(target)) throw std::runtime_error(to + " already exists");
+    fs::copy_file(root_ / fs::u8path(from), target);
+    const auto id = newAssetId();
+    write(to, id);
+    byPath_[to] = id;
+    byId_[id] = to;
+    writeIndex();
+    return id;
+}
+
+void AssetDatabase::remove(const std::string& path) {
+    const auto file = root_ / fs::u8path(path);
+    if (fs::is_directory(file)) {
+        fs::remove_all(file);
+    } else {
+        fs::remove(file);
+        auto meta = file;
+        meta += ".meta";
+        std::error_code ignored;
+        fs::remove(meta, ignored);
+    }
+    for (auto it = byPath_.begin(); it != byPath_.end();) {
+        if (it->first == path || it->first.rfind(path + "/", 0) == 0) {
+            byId_.erase(it->second);
+            it = byPath_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    writeIndex();
 }
 
 AssetId AssetDatabase::read(const std::string& path, const Log& log) {

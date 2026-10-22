@@ -20,26 +20,6 @@ void Editor::openMixer(const AssetRef& ref) {
     if(!doc_.mixers.count(bound)) doc_.mixers.emplace(bound,MixerDefinition::load(mediaFile(bound)));
     mixerPath_=bound;
 }
-void Editor::audioBrowser() {
-    if(!ImGui::BeginTabItem("Mixers")) return;
-    std::set<AssetRef> mixers;
-    for(const auto& [path,id]:assets_.assets())
-        if(path.size()>11 && path.compare(path.size()-11,11,".mixer.lton")==0) mixers.insert(AssetRef::of(id));
-    for(const auto& [ref,mixer]:doc_.mixers) mixers.insert(ref);
-    for(const auto& ref:mixers) if(ImGui::Selectable(shown(ref).c_str(),ref==mixerPath_)) {
-        try { openMixer(ref); } catch(const std::exception& e) { log(e.what()); }
-    }
-    ImGui::InputText("New Mixer",newMixerPath_,sizeof newMixerPath_);
-    if(ImGui::Button("Create Mixer")) {
-        try {
-            const std::string path=newMixerPath_; mixerPath(path);
-            if(doc_.mixers.count(assets_.bind(path)) || std::filesystem::exists(project_->resolve(path)))
-                throw std::runtime_error("Mixer already exists: "+path);
-            checkpoint(); doc_.mixers.emplace(path,MixerDefinition::defaults()); mixerPath_=path;
-        } catch(const std::exception& e) { log(e.what()); }
-    }
-    ImGui::EndTabItem();
-}
 void Editor::mixerPanel() {
     if(mixerPath_.empty()) return;
     const auto at=doc_.mixers.find(mixerPath_); if(at==doc_.mixers.end()) return;

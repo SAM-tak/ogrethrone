@@ -61,6 +61,16 @@ public:
     /// What @p ref names, for messages: its path, or that its asset is missing.
     std::string describe(const AssetRef& ref) const;
 
+    /// Moves or renames the file or folder at @p from to @p to (paths in the assets folder), with
+    /// the `.meta` files: every asset keeps its ID, so references to them still find them.
+    /// @throws std::runtime_error when @p to exists or the files cannot be moved.
+    void move(const std::string& from, const std::string& to);
+    /// Copies the file at @p from to @p to as a new asset with a new ID, and returns it.
+    AssetId duplicate(const std::string& from, const std::string& to);
+    /// Deletes the file (with its `.meta`) or folder at @p path. References to what it held
+    /// keep their IDs and show as missing.
+    void remove(const std::string& path);
+
     /// Reads every managed file and writes it again with its references by ID (paths written by
     /// hand become IDs): the migration of a project's files (TDDja/15 10). Call after scan().
     void resave(const Log& log) const;
@@ -69,6 +79,8 @@ public:
     const std::map<std::string, AssetId>& assets() const { return byPath_; }
 
 private:
+    /// Writes the index of the assets, so the next scan reads only files changed since.
+    void writeIndex() const;
     /// Reads, or gives and writes, the ID of the file at @p path.
     AssetId read(const std::string& path, const Log& log);
     /// Writes @p id into the file at @p path (managed) or its `.meta`.

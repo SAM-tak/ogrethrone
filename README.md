@@ -82,8 +82,8 @@ launch configurations open it or show the launcher.
 [`samples/showcase`](samples/showcase) ports the OGRE Forward3D, PBS Materials,
 Area Lights and ParticleFX2 scenes to editable Throne levels, and adds one comparing
 subsurface scattering and translucency. Open the project and
-choose a level
-in **Browser > Levels**. **Lighting** switches Forward3D/Clustered, cluster debug
+double-click a level
+in the **Browser** (`levels/`). **Lighting** switches Forward3D/Clustered, cluster debug
 and Approx/LTC area-light previews. Light and PBS Material components are editable
 in Inspector and persist with scenes and prefab overrides. The particle level
 includes a fountain, rings, lit/unlit smoke and sphere particles, with edit
@@ -95,7 +95,21 @@ The editor's dockable panels are Scene, Systems, Inspector, Viewport, Browser an
 (the layout is kept in `editor.ini` beside the project list).
 Scene and Systems scroll sideways when their rows are wider than the panel; the
 Inspector wraps its text instead. Dragging the gap between the Inspector's fields and
-their labels sets the width of the label column (kept per user in `editor.lton`). The data is split
+their labels sets the width of the label column (kept per user in `editor.lton`).
+
+The **Browser** shows `assets/`: its folders as a tree on the left, and the chosen folder's
+files on the right, as a grid of tiles (image files show a thumbnail; the slider sizes the
+tiles) or as a list, with a breadcrumb and a name filter. Double-clicking a file opens it: a
+level replaces the open one, a scene or prefab is edited, a model opens alone, a mixer opens
+in the Mixer panel, and anything else (a script, a sound) opens in the operating system's
+application for it. Right-clicking a file renames (F2), duplicates (with a new ID), deletes
+(Delete; after confirming, references to it show as missing), copies its path or shows it in
+Explorer; right-clicking the empty space makes a new folder, level, scene, prefab, mixer or
+script. Dragging files onto a folder (in either pane) moves them, keeping every reference to
+them. Dragging a prefab or model onto the hierarchy or the viewport places it (a scene too, at
+the Level step); Add Scene and Add Instance place the scene or prefab selected in the Browser.
+
+The data is split
 in three kinds of file, all LTON (L^ Table Object Notation, read by L^ as
 effect-free data):
 
@@ -144,8 +158,8 @@ the level itself, the scene instances (inside a scene or prefab it is named **Sc
 Selecting the level's row shows its Inspector: the scene view's camera (position, rotation
 about X then Y, field of view and clip distances), edited there as by navigating; it is not
 saved. Selecting a scene instance shows its transform in the Inspector and the gizmo,
-and double-clicking one (or a file in the Browser's Scenes tab) edits that
-scene, and double-clicking an instance node (or a file in the Prefabs tab) edits
+and double-clicking one (or a scene file in the Browser) edits that
+scene, and double-clicking an instance node (or a prefab file) edits
 that prefab. The breadcrumb over the viewport returns to an outer step. Nodes and
 systems that come from an instance are drawn in blue; editing them writes an
 override, shown in orange with a Revert button. With a node inside an instance
@@ -154,9 +168,8 @@ the new node as an override of that instance, also shown in orange; Delete on a
 node inside an instance records its removal, which the instance's Inspector
 lists with a Restore button. Systems work the same way: + System with an
 instance's system or a node inside it selected adds one to that instance, and
-Delete on an instance's system records its removal. Inside a scene or prefab, Add
-Instance places the prefab named next to it, creating one with a root node when
-the file does not exist yet; double-click the new instance node to fill the prefab.
+Delete on an instance's system records its removal. Add Instance places the prefab selected
+in the Browser; a new prefab is made with the Browser's **New Prefab**.
 A node's Inspector lists the system fields that refer to it (Referenced by);
 clicking one selects that system.
 Each override has an Apply button beside its Revert (a property, a component, a
@@ -171,8 +184,8 @@ broken for a while (a branch switch, an undone deletion) does not lose them. The
 overrides of an instance whose prefab cannot be read are kept, but not listed.
 Unpack in the Inspector replaces an instance with plain nodes holding what it
 shows, nested instances included, and copies its systems into the file.
-Dragging a node onto the Browser's Prefabs tab saves it as
-`assets/prefabs/<name>.prefab.lton` and leaves an instance in its place; dragging an
+Dragging a node onto a Browser folder saves it there as
+`<name>.prefab.lton` and leaves an instance in its place; dragging an
 instance makes a variant of its prefab. Dropping a node on an existing prefab
 file asks before replacing that prefab with it; dropping an instance on its own
 prefab applies the instance's overrides to the prefab. Variants are shown in violet.
@@ -624,8 +637,7 @@ material's base colour map, for files that name their texture only in the materi
 cameras in the file are not placed. A node with only a Model is picked and outlined
 by the model's bounds.
 
-**Browser > Models** lists the project's `.fbx` and `.mesh` files (found when the tab is
-first shown and on **Refresh**). Double-clicking one, double-clicking a node with a Model,
+Double-clicking a model file (`.fbx`, `.mesh`) in the Browser, double-clicking a node with a Model,
 or **Open Model** in its Inspector opens the model alone as a drill-down step, in the
 default lighting (opened from a node, with that node's Model settings). Its
 hierarchy shows the file as read: its nodes (each mesh naming the materials it uses, and
@@ -832,8 +844,8 @@ The backend audio callback independently processes PCM and output. Play owns the
 voices; Pause preserves positions and Stop releases them. See
 [samples/audio](samples/audio/README.md) for the Kenney CC0 demo, Mixer editor,
 script APIs and headless/device checks, and [the audio design](TDDja/14-audio.md).
-The level's optional `mixer` path selects a `*.mixer.lton` bus tree. Browser > Mixers
-creates/opens these assets; the Mixer panel edits gain, mute and routing with
+The level's optional `mixer` selects a `*.mixer.lton` bus tree. The Browser
+creates (New Mixer) and opens these assets; the Mixer panel edits gain, mute and routing with
 Save and Undo/Redo. Unspecified mixers use Master alone. Spatial playback uses
 mono preloads; 2D supports mono/stereo preloads and buffered streaming. Highest
 Listener priority wins, with scene/hierarchy order breaking ties. In editor Play,

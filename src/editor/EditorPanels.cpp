@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <functional>
 #include <optional>
 #include <string_view>
@@ -135,11 +136,17 @@ void Editor::scenePanel() {
     }
     if (ImGui::Begin(content() ? "Scene###Hierarchy" : "Level###Hierarchy", nullptr, ImGuiWindowFlags_HorizontalScrollbar)) {
         ImGui::BeginDisabled(runtime_ != nullptr);
+        // Add Scene and Add Instance place the file selected in the Browser.
+        const auto selected = [&](const char* suffix) {
+            const auto& path = browserSelection_;
+            return path.size() > std::strlen(suffix) && path.compare(path.size() - std::strlen(suffix), std::strlen(suffix), suffix) == 0;
+        };
         if (!content()) {
-            if (ImGui::Button("Add Scene")) addScene();
+            ImGui::BeginDisabled(!selected(".scene.lton"));
+            if (ImGui::Button("Add Scene")) addScene(assets_.bind(AssetRef(browserSelection_)));
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Places the scene selected in the Browser");
             ImGui::SameLine();
-            ImGui::SetNextItemWidth(-1);
-            ImGui::InputText("##ScenePath", newScenePath_, sizeof newScenePath_);
         } else if (content()->variant()) {
             ImGui::TextColored(variantColour, "Variant of %s", shown(content()->base).c_str());
             ImGui::SameLine();
@@ -150,10 +157,11 @@ void Editor::scenePanel() {
         // these add overrides; see insert().
         if (ImGui::Button("Add Node")) addNode();
         ImGui::SameLine();
-        if (ImGui::Button("Add Instance")) addInstance();
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(-1);
-        ImGui::InputText("##PrefabPath", newPrefabPath_, sizeof newPrefabPath_);
+        ImGui::BeginDisabled(!selected(".prefab.lton"));
+        if (ImGui::Button("Add Instance")) addInstance(assets_.bind(AssetRef(browserSelection_)));
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("Places the prefab selected in the Browser (or drag it here)");
         ImGui::EndDisabled();
         ImGui::Separator();
         // The level itself heads its scenes; selecting it shows its properties.
@@ -204,6 +212,10 @@ void Editor::scenePanel() {
         }
         pendingMove.reset();
         if (removed) removeScene(*removed);
+        if (ImGui::BeginDragDropTargetCustom(ImGui::GetCurrentWindow()->InnerRect, ImGui::GetID("assetDrop"))) {
+            if (const auto* payload = ImGui::AcceptDragDropPayload("THRONE_ASSET")) place(static_cast<const char*>(payload->Data));
+            ImGui::EndDragDropTarget();
+        }
     }
     ImGui::End();
 }
@@ -926,7 +938,7 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
         if(ImGui::IsItemHovered()) ImGui::SetTooltip("Cut-out materials (diffuse maps with alpha) keep each pixel with the\n"
                                                      "probability of its alpha instead of testing it against 0.5: soft edges\n"
                                                      "once temporal anti-aliasing averages them.");
-        ImGui::TextDisabled("A project-relative FBX file: its meshes and PBS materials.");
+        ImGui::TextDisabled("An FBX file (or an OGRE .mesh): its meshes and PBS materials.");
         if(!c.path.empty() && ImGui::SmallButton("Open Model")) enterModel(c);
         if(ImGui::IsItemHovered()) ImGui::SetTooltip("Shows the model alone, with its nodes and materials as read.");
         // Changes to named materials of the file: absorbing volumes such as liquids.

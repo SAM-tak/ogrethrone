@@ -122,6 +122,26 @@ int main() {
         !fs::exists(reopened.root / "main.lh"))
         return fail("Created project did not reopen with main.lh, its main level and scene");
     if(!reopened.rendering.vsync) return fail("New projects must default to game VSync on");
+    {
+        // Moving a file or a folder keeps the assets' IDs, so references still find them;
+        // a duplicate is a new asset, and deleting forgets it (TDDja/15 4.4).
+        std::ofstream(reopened.resolve("hello.lh")) << "module^ hello\n";
+        assets.scan([](const std::string&) {});
+        const auto script = assets.id("hello.lh"), scene = level.scenes[0].scene.id;
+        assets.move("hello.lh", "scripts/greeting.lh");
+        assets.move("main.scene.lton", "worlds/main.scene.lton");
+        assets.move("worlds", "places");
+        const auto copy = assets.duplicate("places/main.scene.lton", "places/copy.scene.lton");
+        throne::AssetDatabase rescanned(reopened.resolve(""), {});
+        rescanned.scan([](const std::string&) {});
+        if (!script || rescanned.path(script) != "scripts/greeting.lh" || rescanned.path(scene) != "places/main.scene.lton" ||
+            !fs::exists(reopened.resolve("scripts/greeting.lh.meta")) || copy == scene ||
+            rescanned.path(copy) != "places/copy.scene.lton")
+            return fail("Moving assets did not keep their IDs");
+        assets.remove("places");
+        if (!assets.path(scene).empty() || fs::exists(reopened.resolve("places")))
+            return fail("Deleting a folder of assets left them");
+    }
     auto configured=project;
     configured.rendering.vsync=false;
     configured.save();

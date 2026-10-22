@@ -698,7 +698,9 @@ void Editor::openProject(const std::filesystem::path& path) {
         consoleIdle_.reset();
         consoleMore_ = nullptr;
         project_ = std::move(project);
-        modelFilesFound_ = false;
+        browserFolder_.clear();
+        browserSelection_.clear();
+        clearThumbnails();
         projects_.touch(project_->root);
         projectsChanged();
         writeHostApi();
@@ -731,6 +733,7 @@ void Editor::openProject(const std::filesystem::path& path) {
 
 void Editor::closeProject() {
     if (runtime_) stop();
+    clearThumbnails();
     consoleIdle_.reset();
     consoleMore_ = nullptr;
     project_.reset();
@@ -950,6 +953,7 @@ Editor::~Editor() {
     physics_.reset();
     renderSnapshot_.reset();
     shutdownLog.logMessage("Shutdown: releasing editor rendering resources");
+    clearThumbnails();
     // ImGui would save to io.IniFilename when its context is destroyed, after iniFile_ is gone.
     auto& io = ImGui::GetIO();
     if (io.IniFilename) ImGui::SaveIniSettingsToDisk(io.IniFilename);
@@ -2219,28 +2223,32 @@ void Editor::addNode(PrimitiveKind kind) {
     if (insert(std::move(node))) commit(std::move(before));
 }
 
-void Editor::addInstance() {
-    const std::string prefab = newPrefabPath_;
+void Editor::addInstance(const AssetRef& prefab) {
     if (prefab.empty()) return;
     auto before = doc_;
-    // A prefab file that does not exist yet starts with a root node and is written by save().
-    if (!doc_.prefabs.count(prefab) && !std::filesystem::exists(project_->resolve(prefab))) {
-        Prefab made;
-        made.addNode(std::filesystem::u8path(prefab).stem().stem().u8string());
-        doc_.prefabs[prefab] = made;
-        library_.put(prefab, made);
-    }
     // Expanding a probe in the edited file's place reports a broken prefab or a cycle.
     Prefab probe;
     probe.addNode("probe").prefab = prefab;
-    const auto check = expand(probe, library_, contexts_.back().kind == Context::Kind::Prefab ? contexts_.back().path : "");
+    const auto check = expand(probe, library_, contexts_.back().kind == Context::Kind::Prefab ? contexts_.back().path : AssetRef());
     SceneNode node;
-    node.name = std::filesystem::u8path(prefab).stem().stem().u8string();
+    node.name = std::filesystem::u8path(shown(prefab)).stem().stem().u8string();
     node.prefab = prefab;
     node.transform.emplace();
     if (!check.errors.empty() || !insert(std::move(node))) {
-        if (!check.errors.empty()) log("Cannot place " + prefab + ": " + check.errors.front());
-        if (!before.prefabs.count(prefab)) library_.forget(prefab);
+        if (!check.errors.empty()) log("Cannot place " + shown(prefab) + ": " + check.errors.front());
+        doc_ = std::move(before);
+        return;
+    }
+    commit(std::move(before));
+}
+
+void Editor::addModel(const AssetRef& model) {
+    auto before = doc_;
+    SceneNode node;
+    node.name = std::filesystem::u8path(shown(model)).stem().u8string();
+    node.transform.emplace();
+    node.model.emplace().path = model;
+    if (!insert(std::move(node))) {
         doc_ = std::move(before);
         return;
     }
@@ -2643,19 +2651,15 @@ void Editor::addSystem() {
     }
 }
 
-void Editor::addScene() {
-    const std::string scene = newScenePath_;
+void Editor::addScene(const AssetRef& scene) {
     if (scene.empty() || content()) return;
     try {
         auto before = doc_;
-        if (!doc_.world.scenes.count(scene)) {
-            const auto file = project_->resolve(scene);
-            doc_.world.scenes[scene] = std::filesystem::exists(file) ? Scene::load(file) : Scene();
-        }
+        if (!doc_.world.scenes.count(scene)) doc_.world.scenes[scene] = Scene::load(mediaFile(scene));
         doc_.world.level.addScene(scene);
         commit(std::move(before));
     } catch (const std::exception& error) {
-        log("Could not add " + scene + ": " + error.what());
+        log("Could not add " + shown(scene) + ": " + error.what());
     }
 }
 
@@ -3048,6 +3052,11 @@ void Editor::viewport() {
             resizeViewport(static_cast<unsigned>(size.x), static_cast<unsigned>(size.y));
             const ImVec2 origin = ImGui::GetCursorScreenPos();
             ImGui::Image(texture_, size);
+            // Browser files dropped on the view are placed, as by Add Instance.
+            if (ImGui::BeginDragDropTarget()) {
+                if (const auto* payload = ImGui::AcceptDragDropPayload("THRONE_ASSET")) place(static_cast<const char*>(payload->Data));
+                ImGui::EndDragDropTarget();
+            }
             // ImGuizmo will not start a drag while another item was hovered in the previous
             // frame, so the camera/picking input steps aside while the gizmo is under the mouse,
             // Navigation can start over a gizmo, and owns the gesture until release.
@@ -3197,97 +3206,6 @@ void Editor::viewport() {
     if (!visible) viewDrag_ = ViewDrag::None;
     ImGui::End();
     ImGui::PopStyleVar();
-}
-
-void Editor::browser() {
-    if (ImGui::Begin("Browser")) {
-        if (ImGui::BeginTabBar("BrowserTabs")) {
-            if (ImGui::BeginTabItem("Levels")) {
-                constexpr std::string_view suffix = ".level.lton";
-                std::error_code error;
-                for (const auto& entry : std::filesystem::recursive_directory_iterator(project_->resolve(""), error)) {
-                    const auto file = entry.path().lexically_relative(project_->resolve("")).generic_u8string();
-                    if (file.size() <= suffix.size() ||
-                        file.compare(file.size() - suffix.size(), suffix.size(), suffix) != 0)
-                        continue;
-                    const auto& path = file;
-                    if (ImGui::Selectable(file.c_str(), path == levelPath_) && !runtime_ &&
-                        path.size() < sizeof levelPath_) {
-                        std::memcpy(levelPath_, path.c_str(), path.size() + 1);
-                        open();
-                    }
-                }
-                ImGui::EndTabItem();
-            }
-            // One click picks the file for Add Scene / Add Instance; a double click opens it.
-            const auto files = [&](const char* tab, std::string_view suffix, char* pick,
-                                   std::size_t capacity, Context::Kind kind) {
-                if (!ImGui::BeginTabItem(tab)) return;
-                std::error_code error;
-                for (const auto& entry : std::filesystem::recursive_directory_iterator(project_->resolve(""), error)) {
-                    const auto file = entry.path().lexically_relative(project_->resolve("")).generic_u8string();
-                    if (file.size() <= suffix.size() ||
-                        file.compare(file.size() - suffix.size(), suffix.size(), suffix) != 0)
-                        continue;
-                    const auto& relative = file;
-                    const bool variant = kind == Context::Kind::Prefab && isVariant(relative);
-                    if (variant) ImGui::PushStyleColor(ImGuiCol_Text, variantColour);
-                    if (ImGui::Selectable(file.c_str(), relative == pick, ImGuiSelectableFlags_AllowDoubleClick) &&
-                        relative.size() < capacity) {
-                        std::memcpy(pick, relative.c_str(), relative.size() + 1);
-                        if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !runtime_) enter({kind, relative});
-                    }
-                    // A node dropped on a prefab file replaces it, or applies an instance's overrides to it.
-                    if (kind == Context::Kind::Prefab && !runtime_ && ImGui::BeginDragDropTarget()) {
-                        if (const auto* payload = ImGui::AcceptDragDropPayload(nodePayload)) {
-                            const auto& dragged = *static_cast<const DragNode*>(payload->Data);
-                            dropOnPrefab(dragged.instance, dragged.id, relative);
-                        }
-                        ImGui::EndDragDropTarget();
-                    }
-                    if (variant) ImGui::PopStyleColor();
-                }
-                // A node dropped anywhere on the Prefabs tab becomes a prefab (TDDja/06 7).
-                if (kind == Context::Kind::Prefab && !runtime_ &&
-                    ImGui::BeginDragDropTargetCustom(ImGui::GetCurrentWindow()->InnerRect, ImGui::GetID("prefabify"))) {
-                    if (const auto* payload = ImGui::AcceptDragDropPayload(nodePayload)) {
-                        const auto& dragged = *static_cast<const DragNode*>(payload->Data);
-                        prefabify(dragged.instance, dragged.id);
-                    }
-                    ImGui::EndDragDropTarget();
-                }
-                ImGui::EndTabItem();
-            };
-            files("Scenes", ".scene.lton", newScenePath_, sizeof newScenePath_, Context::Kind::Scene);
-            files("Prefabs", ".prefab.lton", newPrefabPath_, sizeof newPrefabPath_, Context::Kind::Prefab);
-            // Model files can lie anywhere in the project, among many textures: they are looked
-            // for when the tab is first shown and on Refresh. A double click opens one alone.
-            if (ImGui::BeginTabItem("Models")) {
-                if (ImGui::SmallButton("Refresh") || !modelFilesFound_) {
-                    modelFiles_.clear();
-                    std::error_code error;
-                    const auto root = project_->resolve("");
-                    for (std::filesystem::recursive_directory_iterator it(root, std::filesystem::directory_options::skip_permission_denied, error), end;
-                         !error && it != end; it.increment(error)) {
-                        auto extension = it->path().extension().u8string();
-                        std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return char(std::tolower(c)); });
-                        if (extension == ".fbx" || extension == ".mesh")
-                            modelFiles_.push_back(it->path().lexically_relative(root).generic_u8string());
-                    }
-                    std::sort(modelFiles_.begin(), modelFiles_.end());
-                    modelFilesFound_ = true;
-                }
-                for (const auto& file : modelFiles_)
-                    if (ImGui::Selectable(file.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick) &&
-                        ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !runtime_)
-                        enterModel({file});
-                ImGui::EndTabItem();
-            }
-            audioBrowser();
-            ImGui::EndTabBar();
-        }
-    }
-    ImGui::End();
 }
 
 void Editor::console() {
