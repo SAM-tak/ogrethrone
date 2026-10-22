@@ -1027,6 +1027,13 @@ bool Editor::frame(float deltaSeconds, const std::function<void()>& input) {
     inspector();
     viewport();
     browser();
+    // Files dropped from the operating system on the Browser are imported into its folder.
+    if (auto drop = platform_.takeDrop(); !drop.files.empty()) {
+        if (!runtime_ && drop.x >= browserMin_.x && drop.x < browserMax_.x && drop.y >= browserMin_.y && drop.y < browserMax_.y)
+            importFiles(drop.files);
+        else
+            log(runtime_ ? "Stop playing to import files" : "Drop files on the Browser to import them into its folder");
+    }
     mixerPanel();
     console();
     fileDialog();
@@ -2889,7 +2896,11 @@ void Editor::shortcuts() {
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_S)) save();
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_O)) showFiles_ = true, saving_ = false;
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_D)) duplicate();
-    if (ImGui::IsKeyPressed(ImGuiKey_Delete, false)) erase();
+    // Files changed outside the editor are found when asked (TDDja/15 4.3).
+    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_R)) rescanAssets();
+    // The Browser has its own Delete, for its files.
+    if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) && !browserFocused_) erase();
+    if (ImGui::GetIO().KeyCtrl) return;
     if (ImGui::IsKeyPressed(ImGuiKey_W, false)) gizmoOperation_ = ImGuizmo::TRANSLATE;
     if (ImGui::IsKeyPressed(ImGuiKey_E, false)) gizmoOperation_ = ImGuizmo::ROTATE;
     if (ImGui::IsKeyPressed(ImGuiKey_R, false)) gizmoOperation_ = ImGuizmo::SCALE;

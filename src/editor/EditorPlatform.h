@@ -2,6 +2,7 @@
 #include <functional>
 #include <filesystem>
 #include <optional>
+#include <vector>
 
 namespace Ogre { class Window; }
 namespace throne {
@@ -38,6 +39,13 @@ public:
     void openFile(const std::filesystem::path& file) const;
     /// Shows @p path selected in the operating system's file manager. Windows only for now.
     void showInFolder(const std::filesystem::path& path) const;
+    /// Files dropped on the window from the operating system's file manager since the last call,
+    /// and where (in window coordinates, as ImGui's mouse position). Windows only for now.
+    struct Drop {
+        std::vector<std::filesystem::path> files;
+        float x = 0, y = 0;
+    };
+    Drop takeDrop();
     /// Runs one frame of the application while a move or resize blocks its main loop.
     std::function<void()> modalFrame;
 private:
@@ -47,5 +55,6 @@ private:
     Ogre::Window& window_;
     void* handle_ = nullptr;
     bool closeRequested_ = false;
+    Drop drop_;
 };
 }

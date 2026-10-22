@@ -64,6 +64,19 @@ struct WindowHook {
                 if (!lparam) return 0;
             }
             break;
+        case WM_DROPFILES: {
+            const auto drop = reinterpret_cast<HDROP>(wparam);
+            for (UINT i = 0, count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0); i < count; ++i) {
+                std::wstring name(DragQueryFileW(drop, i, nullptr, 0), L'\0');
+                DragQueryFileW(drop, i, name.data(), UINT(name.size() + 1));
+                platform.drop_.files.emplace_back(name);
+            }
+            POINT point{};
+            DragQueryPoint(drop, &point);
+            platform.drop_.x = float(point.x), platform.drop_.y = float(point.y);
+            DragFinish(drop);
+            return 0;
+        }
         case WM_ENTERSIZEMOVE:
             SetTimer(hwnd, timer, 16, nullptr);
             break;
@@ -96,6 +109,7 @@ EditorPlatform::EditorPlatform(Ogre::Window& window) : window_(window) {
         throw std::runtime_error("Editor window input hook failed");
     }
     followTheme(static_cast<HWND>(handle_));
+    DragAcceptFiles(static_cast<HWND>(handle_), TRUE);
 #endif
 }
 EditorPlatform::~EditorPlatform() {
@@ -106,6 +120,7 @@ EditorPlatform::~EditorPlatform() {
 #endif
 }
 bool EditorPlatform::takeCloseRequest() { return std::exchange(closeRequested_, false); }
+EditorPlatform::Drop EditorPlatform::takeDrop() { return std::exchange(drop_, {}); }
 std::optional<std::filesystem::path> EditorPlatform::pickFolder(const std::filesystem::path& initial) const {
 #ifdef _WIN32
     const auto check = [](HRESULT result) {

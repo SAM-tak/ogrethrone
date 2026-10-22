@@ -105,7 +105,9 @@ in the Mixer panel, and anything else (a script, a sound) opens in the operating
 application for it. Right-clicking a file renames (F2), duplicates (with a new ID), deletes
 (Delete; after confirming, references to it show as missing), copies its path or shows it in
 Explorer; right-clicking the empty space makes a new folder, level, scene, prefab, mixer or
-script. Dragging files onto a folder (in either pane) moves them, keeping every reference to
+script. **Refresh** (Ctrl+R) scans `assets/` again for files added or changed outside the
+editor; files and folders dropped from Explorer onto the Browser are copied into its folder
+and get their IDs at once. Dragging files onto a folder (in either pane) moves them, keeping every reference to
 them. Dragging a prefab or model onto the hierarchy or the viewport places it (a scene too, at
 the Level step); Add Scene and Add Instance place the scene or prefab selected in the Browser.
 

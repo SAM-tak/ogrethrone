@@ -518,6 +518,12 @@ private:
     Ogre::TextureGpu* thumbnail(const std::string& path);
     /// Releases the thumbnails' textures.
     void clearThumbnails();
+    /// Scans the assets folder again (Ctrl+R): files added, changed or moved outside the editor
+    /// get their IDs, and the Browser and thumbnails show them as they are.
+    void rescanAssets();
+    /// Copies files and folders dropped from the operating system into the Browser's folder,
+    /// as new assets.
+    void importFiles(const std::vector<std::filesystem::path>& files);
     void mixerPanel();
     void openMixer(const AssetRef& path);
     /// Draws the Console panel: the log, and an L^ prompt below it.
@@ -645,6 +651,9 @@ private:
         std::uintmax_t size = 0;
     };
     std::vector<BrowserEntry> browserEntries_;
+    /// Where the Browser was drawn, and whether it had the keyboard, in the last frame.
+    ImVec2 browserMin_, browserMax_;
+    bool browserFocused_ = false;
     std::string browserListed_;
     std::chrono::steady_clock::time_point browserListedAt_;
     /// Image files' thumbnails by path: being read on a worker, made, or unreadable.

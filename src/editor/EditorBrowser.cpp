@@ -194,6 +194,31 @@ Ogre::TextureGpu* Editor::thumbnail(const std::string& path) {
     return entry.texture;
 }
 
+void Editor::rescanAssets() {
+    assets_.scan([this](const std::string& line) { log(line); });
+    clearThumbnails();
+    browserListed_.clear();
+}
+
+void Editor::importFiles(const std::vector<fs::path>& files) {
+    std::size_t copied = 0;
+    for (const auto& file : files) {
+        const auto name = file.filename().u8string();
+        const auto [stem, extension] = splitName(name, fs::is_directory(file));
+        const auto path = freePath(*project_, browserFolder_, stem, extension);
+        try {
+            fs::copy(file, project_->resolve(path), fs::copy_options::recursive);
+            ++copied;
+        } catch (const std::exception& error) {
+            log("Could not import " + file.u8string() + ": " + error.what());
+        }
+    }
+    if (!copied) return;
+    // The copies get their IDs (and .meta files) at once, so they can be referred to.
+    rescanAssets();
+    log("Imported " + std::to_string(copied) + " item(s) into assets/" + browserFolder_);
+}
+
 void Editor::openAsset(const std::string& path) {
     const auto ref = assets_.bind(AssetRef(path));
     switch (kindOf(path)) {
@@ -302,11 +327,15 @@ void Editor::browserTree(const std::string& relative) {
 }
 
 void Editor::browser() {
+    browserFocused_ = false;
     if (ImGui::Begin("Browser")) {
         if (!project_) {
             ImGui::End();
             return;
         }
+        browserMin_ = ImGui::GetWindowPos();
+        browserMax_ = {browserMin_.x + ImGui::GetWindowWidth(), browserMin_.y + ImGui::GetWindowHeight()};
+        browserFocused_ = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
         if (!fs::is_directory(project_->resolve(browserFolder_))) browserFolder_.clear();
         if (ImGui::BeginTable("##browser", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV)) {
             ImGui::TableSetupColumn("Folders", ImGuiTableColumnFlags_WidthFixed, 180);
@@ -399,11 +428,8 @@ void Editor::browserFiles() {
         ImGui::SliderFloat("##size", &browserTile_, 40, 160, "");
     }
     ImGui::SameLine();
-    if (ImGui::SmallButton("Refresh")) {
-        assets_.scan([this](const std::string& line) { log(line); });
-        clearThumbnails();
-        browserListed_.clear();
-    }
+    if (ImGui::SmallButton("Refresh")) rescanAssets();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scan the assets folder for changes made outside the editor (Ctrl+R)");
 
     // The chosen folder's entries, folders first; listed again now and then, not every frame.
     const auto now = std::chrono::steady_clock::now();
