@@ -597,11 +597,14 @@ void Editor::inspector() {
         ImGui::PushItemWidth(-preferences_.inspectorLabelWidth);
         ImGui::PushTextWrapPos(0.0f);
         ImGui::BeginDisabled(runtime_ != nullptr);
+        // Read-only pages have no labelled widgets, so no label column to size.
+        bool labelled = true;
         if (selected_.kind==Selection::Kind::EngineSystem) {
             ImGui::TextUnformatted(selected_.engine.c_str());
             if(selected_.engine=="OGRE") rendererInspector();
+            else labelled = false;
         }
-        else if (selected_.kind==Selection::Kind::ModelNode || selected_.kind==Selection::Kind::ModelMaterial) modelInspector();
+        else if (selected_.kind==Selection::Kind::ModelNode || selected_.kind==Selection::Kind::ModelMaterial) modelInspector(), labelled = false;
         else if (const auto* node = selectedNode()) nodeInspector(*node);
         else if (const auto* system = selectedSystem()) systemInspector(*system);
         else if (auto* placed = selectedScene()) sceneInspector(*placed);
@@ -610,11 +613,11 @@ void Editor::inspector() {
             ImGui::TextUnformatted(shown(contexts_.back().path).c_str());
             lightingInspector(contexts_.back().path);
         }
-        else ImGui::TextDisabled("Nothing selected");
+        else ImGui::TextDisabled("Nothing selected"), labelled = false;
         ImGui::EndDisabled();
         ImGui::PopTextWrapPos();
         ImGui::PopItemWidth();
-        labelColumnHandle(start, right);
+        if (labelled) labelColumnHandle(start, right);
     }
     ImGui::End();
 }
