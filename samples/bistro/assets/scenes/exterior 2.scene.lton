@@ -166,9 +166,109 @@ nodes = {
     },
     {
         components = {
+            animator = {
+                clip = "catchcatch_dance_floorVer(lohen)_bone",
+                loop = true^,
+                playing = true^,
+                speed = 1.0,
+                time = 0.0,
+            },
             model = {
+                alphaHashing = true^,
                 directXNormals = true^,
                 emission = 1.0,
+                materials = {
+                    {
+                        absorption = {
+                            0.0,
+                            0.0,
+                            0.0,
+                        },
+                        name = "体",
+                        subsurfaceWidth = 0.009999999776482582,
+                        thickness = 0.05000000074505806,
+                    },
+                    {
+                        absorption = {
+                            0.0,
+                            0.0,
+                            0.0,
+                        },
+                        name = "指甲",
+                        subsurfaceWidth = 0.009999999776482582,
+                        thickness = 0.05000000074505806,
+                    },
+                    {
+                        absorption = {
+                            0.0,
+                            0.0,
+                            0.0,
+                        },
+                        name = "金属",
+                        subsurfaceWidth = 0.009999999776482582,
+                        thickness = 0.05000000074505806,
+                    },
+                    {
+                        absorption = {
+                            0.0,
+                            0.0,
+                            0.0,
+                        },
+                        name = "肌",
+                        subsurfaceWidth = 0.10000000149011612,
+                        thickness = 0.05000000074505806,
+                    },
+                    {
+                        absorption = {
+                            0.0,
+                            0.0,
+                            0.0,
+                        },
+                        name = "肌1",
+                        subsurfaceWidth = 0.10000000149011612,
+                        thickness = 0.05000000074505806,
+                    },
+                    {
+                        absorption = {
+                            0.0,
+                            0.0,
+                            0.0,
+                        },
+                        name = "颜",
+                        subsurfaceWidth = 0.10000000149011612,
+                        thickness = 0.05000000074505806,
+                    },
+                    {
+                        absorption = {
+                            0.0,
+                            0.0,
+                            0.0,
+                        },
+                        hidden = true^,
+                        name = "颜+",
+                        subsurfaceWidth = 0.10000000149011612,
+                        thickness = 0.05000000074505806,
+                    },
+                    {
+                        absorption = {
+                            0.0,
+                            0.0,
+                            0.0,
+                        },
+                        name = "目光",
+                        thickness = 0.05000000074505806,
+                    },
+                    {
+                        absorption = {
+                            0.0,
+                            0.0,
+                            0.0,
+                        },
+                        hidden = true^,
+                        name = "目光2",
+                        thickness = 0.05000000074505806,
+                    },
+                },
                 path = 7787237248593920,
             },
             transform = {
