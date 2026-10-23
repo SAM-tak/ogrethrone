@@ -364,6 +364,12 @@ Editor::Editor(Ogre::Root& root, Ogre::Window& window, Ogre::SceneManager& scene
     if (!io.Fonts->AddFontFromFileTTF(THRONE_MEDIA_DIR "/fonts/NotoSansJP-Regular.otf", 16.0f,
                                     &fontConfig, glyphRanges))
         throw std::runtime_error("Could not load the editor's Noto Sans JP font.");
+    // Simplified Chinese names (Chinese MMD models' materials) use characters Japanese lacks,
+    // such as U+989C (face): the common ones are added from Noto Sans SC where the Japanese font has none.
+    fontConfig.MergeMode = true;
+    if (!io.Fonts->AddFontFromFileTTF(THRONE_MEDIA_DIR "/fonts/NotoSansSC-Regular.otf", 16.0f,
+                                    &fontConfig, io.Fonts->GetGlyphRangesChineseSimplifiedCommon()))
+        throw std::runtime_error("Could not load the editor's Noto Sans SC font.");
     // The synchronous upload path asserts upstream (AlwaysKeepSystemRamCopy without
     // a RAM copy), so upload asynchronously and wait for it instead.
     gui_->setupFont(io.Fonts, false);
