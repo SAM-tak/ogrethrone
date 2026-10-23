@@ -9,6 +9,32 @@
 #include <stdexcept>
 
 namespace throne {
+namespace {
+/// Adds keys to @p keys, interpolated by @p lerp, so that none lies more than @p gap seconds
+/// from the next or from the clip's ends. ozz's AnimationBuilder adds a key wherever two keys
+/// of a track lie more than 65535 keys apart in its time-sorted list, restarting its whole pass
+/// each time: minutes for a long clip whose constant tracks only have a key at each end.
+template <typename Key, typename Lerp>
+void densify(ozz::vector<Key>& keys, float gap, float duration, const Lerp& lerp) {
+    if (keys.front().time > 0) keys.insert(keys.begin(), {0, keys.front().value});
+    if (keys.back().time < duration) keys.push_back({duration, keys.back().value});
+    ozz::vector<Key> dense;
+    dense.reserve(keys.size());
+    for (std::size_t k = 0; k < keys.size(); ++k) {
+        if (k) {
+            const auto &a = keys[k - 1], &b = keys[k];
+            const int steps = int((b.time - a.time) / gap);
+            for (int s = 1; s <= steps; ++s) {
+                const float f = float(s) / float(steps + 1);
+                dense.push_back({a.time + (b.time - a.time) * f, lerp(a.value, b.value, f)});
+            }
+        }
+        dense.push_back(keys[k]);
+    }
+    keys = std::move(dense);
+}
+}
+
 SkeletonAsset::SkeletonAsset() = default;
 SkeletonAsset::~SkeletonAsset() = default;
 
@@ -67,6 +93,21 @@ std::shared_ptr<const SkeletonAsset> buildSkeleton(const ozz::animation::offline
                 ozz::math::StorePtrU(soa.scale.z, z);
                 track.scales.push_back({0, ozz::math::Float3(x[lane], y[lane], z[lane])});
             }
+        }
+        // Each kind of key is sorted on its own; about half of ozz's limit lies between a track's keys.
+        std::size_t counts[3] = {};
+        for (const auto& track : animation.tracks)
+            counts[0] += track.translations.size(), counts[1] += track.rotations.size(), counts[2] += track.scales.size();
+        const auto gap = [&](std::size_t count) { return clip.duration * 32768.0f / float(count); };
+        const auto shortest = [](const ozz::math::Quaternion& a, const ozz::math::Quaternion& b, float f) {
+            const bool flip = a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w < 0;
+            return ozz::math::NLerp(a, flip ? -b : b, f);
+        };
+        const auto lerp = [](const ozz::math::Float3& a, const ozz::math::Float3& b, float f) { return ozz::math::Lerp(a, b, f); };
+        for (auto& track : animation.tracks) {
+            densify(track.translations, gap(counts[0]), clip.duration, lerp);
+            densify(track.rotations, gap(counts[1]), clip.duration, shortest);
+            densify(track.scales, gap(counts[2]), clip.duration, lerp);
         }
         if (!animation.Validate()) throw std::runtime_error("Invalid animation clip: " + clip.name);
         auto built = ozz::animation::offline::AnimationBuilder()(animation);
