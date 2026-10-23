@@ -950,6 +950,9 @@ void Editor::nodeInspector(const ExpandedNode& expanded) {
             auto& m=c.materials[i];
             ImGui::Separator();
             edited|=texturePath("Material",m.name);
+            edited|=ImGui::Checkbox("Hidden",&m.hidden); track();
+            if(ImGui::IsItemHovered()) ImGui::SetTooltip("Leaves the material's surfaces out of the model, such as physics\n"
+                                                         "proxies the file draws.");
             edited|=texturePath("Diffuse Map",m.diffuseMap);
             edited|=vector("Absorption (1/m)",m.absorption);
             edited|=scalar("Thickness (m)",m.thickness,.0001f,100);

@@ -177,12 +177,25 @@ Vec3 normalized(const Vec3& v) {
     return length > 1e-20f ? v * (1 / length) : Vec3{0, 0, 0};
 }
 
-/// Whether the DDS file at @p file stores an alpha channel (DXT5 / BC3), read from its header.
-bool ddsHasAlpha(const std::filesystem::path& file) {
+/// Whether the image file at @p file stores an alpha channel, read from its header: a DXT5
+/// (BC3) DDS, or a PNG with an alpha channel or a transparent colour (MMD models cut their
+/// overlays out with it).
+bool hasAlpha(const std::filesystem::path& file) {
     std::ifstream in(file, std::ios::binary);
     char header[88] = {};
-    if (!in.read(header, sizeof header) || std::memcmp(header, "DDS ", 4) != 0) return false;
-    return std::memcmp(header + 84, "DXT5", 4) == 0 || std::memcmp(header + 84, "DXT4", 4) == 0;
+    if (!in.read(header, sizeof header)) return false;
+    if (std::memcmp(header, "DDS ", 4) == 0) return std::memcmp(header + 84, "DXT5", 4) == 0 || std::memcmp(header + 84, "DXT4", 4) == 0;
+    if (std::memcmp(header, "\x89PNG", 4) != 0) return false;
+    // Colour types 4 and 6 have alpha; a tRNS chunk before the image data gives the others some.
+    if (header[25] == 4 || header[25] == 6) return true;
+    in.seekg(8);
+    for (unsigned char chunk[8]; in.read(reinterpret_cast<char*>(chunk), 8);) {
+        if (std::memcmp(chunk + 4, "tRNS", 4) == 0) return true;
+        if (std::memcmp(chunk + 4, "IDAT", 4) == 0) return false;
+        const auto length = std::uint32_t(chunk[0]) << 24 | std::uint32_t(chunk[1]) << 16 | std::uint32_t(chunk[2]) << 8 | chunk[3];
+        in.seekg(std::streamoff(length) + 4, std::ios::cur);
+    }
+    return false;
 }
 
 /// Computes per-vertex tangents from the triangles; the sign (w) gives the bitangent's
@@ -316,7 +329,7 @@ std::string ModelLibrary::key(const ModelComponent& component, const std::filesy
                "," + std::to_string(m.translucency.colour.y) + "," + std::to_string(m.translucency.colour.z) + "," +
                std::to_string(m.translucency.distortion) + "," + std::to_string(m.translucency.power) + "," +
                std::to_string(m.translucency.scale) + "/" + std::to_string(m.subsurfaceWidth) + "/" +
-               std::to_string(m.diffuseMap.id) + m.diffuseMap.path;
+               std::to_string(m.diffuseMap.id) + m.diffuseMap.path + (m.hidden ? "/hidden" : "");
     return key;
 }
 
@@ -526,7 +539,7 @@ ModelLibrary::Parsed ModelLibrary::parse(const std::filesystem::path& file, cons
         const auto& clear = source->fbx.transparency_color.value_vec3;
         material.opacity = 1.0f - float(source->fbx.transparency_factor.value_real * (clear.x + clear.y + clear.z) / 3);
         material.blended = material.opacity < .99f;
-        material.alphaTested = !material.blended && !material.diffuse.empty() && ddsHasAlpha(material.diffuse);
+        material.alphaTested = !material.blended && !material.diffuse.empty() && hasAlpha(material.diffuse);
         material.alphaHashed = material.alphaTested && component.alphaHashing;
         material.colour = vec(source->fbx.diffuse_color.value_vec3);
         material.normal = texture(source->fbx.normal_map.texture);
@@ -596,6 +609,12 @@ ModelLibrary::Parsed ModelLibrary::parse(const std::filesystem::path& file, cons
         triangle.resize(source->max_face_triangles * 3);
         for (const auto& part : source->material_parts) {
             if (part.num_triangles == 0) continue;
+            // Hidden materials' surfaces are left out, of the bounds and surface points too.
+            const auto* material = part.index < source->materials.count ? source->materials.data[part.index] : nullptr;
+            if (material && std::any_of(component.materials.begin(), component.materials.end(), [&](const ModelMaterial& m) {
+                    return m.hidden && m.name == material->name.data;
+                }))
+                continue;
             std::vector<Corner> corners;
             corners.reserve(part.num_triangles * 3);
             for (const auto face : part.face_indices) {
@@ -662,7 +681,6 @@ ModelLibrary::Parsed ModelLibrary::parse(const std::filesystem::path& file, cons
                 submesh.blendWeights.assign(corners.size() * 4, 0.0f);
                 for (std::size_t v = 0; v < corners.size(); ++v) submesh.blendWeights[v * 4] = 1;
             }
-            const auto* material = part.index < source->materials.count ? source->materials.data[part.index] : nullptr;
             submesh.material = material ? material->typed_id : out.materials.size();
             mesh.submeshes.push_back(std::move(submesh));
         }

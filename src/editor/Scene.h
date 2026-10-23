@@ -191,10 +191,14 @@ struct ModelMaterial {
     /// A base colour map replacing the file's (files often name their texture only in the
     /// material's name); empty keeps the file's.
     AssetRef diffuseMap;
+    /// Leaves the material's surfaces out of the model (physics proxies and other helpers the
+    /// file draws).
+    bool hidden = false;
     /// Equality, to tell when the drawn model must be rebuilt.
     bool operator==(const ModelMaterial& other) const {
         return name == other.name && absorption == other.absorption && thickness == other.thickness &&
-               translucency == other.translucency && subsurfaceWidth == other.subsurfaceWidth && diffuseMap == other.diffuseMap;
+               translucency == other.translucency && subsurfaceWidth == other.subsurfaceWidth && diffuseMap == other.diffuseMap &&
+               hidden == other.hidden;
     }
 };
 

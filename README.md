@@ -625,7 +625,7 @@ A **Model** component draws a project-relative FBX file, read with the pinned
 [ufbx](https://github.com/ufbx/ufbx) (`third_party/ufbx`) and converted to metres,
 +Y up and right-handed. Each file is read once; its meshes and PBS materials are
 shared by every node placing it. Materials use the metal-rough workflow: a base
-colour map (alpha is opacity and enables alpha testing for DXT5 maps, or alpha hashing
+colour map (alpha is opacity and enables alpha testing for DXT5 DDS maps and PNG maps with alpha, or alpha hashing
 with **Alpha-Hashed Cut-Outs**: soft edges on foliage once TAA averages them), a normal map
 (**DirectX normal maps** selects the green direction), an ORM map packed as glTF
 does (occlusion, roughness, metalness in R, G, B) and an emissive map, all repeating
@@ -637,7 +637,13 @@ its reflections. A Model's **material changes** give named materials of its file
 Beer-Lambert **absorption** (per metre, RGB) and **thickness**: such a volume (wine,
 beer, a tinted bottle) multiplies what is behind it by its transmittance, and glass in
 front of it shows it. A material change's **Diffuse Map** (project-relative) replaces the
-material's base colour map, for files that name their texture only in the material's name. Only opaque materials cast shadows. Lights and
+material's base colour map, for files that name their texture only in the material's name.
+A **Hidden** material change leaves that material's surfaces out of the model, for helpers
+the file draws (such as the physics proxies mmd_tools exports from Blender). For an MMD model
+imported with mmd_tools, `blender -b model.blend --python tools/mmd-to-fbx.py -- out.fbx`
+exports its armature and meshes with their base textures (Blender's FBX exporter otherwise
+writes none of mmd_tools' textures) and without the physics proxies; enable **Alpha-Hashed
+Cut-Outs** for its overlay materials. Only opaque materials cast shadows. Lights and
 cameras in the file are not placed. A node with only a Model is picked and outlined
 by the model's bounds.
 
